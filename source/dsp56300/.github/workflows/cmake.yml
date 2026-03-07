@@ -1,0 +1,42 @@
+name: CMake
+
+on: [push, pull_request]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        cmake_generator: [ default, Ninja ]
+      fail-fast: false
+    name:  ${{ matrix.os }} build
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: "recursive"
+
+    - name: Setting up Ninja build system
+      if: matrix.cmake_generator == 'Ninja'
+      uses: seanmiddleditch/gha-setup-ninja@master
+
+    - name: Set up MSVC compiler
+      if: matrix.os == 'windows-latest'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Configure CMake with ${{ matrix.cmake_generator }}
+      if: matrix.cmake_generator != 'default'
+      run: cmake -G ${{ matrix.cmake_generator }} -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTING:BOOL=true
+
+    - name: Configure CMake with default generator
+      if: matrix.cmake_generator == 'default'
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTING:BOOL=true
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Run Tests
+      run: ctest --test-dir ${{github.workspace}}/build -C Release

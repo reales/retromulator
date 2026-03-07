@@ -1,0 +1,7 @@
+temp/
+source/.vs/
+source/dsp56k/
+bin/*.exe
+*.ilk
+*.pdb
+*.user

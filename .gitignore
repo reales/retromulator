@@ -1,0 +1,14 @@
+# Build outputs
+Bin/
+build/
+Builds/
+JuceLibraryCode/
+Modules/
+
+# Xcode
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store

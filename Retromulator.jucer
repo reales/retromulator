@@ -1,0 +1,601 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.0.0"
+              juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
+              pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
+              pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
+              pluginWantsMidiIn="1" pluginProducesMidiOut="0" pluginSilenceInIsSilenceOut="0"
+              pluginTailLength="0" pluginEditorRequiresKeys="0" pluginAUExportPrefix="RetromulatorAU"
+              pluginAUViewClass="RetromulatorAU_V1" bundleIdentifier="com.discodsp.retromulator"
+              aaxIdentifier="com.discodsp.retromulator" pluginAAXCategory="2048"
+              companyName="discoDSP" buildVST3="1" buildAU="1" buildStandalone="1"
+              buildVST="0" buildRTAS="0" buildAAX="0" buildAUv3="0" pluginFormats="buildAU,buildStandalone,buildVST3"
+              pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
+              enableIAA="0" jucerFormatVersion="1" displaySplashScreen="0"
+              cppLanguageStandard="17">
+  <EXPORTFORMATS>
+    <XCODE_MAC targetFolder="Builds/MacOSX" objCExtraSuffix="Retromulator_xc"
+               postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1"
+               extraCompilerFlags="-Wno-deprecated-declarations -include AppConfig.h"
+               extraLinkerFlags="">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" targetName="Retromulator" osxCompatibility="default"
+                       headerPath="../../source&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
+                       binaryPath="Bin/MacOSX/Debug" enablePluginBinaryCopyStep="1"
+                       vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
+                       vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
+                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"/>
+        <CONFIGURATION name="Release" isDebug="0" targetName="Retromulator" osxCompatibility="default"
+                       headerPath="../../source&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
+                       binaryPath="Bin/MacOSX/Release" stripLocalSymbols="1" linkTimeOptimisation="1"
+                       enablePluginBinaryCopyStep="1" vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
+                       vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
+                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="../Modules"/>
+        <MODULEPATH id="juce_audio_devices" path="../Modules"/>
+        <MODULEPATH id="juce_audio_formats" path="../Modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="../Modules"/>
+        <MODULEPATH id="juce_audio_processors" path="../Modules"/>
+        <MODULEPATH id="juce_audio_utils" path="../Modules"/>
+        <MODULEPATH id="juce_core" path="../Modules"/>
+        <MODULEPATH id="juce_cryptography" path="../Modules"/>
+        <MODULEPATH id="juce_data_structures" path="../Modules"/>
+        <MODULEPATH id="juce_events" path="../Modules"/>
+        <MODULEPATH id="juce_graphics" path="../Modules"/>
+        <MODULEPATH id="juce_gui_basics" path="../Modules"/>
+        <MODULEPATH id="juce_gui_extra" path="../Modules"/>
+      </MODULEPATHS>
+    </XCODE_MAC>
+  </EXPORTFORMATS>
+  <MAINGROUP id="JCS7L" name="Retromulator">
+    <GROUP id="plugin" name="plugin">
+      <FILE id="f0001" name="HeadlessProcessor.h" compile="0" resource="0"
+            file="source/plugin/HeadlessProcessor.h"/>
+      <FILE id="f0002" name="HeadlessProcessor.cpp" compile="1" resource="0"
+            file="source/plugin/HeadlessProcessor.cpp"/>
+      <FILE id="f0003" name="MinimalController.h" compile="0" resource="0"
+            file="source/plugin/MinimalController.h"/>
+      <FILE id="f0004" name="MinimalController.cpp" compile="1" resource="0"
+            file="source/plugin/MinimalController.cpp"/>
+      <FILE id="f0005" name="SynthFactory.h" compile="0" resource="0" file="source/plugin/SynthFactory.h"/>
+      <FILE id="f0006" name="SynthFactory.cpp" compile="1" resource="0" file="source/plugin/SynthFactory.cpp"/>
+      <FILE id="f0007" name="SynthType.h" compile="0" resource="0" file="source/plugin/SynthType.h"/>
+      <FILE id="f0008" name="PluginEntry.cpp" compile="1" resource="0" file="source/plugin/PluginEntry.cpp"/>
+      <FILE id="f0009" name="BasicEditor.h" compile="0" resource="0" file="source/plugin/BasicEditor.h"/>
+      <FILE id="f0010" name="BasicEditor.cpp" compile="1" resource="0" file="source/plugin/BasicEditor.cpp"/>
+    </GROUP>
+    <GROUP id="jucePluginLib" name="jucePluginLib">
+      <FILE id="jp001" name="bypassBuffer.cpp" compile="1" resource="0" file="source/jucePluginLib/bypassBuffer.cpp"/>
+      <FILE id="jp002" name="clipboard.cpp" compile="1" resource="0" file="source/jucePluginLib/clipboard.cpp"/>
+      <FILE id="jp003" name="controller.cpp" compile="1" resource="0" file="source/jucePluginLib/controller.cpp"/>
+      <FILE id="jp004" name="controllermap.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/controllermap.cpp"/>
+      <FILE id="jp005" name="dummydevice.cpp" compile="1" resource="0" file="source/jucePluginLib/dummydevice.cpp"/>
+      <FILE id="jp006" name="filetype.cpp" compile="1" resource="0" file="source/jucePluginLib/filetype.cpp"/>
+      <FILE id="jp007" name="midipacket.cpp" compile="1" resource="0" file="source/jucePluginLib/midipacket.cpp"/>
+      <FILE id="jp008" name="midiports.cpp" compile="1" resource="0" file="source/jucePluginLib/midiports.cpp"/>
+      <FILE id="jp009" name="parameter.cpp" compile="1" resource="0" file="source/jucePluginLib/parameter.cpp"/>
+      <FILE id="jp010" name="parameterdescription.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterdescription.cpp"/>
+      <FILE id="jp011" name="parameterdescriptions.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterdescriptions.cpp"/>
+      <FILE id="jp012" name="parameterlink.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterlink.cpp"/>
+      <FILE id="jp013" name="parameterlinks.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterlinks.cpp"/>
+      <FILE id="jp014" name="parameterlistener.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterlistener.cpp"/>
+      <FILE id="jp015" name="parameterlocking.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterlocking.cpp"/>
+      <FILE id="jp016" name="parameterregion.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parameterregion.cpp"/>
+      <FILE id="jp017" name="parametervaluelist.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/parametervaluelist.cpp"/>
+      <FILE id="jp018" name="pluginVersion.cpp" compile="1" resource="0"
+            file="source/jucePluginLib/pluginVersion.cpp"/>
+      <FILE id="jp019" name="processor.cpp" compile="1" resource="0" file="source/jucePluginLib/processor.cpp"/>
+      <FILE id="jp020" name="softknob.cpp" compile="1" resource="0" file="source/jucePluginLib/softknob.cpp"/>
+      <FILE id="jp021" name="tools.cpp" compile="1" resource="0" file="source/jucePluginLib/tools.cpp"/>
+      <GROUP id="patchdb" name="patchdb">
+        <FILE id="jp030" name="datasource.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/datasource.cpp"/>
+        <FILE id="jp031" name="db.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/db.cpp"/>
+        <FILE id="jp032" name="jobqueue.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/jobqueue.cpp"/>
+        <FILE id="jp033" name="patch.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/patch.cpp"/>
+        <FILE id="jp034" name="patchdbtypes.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/patchdbtypes.cpp"/>
+        <FILE id="jp035" name="patchhistory.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/patchhistory.cpp"/>
+        <FILE id="jp036" name="patchmodifications.cpp" compile="1" resource="0"
+              file="source/jucePluginLib/patchdb/patchmodifications.cpp"/>
+        <FILE id="jp037" name="search.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/search.cpp"/>
+        <FILE id="jp038" name="serialization.cpp" compile="1" resource="0"
+              file="source/jucePluginLib/patchdb/serialization.cpp"/>
+        <FILE id="jp039" name="tags.cpp" compile="1" resource="0" file="source/jucePluginLib/patchdb/tags.cpp"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="synthLib" name="synthLib">
+      <FILE id="sl001" name="audiobuffer.cpp" compile="1" resource="0" file="source/synthLib/audiobuffer.cpp"/>
+      <FILE id="sl002" name="dac.cpp" compile="1" resource="0" file="source/synthLib/dac.cpp"/>
+      <FILE id="sl003" name="device.cpp" compile="1" resource="0" file="source/synthLib/device.cpp"/>
+      <FILE id="sl004" name="deviceException.cpp" compile="1" resource="0"
+            file="source/synthLib/deviceException.cpp"/>
+      <FILE id="sl005" name="dspMemoryPatch.cpp" compile="1" resource="0"
+            file="source/synthLib/dspMemoryPatch.cpp"/>
+      <FILE id="sl006" name="lv2PresetExport.cpp" compile="1" resource="0"
+            file="source/synthLib/lv2PresetExport.cpp"/>
+      <FILE id="sl007" name="midiBufferParser.cpp" compile="1" resource="0"
+            file="source/synthLib/midiBufferParser.cpp"/>
+      <FILE id="sl008" name="midiClock.cpp" compile="1" resource="0" file="source/synthLib/midiClock.cpp"/>
+      <FILE id="sl009" name="midiRateLimiter.cpp" compile="1" resource="0"
+            file="source/synthLib/midiRateLimiter.cpp"/>
+      <FILE id="sl010" name="midiRoutingMatrix.cpp" compile="1" resource="0"
+            file="source/synthLib/midiRoutingMatrix.cpp"/>
+      <FILE id="sl011" name="midiToSysex.cpp" compile="1" resource="0" file="source/synthLib/midiToSysex.cpp"/>
+      <FILE id="sl012" name="midiTranslator.cpp" compile="1" resource="0"
+            file="source/synthLib/midiTranslator.cpp"/>
+      <FILE id="sl013" name="os.cpp" compile="1" resource="0" file="source/synthLib/os.cpp"/>
+      <FILE id="sl014" name="plugin.cpp" compile="1" resource="0" file="source/synthLib/plugin.cpp"/>
+      <FILE id="sl015" name="resampler.cpp" compile="1" resource="0" file="source/synthLib/resampler.cpp"/>
+      <FILE id="sl016" name="resamplerInOut.cpp" compile="1" resource="0"
+            file="source/synthLib/resamplerInOut.cpp"/>
+      <FILE id="sl017" name="romLoader.cpp" compile="1" resource="0" file="source/synthLib/romLoader.cpp"/>
+      <FILE id="sl018" name="sounddiverLibLoader.cpp" compile="1" resource="0"
+            file="source/synthLib/sounddiverLibLoader.cpp"/>
+      <FILE id="sl019" name="sysexRemoteControl.cpp" compile="1" resource="0"
+            file="source/synthLib/sysexRemoteControl.cpp"/>
+      <FILE id="sl020" name="sysexToMidi.cpp" compile="1" resource="0" file="source/synthLib/sysexToMidi.cpp"/>
+      <FILE id="sl021" name="vstpreset.cpp" compile="1" resource="0" file="source/synthLib/vstpreset.cpp"/>
+      <FILE id="sl022" name="wavReader.cpp" compile="1" resource="0" file="source/synthLib/wavReader.cpp"/>
+      <FILE id="sl023" name="wavWriter.cpp" compile="1" resource="0" file="source/synthLib/wavWriter.cpp"/>
+    </GROUP>
+    <GROUP id="baseLib" name="baseLib">
+      <FILE id="bl001" name="binarystream.cpp" compile="1" resource="0" file="source/baseLib/binarystream.cpp"/>
+      <FILE id="bl002" name="commandline.cpp" compile="1" resource="0" file="source/baseLib/commandline.cpp"/>
+      <FILE id="bl003" name="configFile.cpp" compile="1" resource="0" file="source/baseLib/configFile.cpp"/>
+      <FILE id="bl004" name="event.cpp" compile="1" resource="0" file="source/baseLib/event.cpp"/>
+      <FILE id="bl005" name="filesystem.cpp" compile="1" resource="0" file="source/baseLib/filesystem.cpp"/>
+      <FILE id="bl006" name="logging.cpp" compile="1" resource="0" file="source/baseLib/logging.cpp"/>
+      <FILE id="bl007" name="md5.cpp" compile="1" resource="0" file="source/baseLib/md5.cpp"/>
+      <FILE id="bl008" name="os.cpp" compile="1" resource="0" file="source/baseLib/os.cpp"/>
+      <FILE id="bl009" name="propertyMap.cpp" compile="1" resource="0" file="source/baseLib/propertyMap.cpp"/>
+    </GROUP>
+    <GROUP id="hardwareLib" name="hardwareLib">
+      <FILE id="hw001" name="am29f.cpp" compile="1" resource="0" file="source/hardwareLib/am29f.cpp"/>
+      <FILE id="hw002" name="dspBootCode.cpp" compile="1" resource="0" file="source/hardwareLib/dspBootCode.cpp"/>
+      <FILE id="hw003" name="haltDSP.cpp" compile="1" resource="0" file="source/hardwareLib/haltDSP.cpp"/>
+      <FILE id="hw004" name="i2c.cpp" compile="1" resource="0" file="source/hardwareLib/i2c.cpp"/>
+      <FILE id="hw005" name="i2cFlash.cpp" compile="1" resource="0" file="source/hardwareLib/i2cFlash.cpp"/>
+      <FILE id="hw006" name="lcd.cpp" compile="1" resource="0" file="source/hardwareLib/lcd.cpp"/>
+      <FILE id="hw007" name="lcdfonts.cpp" compile="1" resource="0" file="source/hardwareLib/lcdfonts.cpp"/>
+      <FILE id="hw008" name="sciMidi.cpp" compile="1" resource="0" file="source/hardwareLib/sciMidi.cpp"/>
+    </GROUP>
+    <GROUP id="wLib" name="wLib">
+      <FILE id="wl001" name="wDevice.cpp" compile="1" resource="0" file="source/wLib/wDevice.cpp"/>
+      <FILE id="wl002" name="wDsp.cpp" compile="1" resource="0" file="source/wLib/wDsp.cpp"/>
+      <FILE id="wl003" name="wHardware.cpp" compile="1" resource="0" file="source/wLib/wHardware.cpp"/>
+      <FILE id="wl004" name="wPlugin.cpp" compile="1" resource="0" file="source/wLib/wPlugin.cpp"/>
+      <FILE id="wl005" name="wRom.cpp" compile="1" resource="0" file="source/wLib/wRom.cpp"/>
+      <FILE id="wl006" name="wState.cpp" compile="1" resource="0" file="source/wLib/wState.cpp"/>
+      <FILE id="wl007" name="wSysexRemoteControl.cpp" compile="1" resource="0"
+            file="source/wLib/wSysexRemoteControl.cpp"/>
+    </GROUP>
+    <GROUP id="libresample" name="libresample">
+      <FILE id="lr001" name="filterkit.c" compile="1" resource="0" file="source/libresample/src/filterkit.c"/>
+      <FILE id="lr002" name="resample.c" compile="1" resource="0" file="source/libresample/src/resample.c"/>
+      <FILE id="lr003" name="resamplesubs.c" compile="1" resource="0" file="source/libresample/src/resamplesubs.c"/>
+    </GROUP>
+    <GROUP id="virusLib" name="virusLib">
+      <FILE id="vl001" name="demoplayback.cpp" compile="1" resource="0" file="source/virusLib/demoplayback.cpp"/>
+      <FILE id="vl002" name="demoplaybackTI.cpp" compile="1" resource="0"
+            file="source/virusLib/demoplaybackTI.cpp"/>
+      <FILE id="vl003" name="device.cpp" compile="1" resource="0" file="source/virusLib/device.cpp"/>
+      <FILE id="vl004" name="deviceModel.cpp" compile="1" resource="0" file="source/virusLib/deviceModel.cpp"/>
+      <FILE id="vl005" name="dspMemoryPatches.cpp" compile="1" resource="0"
+            file="source/virusLib/dspMemoryPatches.cpp"/>
+      <FILE id="vl006" name="dspMultiTI.cpp" compile="1" resource="0" file="source/virusLib/dspMultiTI.cpp"/>
+      <FILE id="vl007" name="dspSingle.cpp" compile="1" resource="0" file="source/virusLib/dspSingle.cpp"/>
+      <FILE id="vl008" name="dspSingleSnow.cpp" compile="1" resource="0"
+            file="source/virusLib/dspSingleSnow.cpp"/>
+      <FILE id="vl009" name="frontpanelState.cpp" compile="1" resource="0"
+            file="source/virusLib/frontpanelState.cpp"/>
+      <FILE id="vl010" name="hdi08List.cpp" compile="1" resource="0" file="source/virusLib/hdi08List.cpp"/>
+      <FILE id="vl011" name="hdi08MidiQueue.cpp" compile="1" resource="0"
+            file="source/virusLib/hdi08MidiQueue.cpp"/>
+      <FILE id="vl012" name="hdi08Queue.cpp" compile="1" resource="0" file="source/virusLib/hdi08Queue.cpp"/>
+      <FILE id="vl013" name="hdi08TxParser.cpp" compile="1" resource="0"
+            file="source/virusLib/hdi08TxParser.cpp"/>
+      <FILE id="vl014" name="microcontroller.cpp" compile="1" resource="0"
+            file="source/virusLib/microcontroller.cpp"/>
+      <FILE id="vl015" name="microcontrollerTypes.cpp" compile="1" resource="0"
+            file="source/virusLib/microcontrollerTypes.cpp"/>
+      <FILE id="vl016" name="midiFileToRomData.cpp" compile="1" resource="0"
+            file="source/virusLib/midiFileToRomData.cpp"/>
+      <FILE id="vl017" name="romfile.cpp" compile="1" resource="0" file="source/virusLib/romfile.cpp"/>
+      <FILE id="vl018" name="romloader.cpp" compile="1" resource="0" file="source/virusLib/romloader.cpp"/>
+      <FILE id="vl019" name="unpacker.cpp" compile="1" resource="0" file="source/virusLib/unpacker.cpp"/>
+    </GROUP>
+    <GROUP id="mqLib" name="mqLib">
+      <FILE id="mq001" name="buttons.cpp" compile="1" resource="0" file="source/mqLib/buttons.cpp"/>
+      <FILE id="mq002" name="device.cpp" compile="1" resource="0" file="source/mqLib/device.cpp"/>
+      <FILE id="mq003" name="lcd.cpp" compile="1" resource="0" file="source/mqLib/lcd.cpp"/>
+      <FILE id="mq004" name="leds.cpp" compile="1" resource="0" file="source/mqLib/leds.cpp"/>
+      <FILE id="mq005" name="microq.cpp" compile="1" resource="0" file="source/mqLib/microq.cpp"/>
+      <FILE id="mq006" name="mqdsp.cpp" compile="1" resource="0" file="source/mqLib/mqdsp.cpp"/>
+      <FILE id="mq007" name="mqhardware.cpp" compile="1" resource="0" file="source/mqLib/mqhardware.cpp"/>
+      <FILE id="mq008" name="mqmc.cpp" compile="1" resource="0" file="source/mqLib/mqmc.cpp"/>
+      <FILE id="mq009" name="mqstate.cpp" compile="1" resource="0" file="source/mqLib/mqstate.cpp"/>
+      <FILE id="mq010" name="mqsysexremotecontrol.cpp" compile="1" resource="0"
+            file="source/mqLib/mqsysexremotecontrol.cpp"/>
+      <FILE id="mq011" name="rom.cpp" compile="1" resource="0" file="source/mqLib/rom.cpp"/>
+      <FILE id="mq012" name="romloader.cpp" compile="1" resource="0" file="source/mqLib/romloader.cpp"/>
+    </GROUP>
+    <GROUP id="xtLib" name="xtLib">
+      <FILE id="xt001" name="xt.cpp" compile="1" resource="0" file="source/xtLib/xt.cpp"/>
+      <FILE id="xt002" name="xtButtons.cpp" compile="1" resource="0" file="source/xtLib/xtButtons.cpp"/>
+      <FILE id="xt003" name="xtDSP.cpp" compile="1" resource="0" file="source/xtLib/xtDSP.cpp"/>
+      <FILE id="xt004" name="xtDevice.cpp" compile="1" resource="0" file="source/xtLib/xtDevice.cpp"/>
+      <FILE id="xt005" name="xtFlash.cpp" compile="1" resource="0" file="source/xtLib/xtFlash.cpp"/>
+      <FILE id="xt006" name="xtHardware.cpp" compile="1" resource="0" file="source/xtLib/xtHardware.cpp"/>
+      <FILE id="xt007" name="xtId.cpp" compile="1" resource="0" file="source/xtLib/xtId.cpp"/>
+      <FILE id="xt008" name="xtLcd.cpp" compile="1" resource="0" file="source/xtLib/xtLcd.cpp"/>
+      <FILE id="xt009" name="xtLeds.cpp" compile="1" resource="0" file="source/xtLib/xtLeds.cpp"/>
+      <FILE id="xt010" name="xtMidi.cpp" compile="1" resource="0" file="source/xtLib/xtMidi.cpp"/>
+      <FILE id="xt011" name="xtPic.cpp" compile="1" resource="0" file="source/xtLib/xtPic.cpp"/>
+      <FILE id="xt012" name="xtRom.cpp" compile="1" resource="0" file="source/xtLib/xtRom.cpp"/>
+      <FILE id="xt013" name="xtRomLoader.cpp" compile="1" resource="0" file="source/xtLib/xtRomLoader.cpp"/>
+      <FILE id="xt014" name="xtRomWaves.cpp" compile="1" resource="0" file="source/xtLib/xtRomWaves.cpp"/>
+      <FILE id="xt015" name="xtState.cpp" compile="1" resource="0" file="source/xtLib/xtState.cpp"/>
+      <FILE id="xt016" name="xtSysexRemoteControl.cpp" compile="1" resource="0"
+            file="source/xtLib/xtSysexRemoteControl.cpp"/>
+      <FILE id="xt017" name="xtUc.cpp" compile="1" resource="0" file="source/xtLib/xtUc.cpp"/>
+      <FILE id="xt018" name="xtWavePreview.cpp" compile="1" resource="0"
+            file="source/xtLib/xtWavePreview.cpp"/>
+    </GROUP>
+    <GROUP id="n2xLib" name="n2xLib">
+      <FILE id="n2001" name="n2xdevice.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xdevice.cpp"/>
+      <FILE id="n2002" name="n2xdsp.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xdsp.cpp"/>
+      <FILE id="n2003" name="n2xflash.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xflash.cpp"/>
+      <FILE id="n2004" name="n2xfrontpanel.cpp" compile="1" resource="0"
+            file="source/nord/n2x/n2xLib/n2xfrontpanel.cpp"/>
+      <FILE id="n2005" name="n2xhardware.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xhardware.cpp"/>
+      <FILE id="n2006" name="n2xhdi08.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xhdi08.cpp"/>
+      <FILE id="n2007" name="n2xmc.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xmc.cpp"/>
+      <FILE id="n2008" name="n2xrom.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xrom.cpp"/>
+      <FILE id="n2009" name="n2xromdata.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xromdata.cpp"/>
+      <FILE id="n2010" name="n2xromloader.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xromloader.cpp"/>
+      <FILE id="n2011" name="n2xstate.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xstate.cpp"/>
+      <FILE id="n2012" name="n2xsync.cpp" compile="1" resource="0" file="source/nord/n2x/n2xLib/n2xsync.cpp"/>
+    </GROUP>
+    <GROUP id="jeLib" name="jeLib">
+      <FILE id="je001" name="device.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/device.cpp"/>
+      <FILE id="je002" name="je8086.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/je8086.cpp"/>
+      <FILE id="je003" name="je8086devices.cpp" compile="1" resource="0"
+            file="source/ronaldo/je8086/jeLib/je8086devices.cpp"/>
+      <FILE id="je004" name="jeLcd.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/jeLcd.cpp"/>
+      <FILE id="je005" name="jeThread.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/jeThread.cpp"/>
+      <FILE id="je006" name="patch.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/patch.cpp"/>
+      <FILE id="je007" name="rom.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/rom.cpp"/>
+      <FILE id="je008" name="romloader.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/romloader.cpp"/>
+      <FILE id="je009" name="state.cpp" compile="1" resource="0" file="source/ronaldo/je8086/jeLib/state.cpp"/>
+      <FILE id="je010" name="sysexRemoteControl.cpp" compile="1" resource="0"
+            file="source/ronaldo/je8086/jeLib/sysexRemoteControl.cpp"/>
+      <FILE id="je011" name="storage.cpp" compile="1" resource="0" file="source/ronaldo/common/storage.cpp"/>
+    </GROUP>
+    <GROUP id="dx7Lib" name="dx7Lib">
+      <FILE id="dx001" name="HD6303R.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R.cpp"/>
+      <FILE id="dx002" name="HD6303R_inst.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R_inst.cpp"/>
+      <FILE id="dx003" name="dx7.cpp" compile="1" resource="0" file="source/dx7Lib/dx7.cpp"/>
+      <FILE id="dx004" name="device.cpp" compile="1" resource="0" file="source/dx7Lib/device.cpp"/>
+      <FILE id="dx005" name="romloader.cpp" compile="1" resource="0" file="source/dx7Lib/romloader.cpp"/>
+    </GROUP>
+    <GROUP id="espLib" name="espLib">
+      <FILE id="es001" name="esp_jit.cpp" compile="1" resource="0" file="source/ronaldo/esp/esp_jit.cpp"/>
+      <FILE id="es002" name="esp_jit_arm64.cpp" compile="1" resource="0"
+            file="source/ronaldo/esp/esp_jit_arm64.cpp"/>
+      <FILE id="es003" name="esp_jit_x64.cpp" compile="1" resource="0" file="source/ronaldo/esp/esp_jit_x64.cpp"/>
+      <FILE id="es004" name="esp_jit_x64_pool.cpp" compile="1" resource="0"
+            file="source/ronaldo/esp/esp_jit_x64_pool.cpp"/>
+    </GROUP>
+    <GROUP id="bridgeLib" name="bridgeLib">
+      <FILE id="br001" name="audioBuffers.cpp" compile="1" resource="0" file="source/bridge/bridgeLib/audioBuffers.cpp"/>
+      <FILE id="br002" name="command.cpp" compile="1" resource="0" file="source/bridge/bridgeLib/command.cpp"/>
+      <FILE id="br003" name="commandReader.cpp" compile="1" resource="0"
+            file="source/bridge/bridgeLib/commandReader.cpp"/>
+      <FILE id="br004" name="commandStruct.cpp" compile="1" resource="0"
+            file="source/bridge/bridgeLib/commandStruct.cpp"/>
+      <FILE id="br005" name="commandWriter.cpp" compile="1" resource="0"
+            file="source/bridge/bridgeLib/commandWriter.cpp"/>
+      <FILE id="br006" name="commands.cpp" compile="1" resource="0" file="source/bridge/bridgeLib/commands.cpp"/>
+      <FILE id="br007" name="error.cpp" compile="1" resource="0" file="source/bridge/bridgeLib/error.cpp"/>
+      <FILE id="br008" name="pluginDesc.cpp" compile="0" resource="0" file="source/bridge/bridgeLib/pluginDesc.cpp"/>
+      <FILE id="br009" name="tcpConnection.cpp" compile="1" resource="0"
+            file="source/bridge/bridgeLib/tcpConnection.cpp"/>
+      <FILE id="br010" name="deviceConnection.cpp" compile="1" resource="0"
+            file="source/bridge/client/deviceConnection.cpp"/>
+      <FILE id="br011" name="export.cpp" compile="1" resource="0" file="source/bridge/client/export.cpp"/>
+      <FILE id="br012" name="remoteDevice.cpp" compile="1" resource="0" file="source/bridge/client/remoteDevice.cpp"/>
+      <FILE id="br013" name="serverList.cpp" compile="1" resource="0" file="source/bridge/client/serverList.cpp"/>
+      <FILE id="br014" name="udpClient.cpp" compile="1" resource="0" file="source/bridge/client/udpClient.cpp"/>
+    </GROUP>
+    <GROUP id="networkLib" name="networkLib">
+      <FILE id="nl001" name="exception.cpp" compile="1" resource="0" file="source/networkLib/exception.cpp"/>
+      <FILE id="nl002" name="logging.cpp" compile="1" resource="0" file="source/networkLib/logging.cpp"/>
+      <FILE id="nl003" name="networkThread.cpp" compile="1" resource="0"
+            file="source/networkLib/networkThread.cpp"/>
+      <FILE id="nl004" name="stream.cpp" compile="1" resource="0" file="source/networkLib/stream.cpp"/>
+      <FILE id="nl005" name="tcpClient.cpp" compile="1" resource="0" file="source/networkLib/tcpClient.cpp"/>
+      <FILE id="nl006" name="tcpConnection.cpp" compile="1" resource="0"
+            file="source/networkLib/tcpConnection.cpp"/>
+      <FILE id="nl007" name="tcpServer.cpp" compile="1" resource="0" file="source/networkLib/tcpServer.cpp"/>
+      <FILE id="nl008" name="tcpStream.cpp" compile="1" resource="0" file="source/networkLib/tcpStream.cpp"/>
+      <FILE id="nl009" name="udpClient.cpp" compile="1" resource="0" file="source/networkLib/udpClient.cpp"/>
+      <FILE id="nl010" name="udpServer.cpp" compile="1" resource="0" file="source/networkLib/udpServer.cpp"/>
+    </GROUP>
+    <GROUP id="ptypes" name="ptypes">
+      <FILE id="pt001" name="pasync.cxx" compile="1" resource="0" file="source/ptypes/pasync.cxx"/>
+      <FILE id="pt002" name="patomic.cxx" compile="1" resource="0" file="source/ptypes/patomic.cxx"/>
+      <FILE id="pt003" name="pcomponent.cxx" compile="1" resource="0" file="source/ptypes/pcomponent.cxx"/>
+      <FILE id="pt004" name="pcset.cxx" compile="1" resource="0" file="source/ptypes/pcset.cxx"/>
+      <FILE id="pt005" name="pexcept.cxx" compile="1" resource="0" file="source/ptypes/pexcept.cxx"/>
+      <FILE id="pt006" name="pfatal.cxx" compile="1" resource="0" file="source/ptypes/pfatal.cxx"/>
+      <FILE id="pt007" name="pfdxstm.cxx" compile="1" resource="0" file="source/ptypes/pfdxstm.cxx"/>
+      <FILE id="pt008" name="pinfile.cxx" compile="1" resource="0" file="source/ptypes/pinfile.cxx"/>
+      <FILE id="pt009" name="pinfilter.cxx" compile="1" resource="0" file="source/ptypes/pinfilter.cxx"/>
+      <FILE id="pt010" name="pinmem.cxx" compile="1" resource="0" file="source/ptypes/pinmem.cxx"/>
+      <FILE id="pt011" name="pinstm.cxx" compile="1" resource="0" file="source/ptypes/pinstm.cxx"/>
+      <FILE id="pt012" name="pintee.cxx" compile="1" resource="0" file="source/ptypes/pintee.cxx"/>
+      <FILE id="pt013" name="piobase.cxx" compile="1" resource="0" file="source/ptypes/piobase.cxx"/>
+      <FILE id="pt014" name="pipbase.cxx" compile="1" resource="0" file="source/ptypes/pipbase.cxx"/>
+      <FILE id="pt015" name="pipmsg.cxx" compile="1" resource="0" file="source/ptypes/pipmsg.cxx"/>
+      <FILE id="pt016" name="pipmsgsv.cxx" compile="1" resource="0" file="source/ptypes/pipmsgsv.cxx"/>
+      <FILE id="pt017" name="pipstm.cxx" compile="1" resource="0" file="source/ptypes/pipstm.cxx"/>
+      <FILE id="pt018" name="pipstmsv.cxx" compile="1" resource="0" file="source/ptypes/pipstmsv.cxx"/>
+      <FILE id="pt019" name="pipsvbase.cxx" compile="1" resource="0" file="source/ptypes/pipsvbase.cxx"/>
+      <FILE id="pt020" name="pmd5.cxx" compile="1" resource="0" file="source/ptypes/pmd5.cxx"/>
+      <FILE id="pt021" name="pmem.cxx" compile="1" resource="0" file="source/ptypes/pmem.cxx"/>
+      <FILE id="pt022" name="pmsgq.cxx" compile="1" resource="0" file="source/ptypes/pmsgq.cxx"/>
+      <FILE id="pt023" name="pnpipe.cxx" compile="1" resource="0" file="source/ptypes/pnpipe.cxx"/>
+      <FILE id="pt024" name="pobjlist.cxx" compile="1" resource="0" file="source/ptypes/pobjlist.cxx"/>
+      <FILE id="pt025" name="poutfile.cxx" compile="1" resource="0" file="source/ptypes/poutfile.cxx"/>
+      <FILE id="pt026" name="poutfilter.cxx" compile="1" resource="0" file="source/ptypes/poutfilter.cxx"/>
+      <FILE id="pt027" name="poutmem.cxx" compile="1" resource="0" file="source/ptypes/poutmem.cxx"/>
+      <FILE id="pt028" name="poutstm.cxx" compile="1" resource="0" file="source/ptypes/poutstm.cxx"/>
+      <FILE id="pt029" name="ppipe.cxx" compile="1" resource="0" file="source/ptypes/ppipe.cxx"/>
+      <FILE id="pt030" name="ppodlist.cxx" compile="1" resource="0" file="source/ptypes/ppodlist.cxx"/>
+      <FILE id="pt031" name="pputf.cxx" compile="1" resource="0" file="source/ptypes/pputf.cxx"/>
+      <FILE id="pt032" name="prwlock.cxx" compile="1" resource="0" file="source/ptypes/prwlock.cxx"/>
+      <FILE id="pt033" name="psemaphore.cxx" compile="1" resource="0" file="source/ptypes/psemaphore.cxx"/>
+      <FILE id="pt034" name="pstdio.cxx" compile="1" resource="0" file="source/ptypes/pstdio.cxx"/>
+      <FILE id="pt035" name="pstrcase.cxx" compile="1" resource="0" file="source/ptypes/pstrcase.cxx"/>
+      <FILE id="pt036" name="pstrconv.cxx" compile="1" resource="0" file="source/ptypes/pstrconv.cxx"/>
+      <FILE id="pt037" name="pstring.cxx" compile="1" resource="0" file="source/ptypes/pstring.cxx"/>
+      <FILE id="pt038" name="pstrlist.cxx" compile="1" resource="0" file="source/ptypes/pstrlist.cxx"/>
+      <FILE id="pt039" name="pstrmanip.cxx" compile="1" resource="0" file="source/ptypes/pstrmanip.cxx"/>
+      <FILE id="pt040" name="pstrtoi.cxx" compile="1" resource="0" file="source/ptypes/pstrtoi.cxx"/>
+      <FILE id="pt041" name="pstrutils.cxx" compile="1" resource="0" file="source/ptypes/pstrutils.cxx"/>
+      <FILE id="pt042" name="pthread.cxx" compile="1" resource="0" file="source/ptypes/pthread.cxx"/>
+      <FILE id="pt043" name="ptime.cxx" compile="1" resource="0" file="source/ptypes/ptime.cxx"/>
+      <FILE id="pt044" name="ptimedsem.cxx" compile="1" resource="0" file="source/ptypes/ptimedsem.cxx"/>
+      <FILE id="pt045" name="ptrigger.cxx" compile="1" resource="0" file="source/ptypes/ptrigger.cxx"/>
+      <FILE id="pt046" name="punknown.cxx" compile="1" resource="0" file="source/ptypes/punknown.cxx"/>
+      <FILE id="pt047" name="pvariant.cxx" compile="1" resource="0" file="source/ptypes/pvariant.cxx"/>
+      <FILE id="pt048" name="pversion.cxx" compile="1" resource="0" file="source/ptypes/pversion.cxx"/>
+      <FILE id="pt049" name="pmtxtable.cxx" compile="1" resource="0" file="source/ptypes/pmtxtable.cxx"/>
+    </GROUP>
+    <GROUP id="dsp56kBase" name="dsp56kBase">
+      <FILE id="dsb001" name="logging.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/logging.cpp"/>
+      <FILE id="dsb002" name="threadtools.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/threadtools.cpp"/>
+      <FILE id="dsb003" name="dspassert.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/dspassert.cpp"/>
+      <FILE id="dsb006" name="conditionvariable.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kBase/conditionvariable.cpp"/>
+      <FILE id="dsb004" name="trigger.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/trigger.cpp"/>
+      <FILE id="dsb005" name="win8sync.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/win8sync.cpp"/>
+    </GROUP>
+    <GROUP id="dsp56kEmu" name="dsp56kEmu">
+      <FILE id="dsp001" name="agu.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/agu.cpp"/>
+      <FILE id="dsp002" name="audio.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/audio.cpp"/>
+      <FILE id="dsp004" name="debuggerinterface.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/debuggerinterface.cpp"/>
+      <FILE id="dsp005" name="disasm.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/disasm.cpp"/>
+      <FILE id="dsp006" name="dma.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/dma.cpp"/>
+      <FILE id="dsp007" name="dsp.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/dsp.cpp"/>
+      <FILE id="dsp009" name="dspthread.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/dspthread.cpp"/>
+      <FILE id="dsp010" name="error.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/error.cpp"/>
+      <FILE id="dsp011" name="esai.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/esai.cpp"/>
+      <FILE id="dsp012" name="esaiclock.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/esaiclock.cpp"/>
+      <FILE id="dsp013" name="essi.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/essi.cpp"/>
+      <FILE id="dsp014" name="esxi.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/esxi.cpp"/>
+      <FILE id="dsp015" name="gpio.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/gpio.cpp"/>
+      <FILE id="dsp016" name="hdi08.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/hdi08.cpp"/>
+      <FILE id="dsp017" name="hdi08queue.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/hdi08queue.cpp"/>
+      <FILE id="dsp018" name="instructioncache.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/instructioncache.cpp"/>
+      <FILE id="dsp019" name="interpreterunittests.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/interpreterunittests.cpp"/>
+      <FILE id="dsp020" name="jit.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jit.cpp"/>
+      <FILE id="dsp021" name="jitasmjithelpers.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitasmjithelpers.cpp"/>
+      <FILE id="dsp022" name="jitblock.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitblock.cpp"/>
+      <FILE id="dsp023" name="jitblockchain.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitblockchain.cpp"/>
+      <FILE id="dsp024" name="jitblockinfo.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitblockinfo.cpp"/>
+      <FILE id="dsp025" name="jitblockruntimedata.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitblockruntimedata.cpp"/>
+      <FILE id="dsp026" name="jitdspmode.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitdspmode.cpp"/>
+      <FILE id="dsp027" name="jitdspregpool.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitdspregpool.cpp"/>
+      <FILE id="dsp028" name="jitdspregpoolregpair.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitdspregpoolregpair.cpp"/>
+      <FILE id="dsp029" name="jitdspregs.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitdspregs.cpp"/>
+      <FILE id="dsp030" name="jitdspvalue.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitdspvalue.cpp"/>
+      <FILE id="dsp031" name="jitemitter.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitemitter.cpp"/>
+      <FILE id="dsp032" name="jithelper.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jithelper.cpp"/>
+      <FILE id="dsp033" name="jitmem.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitmem.cpp"/>
+      <FILE id="dsp034" name="jitops.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops.cpp"/>
+      <FILE id="dsp035" name="jitops_agu.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_agu.cpp"/>
+      <FILE id="dsp036" name="jitops_agu_aarch64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_agu_aarch64.cpp"/>
+      <FILE id="dsp037" name="jitops_agu_x64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_agu_x64.cpp"/>
+      <FILE id="dsp038" name="jitops_alu.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_alu.cpp"/>
+      <FILE id="dsp039" name="jitops_alu_aarch64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_alu_aarch64.cpp"/>
+      <FILE id="dsp040" name="jitops_alu_x64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_alu_x64.cpp"/>
+      <FILE id="dsp041" name="jitops_ccr.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_ccr.cpp"/>
+      <FILE id="dsp042" name="jitops_ccr_aarch64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_ccr_aarch64.cpp"/>
+      <FILE id="dsp043" name="jitops_ccr_x64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_ccr_x64.cpp"/>
+      <FILE id="dsp044" name="jitops_decode.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_decode.cpp"/>
+      <FILE id="dsp045" name="jitops_decode_aarch64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_decode_aarch64.cpp"/>
+      <FILE id="dsp046" name="jitops_decode_x64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_decode_x64.cpp"/>
+      <FILE id="dsp047" name="jitops_helper.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_helper.cpp"/>
+      <FILE id="dsp048" name="jitops_helper_aarch64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_helper_aarch64.cpp"/>
+      <FILE id="dsp049" name="jitops_helper_x64.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitops_helper_x64.cpp"/>
+      <FILE id="dsp050" name="jitops_jmp.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_jmp.cpp"/>
+      <FILE id="dsp051" name="jitops_mem.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_mem.cpp"/>
+      <FILE id="dsp052" name="jitops_move.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/jitops_move.cpp"/>
+      <FILE id="dsp053" name="jitoptimizer.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitoptimizer.cpp"/>
+      <FILE id="dsp054" name="jitprofilingsupport.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitprofilingsupport.cpp"/>
+      <FILE id="dsp055" name="jitregtracker.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitregtracker.cpp"/>
+      <FILE id="dsp056" name="jitruntimedata.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitruntimedata.cpp"/>
+      <FILE id="dsp057" name="jitstackhelper.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitstackhelper.cpp"/>
+      <FILE id="dsp058" name="jittrampoline.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jittrampoline.cpp"/>
+      <FILE id="dsp059" name="jitunittests.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/jitunittests.cpp"/>
+      <FILE id="dsp060" name="memory.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/memory.cpp"/>
+      <FILE id="dsp061" name="memorybuffer.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/memorybuffer.cpp"/>
+      <FILE id="dsp062" name="omfloader.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/omfloader.cpp"/>
+      <FILE id="dsp063" name="opcodecycles.cpp" compile="1" resource="0"
+            file="source/dsp56300/source/dsp56kEmu/opcodecycles.cpp"/>
+      <FILE id="dsp064" name="opcodes.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/opcodes.cpp"/>
+      <FILE id="dsp065" name="peripherals.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/peripherals.cpp"/>
+      <FILE id="dsp066" name="registers.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/registers.cpp"/>
+      <FILE id="dsp067" name="timers.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/timers.cpp"/>
+      <FILE id="dsp069" name="types.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/types.cpp"/>
+      <FILE id="dsp070" name="unittests.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/unittests.cpp"/>
+      <FILE id="dsp071" name="utils.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/utils.cpp"/>
+    </GROUP>
+    <GROUP id="asmjit" name="asmjit">
+      <GROUP id="asmjit_arm" name="arm">
+        <FILE id="aj001" name="a64assembler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64assembler.cpp"/>
+        <FILE id="aj002" name="a64builder.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64builder.cpp"/>
+        <FILE id="aj003" name="a64compiler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64compiler.cpp"/>
+        <FILE id="aj004" name="a64emithelper.cpp" compile="1" resource="0"
+              file="source/dsp56300/source/asmjit/src/asmjit/arm/a64emithelper.cpp"/>
+        <FILE id="aj005" name="a64formatter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64formatter.cpp"/>
+        <FILE id="aj006" name="a64func.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64func.cpp"/>
+        <FILE id="aj007" name="a64instapi.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64instapi.cpp"/>
+        <FILE id="aj008" name="a64instdb.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64instdb.cpp"/>
+        <FILE id="aj009" name="a64operand.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64operand.cpp"/>
+        <FILE id="aj010" name="a64rapass.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/a64rapass.cpp"/>
+        <FILE id="aj011" name="armformatter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/arm/armformatter.cpp"/>
+      </GROUP>
+      <GROUP id="asmjit_core" name="core">
+        <FILE id="aj020" name="archtraits.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/archtraits.cpp"/>
+        <FILE id="aj021" name="assembler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/assembler.cpp"/>
+        <FILE id="aj022" name="builder.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/builder.cpp"/>
+        <FILE id="aj023" name="codeholder.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/codeholder.cpp"/>
+        <FILE id="aj024" name="codewriter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/codewriter.cpp"/>
+        <FILE id="aj025" name="compiler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/compiler.cpp"/>
+        <FILE id="aj026" name="constpool.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/constpool.cpp"/>
+        <FILE id="aj027" name="cpuinfo.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/cpuinfo.cpp"/>
+        <FILE id="aj028" name="emithelper.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/emithelper.cpp"/>
+        <FILE id="aj029" name="emitter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/emitter.cpp"/>
+        <FILE id="aj030" name="emitterutils.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/emitterutils.cpp"/>
+        <FILE id="aj031" name="environment.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/environment.cpp"/>
+        <FILE id="aj032" name="errorhandler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/errorhandler.cpp"/>
+        <FILE id="aj033" name="formatter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/formatter.cpp"/>
+        <FILE id="aj034" name="func.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/func.cpp"/>
+        <FILE id="aj035" name="funcargscontext.cpp" compile="1" resource="0"
+              file="source/dsp56300/source/asmjit/src/asmjit/core/funcargscontext.cpp"/>
+        <FILE id="aj036" name="globals.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/globals.cpp"/>
+        <FILE id="aj037" name="inst.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/inst.cpp"/>
+        <FILE id="aj038" name="jitallocator.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/jitallocator.cpp"/>
+        <FILE id="aj039" name="jitruntime.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/jitruntime.cpp"/>
+        <FILE id="aj040" name="logger.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/logger.cpp"/>
+        <FILE id="aj041" name="operand.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/operand.cpp"/>
+        <FILE id="aj042" name="osutils.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/osutils.cpp"/>
+        <FILE id="aj043" name="ralocal.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/ralocal.cpp"/>
+        <FILE id="aj044" name="rapass.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/rapass.cpp"/>
+        <FILE id="aj045" name="rastack.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/rastack.cpp"/>
+        <FILE id="aj046" name="string.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/string.cpp"/>
+        <FILE id="aj047" name="support.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/support.cpp"/>
+        <FILE id="aj048" name="target.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/target.cpp"/>
+        <FILE id="aj049" name="type.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/type.cpp"/>
+        <FILE id="aj050" name="virtmem.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/virtmem.cpp"/>
+        <FILE id="aj051" name="zone.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zone.cpp"/>
+        <FILE id="aj052" name="zonehash.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zonehash.cpp"/>
+        <FILE id="aj053" name="zonelist.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zonelist.cpp"/>
+        <FILE id="aj054" name="zonestack.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zonestack.cpp"/>
+        <FILE id="aj055" name="zonetree.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zonetree.cpp"/>
+        <FILE id="aj056" name="zonevector.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/core/zonevector.cpp"/>
+      </GROUP>
+      <GROUP id="asmjit_x86" name="x86">
+        <FILE id="aj060" name="x86assembler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86assembler.cpp"/>
+        <FILE id="aj061" name="x86builder.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86builder.cpp"/>
+        <FILE id="aj062" name="x86compiler.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86compiler.cpp"/>
+        <FILE id="aj063" name="x86emithelper.cpp" compile="1" resource="0"
+              file="source/dsp56300/source/asmjit/src/asmjit/x86/x86emithelper.cpp"/>
+        <FILE id="aj064" name="x86formatter.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86formatter.cpp"/>
+        <FILE id="aj065" name="x86func.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86func.cpp"/>
+        <FILE id="aj066" name="x86instapi.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86instapi.cpp"/>
+        <FILE id="aj067" name="x86instdb.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86instdb.cpp"/>
+        <FILE id="aj068" name="x86operand.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86operand.cpp"/>
+        <FILE id="aj069" name="x86rapass.cpp" compile="1" resource="0" file="source/dsp56300/source/asmjit/src/asmjit/x86/x86rapass.cpp"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="mc68k" name="mc68k">
+      <FILE id="m6001" name="gpt.cpp" compile="1" resource="0" file="source/mc68k/gpt.cpp"/>
+      <FILE id="m6002" name="hdi08.cpp" compile="1" resource="0" file="source/mc68k/hdi08.cpp"/>
+      <FILE id="m6003" name="logging.cpp" compile="1" resource="0" file="source/mc68k/logging.cpp"/>
+      <FILE id="m6004" name="mc68k.cpp" compile="1" resource="0" file="source/mc68k/mc68k.cpp"/>
+      <FILE id="m6005" name="peripheralBase.cpp" compile="1" resource="0"
+            file="source/mc68k/peripheralBase.cpp"/>
+      <FILE id="m6006" name="port.cpp" compile="1" resource="0" file="source/mc68k/port.cpp"/>
+      <FILE id="m6007" name="qsm.cpp" compile="1" resource="0" file="source/mc68k/qsm.cpp"/>
+      <FILE id="m6008" name="qspi.cpp" compile="1" resource="0" file="source/mc68k/qspi.cpp"/>
+      <FILE id="m6009" name="sim.cpp" compile="1" resource="0" file="source/mc68k/sim.cpp"/>
+      <FILE id="m6010" name="m68kcpu.c" compile="1" resource="0" file="source/mc68k/Musashi/m68kcpu.c"/>
+      <FILE id="m6011" name="m68kdasm.c" compile="1" resource="0" file="source/mc68k/Musashi/m68kdasm.c"/>
+      <FILE id="m6012" name="m68kops.c" compile="1" resource="0" file="source/mc68k/Musashi/m68kops.c"/>
+      <FILE id="m6013" name="softfloat.c" compile="1" resource="0" file="source/mc68k/Musashi/softfloat/softfloat.c"/>
+    </GROUP>
+  </MAINGROUP>
+  <JUCEOPTIONS JUCE_WEB_BROWSER="0" JUCE_USE_CURL="0" JUCE_DISPLAY_SPLASH_SCREEN="0"
+               JUCE_REPORT_APP_USAGE="0" JUCE_STRICT_REFCOUNTEDPOINTER="1"/>
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="0"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_cryptography" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+  </MODULES>
+  <LIVE_SETTINGS>
+    <OSX/>
+  </LIVE_SETTINGS>
+</JUCERPROJECT>
