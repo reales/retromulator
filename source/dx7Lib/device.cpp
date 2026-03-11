@@ -259,17 +259,17 @@ void Device::parseMIDI(const uint8_t* data, uint32_t size)
 	switch(status)
 	{
 	case 0x80: // Note Off
-		if(data[1] >= 36)
-			m_toSynth->key_off(data[1] - 36);
+		if(data[1] >= 34)
+			m_toSynth->key_off(data[1] - 34);
 		return;
 
 	case 0x90: // Note On
-		if(data[1] >= 36)
+		if(data[1] >= 34)
 		{
 			if(data[2] == 0)
-				m_toSynth->key_off(data[1] - 36);
+				m_toSynth->key_off(data[1] - 34);
 			else
-				m_toSynth->key_on(data[1] - 36, m_midiVelocity[data[2]]);
+				m_toSynth->key_on(data[1] - 34, m_midiVelocity[data[2]]);
 		}
 		return;
 
