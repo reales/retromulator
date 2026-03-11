@@ -275,6 +275,8 @@ namespace synthLib
 					m_pendingSysexInput.sysex.clear();
 				}
 			}
+
+			return;
 		}
 
 		m_midiIn.push_back(_ev);
