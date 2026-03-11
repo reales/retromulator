@@ -5,12 +5,21 @@
 
 namespace retromulator
 {
+    static constexpr const char* kSoundFilePattern = "*.sfz;*.sf2;*.wav;*.aif;*.aiff;*.flac;*.ogg;*.zbp;*.zbb";
+
+    static bool isAkaiSampler(SynthType type) { return type == SynthType::AkaiS1000; }
+
     static void findSysexFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
     {
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.syx");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.mid");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.bin");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.pfm");
+    }
+
+    static void findSoundFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
+    {
+        folder.findChildFiles(out, juce::File::findFiles, recursive, kSoundFilePattern);
     }
 
     static juce::String normalisePath(const std::string& p)
@@ -41,8 +50,11 @@ namespace retromulator
 
         // ── Synth combo ──────────────────────────────────────────────────────
         m_synthCombo.addItem("None", 1);
-        for(int i = 0; i < static_cast<int>(SynthType::Count); ++i)
-            m_synthCombo.addItem(synthTypeName(static_cast<SynthType>(i)), i + 2);
+        int displayCount = 0;
+        const auto* displayOrder = synthTypeDisplayOrder(displayCount);
+        for(int i = 0; i < displayCount; ++i)
+            m_synthCombo.addItem(synthTypeName(displayOrder[i]),
+                                 static_cast<int>(displayOrder[i]) + 2);
         m_synthCombo.setSelectedId(static_cast<int>(m_proc.getSynthType()) + 2,
                                    juce::dontSendNotification);
         m_synthCombo.onChange = [this] { onSynthTypeChanged(); };
@@ -80,7 +92,10 @@ namespace retromulator
             }
             else if(sel != m_proc.getCurrentProgram())
             {
-                m_proc.selectProgram(sel);
+                if(isAkaiSampler(type))
+                    m_proc.selectSoundPreset(sel);
+                else
+                    m_proc.selectProgram(sel);
                 updateStatus();
             }
         };
@@ -139,14 +154,24 @@ namespace retromulator
             else
             {
                 juce::Array<juce::File> files;
-                synthFolder.findChildFiles(files, juce::File::findFiles, false,
-                                           "*.syx;*.mid;*.bin;*.pfm");
+                if(isAkaiSampler(type))
+                    findSoundFiles(synthFolder, files);
+                else
+                    synthFolder.findChildFiles(files, juce::File::findFiles, false,
+                                               "*.syx;*.mid;*.bin;*.pfm");
                 files.sort();
 
                 if(idx < files.size())
                 {
-                    m_proc.loadPresetFromFile(files[idx].getFullPathName().toStdString(),
-                                              files[idx].getFileNameWithoutExtension().toStdString());
+                    if(isAkaiSampler(type))
+                    {
+                        m_proc.loadSoundFile(files[idx].getFullPathName().toStdString());
+                    }
+                    else
+                    {
+                        m_proc.loadPresetFromFile(files[idx].getFullPathName().toStdString(),
+                                                  files[idx].getFileNameWithoutExtension().toStdString());
+                    }
                     updateStatus();
                 }
             }
@@ -233,11 +258,16 @@ namespace retromulator
             const juce::String currentPath(normalisePath(m_proc.getSysexFilePath()));
 
             juce::Array<juce::File> files;
-            findSysexFiles(folder, files);
+            if(isAkaiSampler(type))
+                findSoundFiles(folder, files);
+            else
+                findSysexFiles(folder, files);
             files.sort();
 
+            const bool akai = isAkaiSampler(type);
+            const int extraItems = akai ? 1 : 3; // Akai: only Import; others: Import + Export x2
             const int fileCount = files.size();
-            bool needsRebuild = (m_bankCombo.getNumItems() != fileCount + 3);
+            bool needsRebuild = (m_bankCombo.getNumItems() != fileCount + extraItems);
             if(!needsRebuild)
                 for(int i = 0; i < fileCount; ++i)
                     if(m_bankCombo.getItemText(i) != files[i].getFileNameWithoutExtension())
@@ -249,15 +279,35 @@ namespace retromulator
                 for(int i = 0; i < fileCount; ++i)
                     m_bankCombo.addItem(files[i].getFileNameWithoutExtension(), i + 1);
                 m_bankCombo.addSeparator();
-                m_bankCombo.addItem("[ + Import... ]",     kImportId);
-                m_bankCombo.addItem("[ Export Preset... ]", kExportPresetId);
-                m_bankCombo.addItem("[ Export Bank... ]",   kExportBankId);
+                m_bankCombo.addItem(akai ? "[ + Load... ]" : "[ + Import... ]", kImportId);
+                if(!akai)
+                {
+                    m_bankCombo.addItem("[ Export Preset... ]", kExportPresetId);
+                    m_bankCombo.addItem("[ Export Bank... ]",   kExportBankId);
+                }
             }
 
             int selId = 0;
             for(int i = 0; i < files.size(); ++i)
                 if(files[i].getFullPathName() == currentPath)
                     { selId = i + 1; break; }
+
+            // For Akai, if the loaded file is outside the data folder, show its
+            // name in the combo even though it isn't in the folder listing.
+            if(selId == 0 && akai && !currentPath.isEmpty())
+            {
+                const juce::String extName = juce::File(currentPath).getFileNameWithoutExtension();
+                constexpr int kExternalFileId = 9000;
+                m_bankCombo.clear(juce::dontSendNotification);
+                m_bankCombo.addItem(extName, kExternalFileId);
+                m_bankCombo.addSeparator();
+                for(int i = 0; i < fileCount; ++i)
+                    m_bankCombo.addItem(files[i].getFileNameWithoutExtension(), i + 1);
+                m_bankCombo.addSeparator();
+                m_bankCombo.addItem("[ + Load... ]", kImportId);
+                selId = kExternalFileId;
+            }
+
             m_bankCombo.setSelectedId(selId, juce::dontSendNotification);
         }
     }
@@ -294,6 +344,17 @@ namespace retromulator
 
         const auto type = m_proc.getSynthType();
         const juce::File synthFolder(HeadlessProcessor::getSynthDataFolder(type));
+
+        if(isAkaiSampler(type))
+        {
+            m_bankCombo.setTextWhenNothingSelected("No Bank");
+            m_progCombo.setTextWhenNothingSelected("No Preset");
+        }
+        else
+        {
+            m_bankCombo.setTextWhenNothingSelected({});
+            m_progCombo.setTextWhenNothingSelected({});
+        }
 
         if(isFolderMode(type, synthFolder) && bankChanged && !currentPath.isEmpty())
         {
@@ -349,13 +410,18 @@ namespace retromulator
                 }
             }
 
-            const juce::String patch(m_proc.getPatchName());
-            const juce::String bankStr = currentPath.isEmpty()
-                ? juce::String{}
-                : juce::File(currentPath).getFileNameWithoutExtension();
-            const bool hasPatchName = !patch.isEmpty() && patch != bankStr;
-            const juce::String num = juce::String(progIdx + 1).paddedLeft('0', 3);
-            m_progCombo.changeItemText(progIdx + 1, hasPatchName ? (num + "  " + patch) : num);
+            // Update current item text (name may have been set after initial load via sendBankMessage).
+            // Skip for Akai — program names are already set correctly by loadSoundFile.
+            if(!isAkaiSampler(type))
+            {
+                const juce::String patch(m_proc.getPatchName());
+                const juce::String bankStr = currentPath.isEmpty()
+                    ? juce::String{}
+                    : juce::File(currentPath).getFileNameWithoutExtension();
+                const bool hasPatchName = !patch.isEmpty() && patch != bankStr;
+                const juce::String num = juce::String(progIdx + 1).paddedLeft('0', 3);
+                m_progCombo.changeItemText(progIdx + 1, hasPatchName ? (num + "  " + patch) : num);
+            }
 
             m_progCombo.setSelectedId(0,           juce::dontSendNotification);
             m_progCombo.setSelectedId(progIdx + 1, juce::dontSendNotification);
@@ -374,11 +440,21 @@ namespace retromulator
         const auto type = m_proc.getSynthType();
         if(type == SynthType::None) return;
 
-        const juce::File destFolder(HeadlessProcessor::getSynthDataFolder(type));
-        destFolder.createDirectory();
+        const juce::File synthFolder(HeadlessProcessor::getSynthDataFolder(type));
+        synthFolder.createDirectory();
 
-        m_fileChooser = std::make_shared<juce::FileChooser>(
-            "Select SysEx patch file", destFolder, "*.syx;*.mid;*.bin;*.pfm");
+        const auto lastFolder = HeadlessProcessor::getLastLoadFolder(type);
+        const auto destFolder = lastFolder.empty() ? synthFolder : juce::File(lastFolder);
+
+        const juce::String filter = isAkaiSampler(type)
+            ? juce::String(kSoundFilePattern)
+            : juce::String("*.syx;*.mid;*.bin;*.pfm");
+
+        const juce::String title = isAkaiSampler(type)
+            ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
+            : "Select SysEx patch file";
+
+        m_fileChooser = std::make_shared<juce::FileChooser>(title, destFolder, filter);
 
         m_fileChooser->launchAsync(
             juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -386,6 +462,14 @@ namespace retromulator
             {
                 const auto chosen = fc.getResult();
                 if(!chosen.existsAsFile()) return;
+                HeadlessProcessor::setLastLoadFolder(type, chosen.getParentDirectory().getFullPathName().toStdString());
+
+                if(isAkaiSampler(type))
+                {
+                    m_proc.loadSoundFile(chosen.getFullPathName().toStdString());
+                    updateStatus();
+                    return;
+                }
 
                 // ── Virus ABC / TI cross-detection ──────────────────────────
                 if(type == SynthType::VirusABC || type == SynthType::VirusTI)
@@ -429,7 +513,7 @@ namespace retromulator
     void BasicEditor::onExportPreset()
     {
         const auto type = m_proc.getSynthType();
-        if(type == SynthType::None || m_proc.getProgramCount() == 0) return;
+        if(type == SynthType::None || isAkaiSampler(type) || m_proc.getProgramCount() == 0) return;
 
         const juce::String patchName(m_proc.getPatchName());
         const juce::String defaultName = patchName.isEmpty()
@@ -470,7 +554,7 @@ namespace retromulator
     void BasicEditor::onExportBank()
     {
         const auto type = m_proc.getSynthType();
-        if(type == SynthType::None || m_proc.getProgramCount() == 0) return;
+        if(type == SynthType::None || isAkaiSampler(type) || m_proc.getProgramCount() == 0) return;
 
         const juce::String currentPath(m_proc.getSysexFilePath());
         const juce::String defaultName = currentPath.isEmpty()
@@ -576,7 +660,10 @@ namespace retromulator
                 const int next = cur + delta;
                 if(next >= 0 && next < count)
                 {
-                    m_proc.selectProgram(next);
+                    if(isAkaiSampler(type))
+                        m_proc.selectSoundPreset(next);
+                    else
+                        m_proc.selectProgram(next);
                     updateStatus();
                     return;
                 }
@@ -584,7 +671,10 @@ namespace retromulator
 
             const juce::File synthFolder2(HeadlessProcessor::getSynthDataFolder(type));
             juce::Array<juce::File> files;
-            findSysexFiles(synthFolder2, files);
+            if(isAkaiSampler(type))
+                findSoundFiles(synthFolder2, files);
+            else
+                findSysexFiles(synthFolder2, files);
             files.sort();
             if(files.isEmpty()) return;
 
@@ -595,9 +685,16 @@ namespace retromulator
                     { fileCur = i; break; }
 
             const int next = (fileCur + delta + files.size()) % files.size();
-            m_proc.loadPresetFromFile(files[next].getFullPathName().toStdString(),
-                                      files[next].getFileNameWithoutExtension().toStdString(),
-                                      delta < 0 ? INT_MAX : 0);
+            if(isAkaiSampler(type))
+            {
+                m_proc.loadSoundFile(files[next].getFullPathName().toStdString());
+            }
+            else
+            {
+                m_proc.loadPresetFromFile(files[next].getFullPathName().toStdString(),
+                                          files[next].getFileNameWithoutExtension().toStdString(),
+                                          delta < 0 ? INT_MAX : 0);
+            }
             updateStatus();
         }
     }
@@ -646,11 +743,19 @@ namespace retromulator
         else
         {
             juce::Array<juce::File> files;
-            findSysexFiles(folder, files);
+            if(isAkaiSampler(type))
+                findSoundFiles(folder, files);
+            else
+                findSysexFiles(folder, files);
             files.sort();
             if(!files.isEmpty())
-                m_proc.loadPresetFromFile(files[0].getFullPathName().toStdString(),
-                                          files[0].getFileNameWithoutExtension().toStdString(), 0);
+            {
+                if(isAkaiSampler(type))
+                    m_proc.loadSoundFile(files[0].getFullPathName().toStdString());
+                else
+                    m_proc.loadPresetFromFile(files[0].getFullPathName().toStdString(),
+                                              files[0].getFileNameWithoutExtension().toStdString(), 0);
+            }
         }
 
         updateStatus();
@@ -731,11 +836,19 @@ namespace retromulator
         else
         {
             juce::Array<juce::File> files;
-            findSysexFiles(folder, files);
+            if(isAkaiSampler(newType))
+                findSoundFiles(folder, files);
+            else
+                findSysexFiles(folder, files);
             files.sort();
             if(!files.isEmpty())
-                m_proc.loadPresetFromFile(files[0].getFullPathName().toStdString(),
-                                          files[0].getFileNameWithoutExtension().toStdString(), 0);
+            {
+                if(isAkaiSampler(newType))
+                    m_proc.loadSoundFile(files[0].getFullPathName().toStdString());
+                else
+                    m_proc.loadPresetFromFile(files[0].getFullPathName().toStdString(),
+                                              files[0].getFileNameWithoutExtension().toStdString(), 0);
+            }
         }
 
         updateStatus();

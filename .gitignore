@@ -3,7 +3,8 @@ Bin/
 build/
 Builds/
 JuceLibraryCode/
-Modules/
+Modules/*
+!Modules/SFZero/
 
 # Xcode
 *.xcworkspace

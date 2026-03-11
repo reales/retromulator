@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <atomic>
 
+namespace akaiLib { class Device; }
+
 namespace retromulator
 {
     class HeadlessProcessor final : public pluginLib::Processor
@@ -52,6 +54,17 @@ namespace retromulator
         // Names for all programs are embedded in each message.
         bool exportCurrentBankToFile(const std::string& destPath) const;
 
+        // ── Sound file loading (Akai S1000) ──────────────────────────────────
+        // Load a sound file (SFZ/SF2/WAV/FLAC/ZBP/ZBB) into the Akai device.
+        // Returns true on success. Populates program names from SF2/ZBP presets.
+        bool loadSoundFile(const std::string& filePath);
+
+        // Select a preset within a multi-preset sound file (SF2/ZBP).
+        bool selectSoundPreset(int index);
+
+        // Returns the Akai device if the current synth type is AkaiS1000, else nullptr.
+        akaiLib::Device* getAkaiDevice() const;
+
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most
         // synths; >1 for JE-8086 where each performance = several sub-messages).
@@ -61,6 +74,8 @@ namespace retromulator
         // ── Data folder helpers ─────────────────────────────────────────────
         static std::string getDataFolder();
         static std::string getSynthDataFolder(SynthType type);
+        static std::string getLastLoadFolder(SynthType type);
+        static void        setLastLoadFolder(SynthType type, const std::string& folder);
 
         // ── pluginLib::Processor pure virtuals ──────────────────────────────
         synthLib::Device* createDevice() override;

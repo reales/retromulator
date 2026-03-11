@@ -29,6 +29,8 @@
 #include "virusLib/microcontrollerTypes.h"
 #include "synthLib/romLoader.h"
 
+#include "akaiLib/device.h"
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -80,6 +82,46 @@ namespace retromulator
         return getDataFolder() + synthTypeName(type) + "/";
     }
 
+    static juce::File getSettingsFile()
+    {
+        return juce::File(juce::String(HeadlessProcessor::getDataFolder()) + "settings.xml");
+    }
+
+    static juce::String makeSettingsKey(SynthType type)
+    {
+        return juce::String("lastLoadFolder_" + juce::String(synthTypeName(type)))
+            .replaceCharacter(' ', '_');
+    }
+
+    std::string HeadlessProcessor::getLastLoadFolder(SynthType type)
+    {
+        const auto file = getSettingsFile();
+        if(!file.existsAsFile()) return {};
+
+        if(const auto xml = juce::XmlDocument::parse(file))
+        {
+            const auto val = xml->getStringAttribute(makeSettingsKey(type));
+            if(val.isNotEmpty() && juce::File(val).isDirectory())
+                return val.toStdString();
+        }
+        return {};
+    }
+
+    void HeadlessProcessor::setLastLoadFolder(SynthType type, const std::string& folder)
+    {
+        const auto file = getSettingsFile();
+        std::unique_ptr<juce::XmlElement> xml;
+
+        if(file.existsAsFile())
+            xml = juce::XmlDocument::parse(file);
+
+        if(!xml)
+            xml = std::make_unique<juce::XmlElement>("RetromulatorSettings");
+
+        xml->setAttribute(makeSettingsKey(type), juce::String(folder));
+        xml->writeTo(file);
+    }
+
     // ── GPL boundary helpers ─────────────────────────────────────────────────
     // These three functions exist solely to keep GPL-specific headers (per-synth
     // ROM loaders, synthLib::DeviceError) out of source/custom/RetroEditor.cpp.
@@ -107,8 +149,9 @@ namespace retromulator
         case SynthType::XT:       return xt::RomLoader::findROM().isValid();
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
-        case SynthType::DX7:      return dx7Emu::RomLoader::findROM().isValid();
-        default:                  return false;
+        case SynthType::DX7:       return dx7Emu::RomLoader::findROM().isValid();
+        case SynthType::AkaiS1000: return true; // No ROM needed
+        default:                   return false;
         }
     }
 
@@ -474,10 +517,8 @@ namespace retromulator
             }
         }
 
-        // JE-8086 runs synchronously on the audio thread (JeThread falls back to
-        // processJob inline when m_currentLatency==0), so the default extra latency
-        // block adds ~11ms of MIDI delay for no benefit. Set it to zero.
-        setLatencyBlocks(type == SynthType::JE8086 ? 0 : 1);
+        // JE-8086 and Akai run synchronously — no extra latency block needed.
+        setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000) ? 0 : 1);
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -960,6 +1001,68 @@ namespace retromulator
         return loadPreset(data, filePath, autoName, programIndex);
     }
 
+    // ── Sound file loading (Akai S1000) ────────────────────────────────────────
+
+    akaiLib::Device* HeadlessProcessor::getAkaiDevice() const
+    {
+        if(m_synthType != SynthType::AkaiS1000)
+            return nullptr;
+        return dynamic_cast<akaiLib::Device*>(m_device.get());
+    }
+
+    bool HeadlessProcessor::loadSoundFile(const std::string& filePath)
+    {
+        auto* dev = getAkaiDevice();
+        if(!dev)
+            return false;
+
+        if(!dev->loadSoundFile(filePath))
+            return false;
+
+        m_sysexFilePath = filePath;
+        m_patchName     = juce::File(filePath).getFileNameWithoutExtension().toStdString();
+        m_sysexData.clear();
+        m_bankMessages.clear();
+        m_bankStride = 1;
+
+        // Populate program names from SF2/ZBP presets
+        const int presetCount = dev->getPresetCount();
+        if(presetCount > 0)
+        {
+            m_programNames.resize(static_cast<size_t>(presetCount));
+            for(int i = 0; i < presetCount; ++i)
+                m_programNames[static_cast<size_t>(i)] = dev->getPresetName(i);
+            m_bankMessages.resize(static_cast<size_t>(presetCount));
+        }
+        else
+        {
+            // Single-file sound (SFZ/WAV): one program entry with filename as name
+            m_programNames = { m_patchName };
+            m_bankMessages.resize(1);
+        }
+        m_currentProgram = 0;
+
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        return true;
+    }
+
+    bool HeadlessProcessor::selectSoundPreset(int index)
+    {
+        auto* dev = getAkaiDevice();
+        if(!dev)
+            return false;
+
+        if(!dev->selectPreset(index))
+            return false;
+
+        m_currentProgram = index;
+        if(index >= 0 && index < static_cast<int>(m_programNames.size()))
+            m_patchName = m_programNames[static_cast<size_t>(index)];
+
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        return true;
+    }
+
     // ── Preset export ────────────────────────────────────────────────────────────
 
     // Write a name into an N2X sysex message using the Aura extension.
@@ -1118,7 +1221,18 @@ namespace retromulator
         appendString(destData, m_romPath);
         appendString(destData, m_sysexFilePath);
         appendString(destData, m_patchName);
-        appendBytes (destData, m_sysexData);
+
+        // Akai S1000: no embedded sysex data — always loads from file path
+        if(m_synthType == SynthType::AkaiS1000)
+        {
+            std::vector<uint8_t> empty;
+            appendBytes(destData, empty);
+        }
+        else
+        {
+            appendBytes(destData, m_sysexData);
+        }
+
         appendInt32 (destData, static_cast<int32_t>(m_currentProgram));
         appendInt32 (destData, static_cast<int32_t>(m_savedEditorWidth));
         appendInt32 (destData, static_cast<int32_t>(m_savedEditorHeight));
@@ -1188,11 +1302,24 @@ namespace retromulator
         const auto newType = static_cast<SynthType>(synthTypeInt);
         setSynthType(newType, romPath);
 
-        // loadPreset splits the bank, stores messages, and sends message[savedProgram].
-        // We then restore the original sysexFilePath (loadPreset would set it via copySysexToDataFolder).
-        if(!sysexData.empty())
-            loadPreset(sysexData, {}, patchName, static_cast<int>(savedProgram));
+        if(newType == SynthType::AkaiS1000)
+        {
+            // Akai: reload from the original file path
+            if(!sysexFilePath.empty())
+            {
+                loadSoundFile(sysexFilePath);
+                if(savedProgram > 0)
+                    selectSoundPreset(static_cast<int>(savedProgram));
+            }
+        }
+        else
+        {
+            // loadPreset splits the bank, stores messages, and sends message[savedProgram].
+            // We then restore the original sysexFilePath (loadPreset would set it via copySysexToDataFolder).
+            if(!sysexData.empty())
+                loadPreset(sysexData, {}, patchName, static_cast<int>(savedProgram));
 
-        m_sysexFilePath = sysexFilePath;
+            m_sysexFilePath = sysexFilePath;
+        }
     }
 }

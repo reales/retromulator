@@ -19,6 +19,8 @@
 #include "dx7Lib/device.h"
 #include "dx7Lib/romloader.h"
 
+#include "akaiLib/device.h"
+
 #include "synthLib/romLoader.h"
 #include "synthLib/deviceException.h"
 
@@ -166,6 +168,12 @@ namespace retromulator
                 p.romData  = rom.getData();
                 p.romName  = rom.getFilename();
                 return new dx7Emu::Device(p);
+            }
+
+            case SynthType::AkaiS1000:
+            {
+                synthLib::DeviceCreateParams p;
+                return new akaiLib::Device(p);
             }
 
             default:

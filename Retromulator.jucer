@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.1.0"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.0.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -14,7 +14,7 @@
               enableIAA="0" jucerFormatVersion="1" displaySplashScreen="0"
               cppLanguageStandard="17">
   <EXPORTFORMATS>
-    <XCODE_MAC targetFolder="Builds/MacOSX" objCExtraSuffix="Retromulator_xc"
+    <XCODE_MAC targetFolder="Builds/MacOSX-GPL" objCExtraSuffix="Retromulator_xc"
                postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1"
                extraCompilerFlags="-Wno-deprecated-declarations -include AppConfig.h"
                extraLinkerFlags="">
@@ -46,6 +46,7 @@
         <MODULEPATH id="juce_graphics" path="../Modules"/>
         <MODULEPATH id="juce_gui_basics" path="../Modules"/>
         <MODULEPATH id="juce_gui_extra" path="../Modules"/>
+        <MODULEPATH id="SFZero" path="Modules"/>
       </MODULEPATHS>
     </XCODE_MAC>
   </EXPORTFORMATS>
@@ -280,6 +281,9 @@
       <FILE id="je010" name="sysexRemoteControl.cpp" compile="1" resource="0"
             file="source/ronaldo/je8086/jeLib/sysexRemoteControl.cpp"/>
       <FILE id="je011" name="storage.cpp" compile="1" resource="0" file="source/ronaldo/common/storage.cpp"/>
+    </GROUP>
+    <GROUP id="akaiLib" name="akaiLib">
+      <FILE id="ak001" name="device.cpp" compile="1" resource="0" file="source/akaiLib/device.cpp"/>
     </GROUP>
     <GROUP id="dx7Lib" name="dx7Lib">
       <FILE id="dx001" name="HD6303R.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R.cpp"/>
@@ -578,8 +582,7 @@
     </GROUP>
   </MAINGROUP>
   <JUCEOPTIONS JUCE_WEB_BROWSER="0" JUCE_USE_CURL="0" JUCE_DISPLAY_SPLASH_SCREEN="0"
-               JUCE_REPORT_APP_USAGE="0" JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_ASIO="1"
-               JUCE_JACK="1"/>
+               JUCE_REPORT_APP_USAGE="0" JUCE_STRICT_REFCOUNTEDPOINTER="1"/>
   <MODULES>
     <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
@@ -595,6 +598,7 @@
     <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="SFZero" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
   </MODULES>
   <LIVE_SETTINGS>
     <OSX/>

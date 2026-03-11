@@ -112,7 +112,11 @@ namespace ptypes {
 
 typedef char* sockval_t;
 
-#ifndef WIN32
+#ifdef WIN32
+// POSIX types not defined by MSVC
+typedef unsigned long in_addr_t;
+typedef ptrdiff_t ssize_t;
+#else
 #  define closesocket close
 #endif
 

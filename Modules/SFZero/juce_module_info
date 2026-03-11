@@ -1,0 +1,29 @@
+{
+  "id": "SFZero",
+  "name": "SFZero sample player",
+  "version": "3.0.0",
+  "description": "SFZ/SF2/ZBP/ZBB sample player with 8-point sinc resampler, MIDI CC support, pitch bend, mod wheel vibrato, sustain pedal. Forked from github.com/stevefolta/SFZero, JUCE module by Leo Olivers, extended by discoDSP.",
+  "website": "https://www.discodsp.com",
+  "license": "MIT",
+
+  "dependencies": [
+    {
+      "id": "juce_gui_basics",
+      "version": "4.1.0"
+    },
+    {
+      "id": "juce_audio_basics",
+      "version": "4.1.0"
+    },
+    {
+      "id": "juce_audio_processors",
+      "version": "4.1.0"
+    }
+  ],
+
+  "include": "SFZero.h",
+
+  "compile": [ { "file": "SFZero.cpp" }  ],
+  
+  "browse": [ "sfzero/*" ]
+}
