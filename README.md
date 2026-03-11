@@ -15,7 +15,7 @@ A DAW plugin (AAX / VST3 / AU) that emulates classic hardware synthesizers by ru
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) | AAX, VST3, AU |
 | Akai S1000 | SFZero v3.0.0 sample engine (MIT) | AAX, VST3, AU |
 
-The DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The Akai S1000 sampler loads SF2, SFZ, ZBP, and ZBB sample banks via the [SFZero](https://github.com/discoDSP/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, and discoDSP Bliss sampler format.
+The DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The Akai S1000 sampler loads SF2, SFZ, ZBP, and ZBB sample banks via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, and discoDSP Bliss sampler format.
 
 ## How it differs from Gearmulator
 
@@ -32,7 +32,7 @@ The emulation engines powering Retromulator are the work of the Gearmulator proj
 - **chiaccona** — [VDX7](https://github.com/chiaccona/VDX7), cycle-accurate Yamaha DX7 emulation (HD6303R CPU, EGS, OPS), GPL v3
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
 - **Leo Olivers** — SFZero JUCE module port
-- **discoDSP** — [SFZero v3.0.0](https://github.com/discoDSP/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license
+- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license
 
 This plugin wrapper (JUCE integration, UI, AAX/AU/VST3 plumbing) is developed separately and is not affiliated with or endorsed by the Gearmulator project.
 
