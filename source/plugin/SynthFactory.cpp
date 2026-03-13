@@ -20,6 +20,7 @@
 #include "dx7Lib/romloader.h"
 
 #include "akaiLib/device.h"
+#include "openWurliLib/device.h"
 
 #include "synthLib/romLoader.h"
 #include "synthLib/deviceException.h"
@@ -174,6 +175,12 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new akaiLib::Device(p);
+            }
+
+            case SynthType::OpenWurli:
+            {
+                synthLib::DeviceCreateParams p;
+                return new openWurliLib::Device(p);
             }
 
             default:

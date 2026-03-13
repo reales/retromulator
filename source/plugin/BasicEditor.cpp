@@ -202,11 +202,17 @@ namespace retromulator
         const int y   = (h - ctH) / 2;
         const int pad = 4;
 
+        const bool isOpenWurli = (m_proc.getSynthType() == SynthType::OpenWurli);
+
         int x = 130;
         m_synthCombo.setBounds(x, y, 110, ctH); x += 110 + pad;
+        m_prevBtn.setEnabled(!isOpenWurli);
         m_prevBtn   .setBounds(x, y,  24, ctH); x +=  24 + 2;
+        m_nextBtn.setEnabled(!isOpenWurli);
         m_nextBtn   .setBounds(x, y,  24, ctH); x +=  24 + pad;
+        m_progCombo.setEnabled(!isOpenWurli);
         m_progCombo .setBounds(x, y, 160, ctH); x += 160 + pad;
+        m_bankCombo.setEnabled(!isOpenWurli);
         m_bankCombo .setBounds(x, y, 160, ctH); x += 160 + pad;
         m_statusLabel.setBounds(x, y, getWidth() - x - 4, ctH);
     }
@@ -218,6 +224,17 @@ namespace retromulator
         if(type == SynthType::None)
         {
             m_bankCombo.clear(juce::dontSendNotification);
+            return;
+        }
+
+        // OpenWurli is a single physical model — no banks/presets to import.
+        if(type == SynthType::OpenWurli)
+        {
+            if(m_bankCombo.getNumItems() == 0 || m_bankCombo.getText() != "by Joshua Price")
+            {
+                m_bankCombo.clear(juce::dontSendNotification);
+                m_bankCombo.setText("by Joshua Price", juce::dontSendNotification);
+            }
             return;
         }
 
@@ -412,7 +429,7 @@ namespace retromulator
 
             // Update current item text (name may have been set after initial load via sendBankMessage).
             // Skip for Akai — program names are already set correctly by loadSoundFile.
-            if(!isAkaiSampler(type))
+            if(progCount > 0 && !isAkaiSampler(type))
             {
                 const juce::String patch(m_proc.getPatchName());
                 const juce::String bankStr = currentPath.isEmpty()
@@ -424,7 +441,10 @@ namespace retromulator
             }
 
             m_progCombo.setSelectedId(0,           juce::dontSendNotification);
-            m_progCombo.setSelectedId(progIdx + 1, juce::dontSendNotification);
+            if(progCount > 0)
+                m_progCombo.setSelectedId(progIdx + 1, juce::dontSendNotification);
+            else
+                m_progCombo.setText("Physical Model", juce::dontSendNotification);
         }
 
         const bool synthChanged = (type != m_lastSynthType);
