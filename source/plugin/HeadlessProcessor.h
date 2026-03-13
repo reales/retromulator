@@ -110,6 +110,12 @@ namespace retromulator
 
         const std::vector<std::string>& getProgramNames() const { return m_programNames; }
 
+        const std::string& getAkaiBrowseFolder() const { return m_akaiBrowseFolder; }
+        void setAkaiBrowseFolder(const std::string& f)  { m_akaiBrowseFolder = f; }
+
+        int  getAkaiSliceCount() const     { return m_akaiSliceCount; }
+        void setAkaiSliceCount(int count)  { m_akaiSliceCount = count; }
+
         // ── juce::AudioProcessor overrides ──────────────────────────────────
         bool hasEditor() const override { return true; }
         juce::AudioProcessorEditor* createEditor() override;
@@ -147,6 +153,8 @@ namespace retromulator
 
         std::string m_sysexFilePath;   // path to the last loaded sysex file (in data folder)
         std::string m_patchName;       // human-readable patch name
+        std::string m_akaiBrowseFolder; // Akai browse-folder path (empty = not in browse mode)
+        int m_akaiSliceCount = 0;       // 0 = root play, 4/8/16/32 = auto-sliced
         std::vector<uint8_t> m_sysexData; // raw sysex bytes of the loaded file
 
         // Split messages from the loaded bank; index into it for program selection.

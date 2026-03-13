@@ -48,6 +48,13 @@ namespace akaiLib
         bool selectPreset(int index);
         int  getSelectedPreset() const;
 
+        // ── Auto-slice (drum mapping) ────────────────────────────────────────
+        // Returns true if the current sound is a single audio file that can be sliced.
+        bool isSliceable() const;
+        // Re-create the sound with numSlices equal regions mapped to consecutive
+        // MIDI keys starting at 60 (C4). Returns true on success.
+        bool autoSlice(int numSlices);
+
         // Currently loaded file path
         const std::string& getLoadedFilePath() const { return m_filePath; }
 

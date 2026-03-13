@@ -179,6 +179,82 @@ namespace akaiLib
         return m_selectedPreset;
     }
 
+    // ── Auto-slice ───────────────────────────────────────────────────────────
+
+    bool Device::isSliceable() const
+    {
+        if(m_filePath.empty() || m_presetCount > 0)
+            return false;
+
+        const juce::File f(m_filePath);
+        const auto ext = f.getFileExtension().toLowerCase();
+        return (ext == ".wav" || ext == ".aif" || ext == ".aiff" ||
+                ext == ".flac" || ext == ".ogg");
+    }
+
+    bool Device::autoSlice(int numSlices)
+    {
+        if(numSlices < 1 || m_filePath.empty())
+            return false;
+
+        const juce::File file(m_filePath);
+        if(!file.existsAsFile())
+            return false;
+
+        // We need the sample length — load the file via format manager to query it.
+        std::unique_ptr<juce::AudioFormatReader> reader(
+            m_formatManager->createReaderFor(file));
+        if(!reader)
+            return false;
+
+        const juce::int64 totalFrames = static_cast<juce::int64>(reader->lengthInSamples);
+        reader.reset(); // close the reader before reloading
+
+        if(totalFrames <= 0)
+            return false;
+
+        const juce::int64 sliceLen = totalFrames / numSlices;
+        if(sliceLen <= 0)
+            return false;
+
+        // Build SFZ text with one region per slice, mapped to consecutive keys from C4 (60)
+        juce::String sfzText = "<group>\n";
+        for(int i = 0; i < numSlices; ++i)
+        {
+            const int key = 60 + i;
+            if(key > 127) break;
+
+            const juce::int64 sliceStart = i * sliceLen;
+            const juce::int64 sliceEnd   = (i == numSlices - 1)
+                                           ? (totalFrames - 1)
+                                           : ((i + 1) * sliceLen - 1);
+
+            sfzText += "<region> sample=" + file.getFileName()
+                     + " lokey=" + juce::String(key)
+                     + " hikey=" + juce::String(key)
+                     + " pitch_keycenter=" + juce::String(key)
+                     + " offset=" + juce::String(sliceStart)
+                     + " end=" + juce::String(sliceEnd)
+                     + "\n";
+        }
+
+        auto* sound = new sfzero::Sound(file);
+        sound->loadRegionsFromText(sfzText.toRawUTF8(),
+                                   static_cast<unsigned int>(sfzText.length()));
+        sound->loadSamples(m_formatManager.get());
+
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_synth->clearSounds();
+            m_synth->addSound(sound);
+            m_synth->setCurrentPlaybackSampleRate(static_cast<double>(m_samplerate));
+            m_presetCount   = 0;
+            m_selectedPreset = 0;
+        }
+
+        return true;
+    }
+
     // ── Audio processing ──────────────────────────────────────────────────────
 
     void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/,

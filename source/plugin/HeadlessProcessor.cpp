@@ -1286,6 +1286,18 @@ namespace retromulator
                 ow->getState(owState, synthLib::StateTypeGlobal);
             appendBytes(destData, owState);
         }
+
+        // Akai browse folder path (optional, backwards compatible)
+        appendString(destData, m_akaiBrowseFolder);
+
+        // Akai extended state: fixed block of 16 int32s for future expansion.
+        // [0] = auto-slice count (0=root, 4/8/16/32)
+        // [1..15] = reserved (zero)
+        static constexpr int kAkaiReservedSlots = 16;
+        appendInt32(destData, static_cast<int32_t>(kAkaiReservedSlots)); // slot count
+        appendInt32(destData, static_cast<int32_t>(m_akaiSliceCount));   // [0]
+        for(int i = 1; i < kAkaiReservedSlots; ++i)
+            appendInt32(destData, 0);                                     // [1..7]
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -1360,6 +1372,14 @@ namespace retromulator
                 loadSoundFile(sysexFilePath);
                 if(savedProgram > 0)
                     selectSoundPreset(static_cast<int>(savedProgram));
+
+                // Re-apply auto-slice if it was active
+                if(m_akaiSliceCount > 0)
+                {
+                    auto* dev = getAkaiDevice();
+                    if(dev)
+                        dev->autoSlice(m_akaiSliceCount);
+                }
             }
         }
         else
@@ -1381,6 +1401,29 @@ namespace retromulator
             if(!owState.empty())
                 if(auto* ow = getOpenWurliDevice())
                     ow->setState(owState, synthLib::StateTypeGlobal);
+        }
+
+        // Restore Akai browse folder path (optional, backwards compatible)
+        std::string browseFolder;
+        if(readString(bytes, sizeInBytes, offset, browseFolder))
+            m_akaiBrowseFolder = browseFolder;
+
+        // Restore Akai extended state block (optional, backwards compatible)
+        int32_t slotCount = 0;
+        if(readInt32(bytes, sizeInBytes, offset, slotCount) && slotCount > 0)
+        {
+            int32_t slots[16] = {};
+            const int toRead = std::min(static_cast<int>(slotCount), 16);
+            for(int i = 0; i < toRead; ++i)
+                readInt32(bytes, sizeInBytes, offset, slots[i]);
+            // Skip any extra slots from a newer version
+            for(int i = toRead; i < static_cast<int>(slotCount); ++i)
+            {
+                int32_t dummy = 0;
+                readInt32(bytes, sizeInBytes, offset, dummy);
+            }
+            m_akaiSliceCount = static_cast<int>(slots[0]);
+            // slots[1..15] reserved for future use
         }
     }
 }
