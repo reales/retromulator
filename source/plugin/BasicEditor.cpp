@@ -443,8 +443,6 @@ namespace retromulator
             m_progCombo.setSelectedId(0,           juce::dontSendNotification);
             if(progCount > 0)
                 m_progCombo.setSelectedId(progIdx + 1, juce::dontSendNotification);
-            else
-                m_progCombo.setText("Physical Model", juce::dontSendNotification);
         }
 
         const bool synthChanged = (type != m_lastSynthType);

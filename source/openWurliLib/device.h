@@ -103,7 +103,7 @@ private:
 	openWurli::Speaker m_speaker;
 
 	// Parameters (MIDI CC mapped)
-	float m_volume = 0.63f;
+	float m_volume = 1.0f;
 	float m_tremoloRate = 5.63f;
 	float m_tremoloDepth = 0.5f;
 	float m_speakerCharacter = 0.0f;
