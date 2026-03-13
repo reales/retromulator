@@ -11,6 +11,8 @@ namespace juce { class AudioFormatManager; }
 
 namespace sfzero { class Synth; class Sound; class SF2Sound; class ZBPSound; }
 
+namespace akaiLib { class AkaiIsoReader; }
+
 namespace akaiLib
 {
     class Device final : public synthLib::Device
@@ -55,6 +57,20 @@ namespace akaiLib
         // MIDI keys starting at 60 (C4). Returns true on success.
         bool autoSlice(int numSlices);
 
+        // ── Akai ISO loading ────────────────────────────────────────────────
+        // Open an Akai ISO/BIN/CUE image. Scans partitions and discovers programs.
+        // Returns true on success. Call getIsoPresetCount()/selectIsoPreset() after.
+        bool loadIsoFile(const std::string& filePath);
+
+        // Number of programs found in the loaded ISO
+        int  getIsoPresetCount() const;
+        // Program display name: "A: ProgramName" etc.
+        std::string getIsoPresetName(int index) const;
+        // Load a specific program from the ISO into the SFZ engine
+        bool selectIsoPreset(int index);
+        // Is an ISO currently loaded?
+        bool isIsoLoaded() const { return m_isoReader != nullptr; }
+
         // Currently loaded file path
         const std::string& getLoadedFilePath() const { return m_filePath; }
 
@@ -82,6 +98,9 @@ namespace akaiLib
         // For multi-preset files (SF2, ZBP)
         int m_presetCount    = 0;
         int m_selectedPreset = 0;
+
+        // For Akai ISO images
+        std::unique_ptr<AkaiIsoReader> m_isoReader;
 
         // CC20 global tuning (cents, ±2400 range centered at CC value 64)
     public:

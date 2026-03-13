@@ -1,4 +1,5 @@
 #include "device.h"
+#include "akaiIsoReader.h"
 
 #include "../../Modules/SFZero/SFZero.h"
 
@@ -67,6 +68,9 @@ namespace akaiLib
         const juce::File file(filePath);
         if(!file.existsAsFile())
             return false;
+
+        // Clear any loaded ISO when switching to a regular sound file
+        m_isoReader.reset();
 
         const auto ext = file.getFileExtension().toLowerCase();
 
@@ -184,6 +188,110 @@ namespace akaiLib
     int Device::getSelectedPreset() const
     {
         return m_selectedPreset;
+    }
+
+    // ── Akai ISO loading ──────────────────────────────────────────────────────
+
+    bool Device::loadIsoFile(const std::string& filePath)
+    {
+        if(filePath.empty())
+            return false;
+
+        const juce::File file(filePath);
+        if(!file.existsAsFile())
+            return false;
+
+        auto reader = std::make_unique<AkaiIsoReader>();
+        if(!reader->open(file))
+            return false;
+
+        if(reader->getProgramRefs().isEmpty())
+            return false;
+
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_isoReader = std::move(reader);
+            m_filePath = filePath;
+            m_presetCount = 0;
+            m_selectedPreset = -1;
+        }
+
+        // Load the first program
+        return selectIsoPreset(0);
+    }
+
+    int Device::getIsoPresetCount() const
+    {
+        if(!m_isoReader)
+            return 0;
+        return m_isoReader->getProgramRefs().size();
+    }
+
+    std::string Device::getIsoPresetName(int index) const
+    {
+        if(!m_isoReader)
+            return {};
+
+        const auto& refs = m_isoReader->getProgramRefs();
+        if(index < 0 || index >= refs.size())
+            return {};
+
+        const auto& ref = refs[index];
+        // Format: "A: ProgramName" where A is the partition label
+        return (ref.partitionLabel + ": " + ref.programName.trim()).toStdString();
+    }
+
+    bool Device::selectIsoPreset(int index)
+    {
+        if(!m_isoReader)
+            return false;
+
+        const auto& refs = m_isoReader->getProgramRefs();
+        if(index < 0 || index >= refs.size())
+            return false;
+
+        // Extract samples and build SFZ for this program
+        std::vector<std::pair<juce::String, juce::MemoryBlock>> wavFiles;
+        juce::String sfzText = m_isoReader->loadProgram(index, wavFiles);
+
+        if(sfzText.isEmpty() || wavFiles.empty())
+            return false;
+
+        // Create a temporary directory for the WAV files
+        const juce::File tempDir = juce::File::getSpecialLocation(
+            juce::File::tempDirectory).getChildFile("retromulator_iso_samples");
+        tempDir.createDirectory();
+
+        // Write WAV files to temp directory
+        for(const auto& [name, data] : wavFiles)
+        {
+            const juce::File wavFile = tempDir.getChildFile(name);
+            wavFile.replaceWithData(data.getData(), data.getSize());
+        }
+
+        // Create SFZ sound from the generated text
+        auto* sound = new sfzero::Sound(tempDir.getChildFile("_iso_program.sfz"));
+        sound->loadRegionsFromText(sfzText.toRawUTF8(),
+                                   static_cast<unsigned int>(sfzText.length()));
+        sound->loadSamples(m_formatManager.get());
+
+        // Re-apply current global tuning
+        if(m_tuneCents != 0)
+        {
+            for(auto* region : sound->getRegions())
+                region->tune = m_tuneCents;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_synth->clearSounds();
+            m_synth->addSound(sound);
+            m_synth->setCurrentPlaybackSampleRate(static_cast<double>(m_samplerate));
+            m_presetCount = 0;
+            m_selectedPreset = index;
+        }
+
+        return true;
     }
 
     // ── Auto-slice ───────────────────────────────────────────────────────────
@@ -367,7 +475,9 @@ namespace akaiLib
             return true;
 
         case synthLib::M_PROGRAMCHANGE:
-            if(m_presetCount > 0)
+            if(m_isoReader)
+                selectIsoPreset(_ev.b);
+            else if(m_presetCount > 0)
                 selectPreset(_ev.b);
             return true;
 

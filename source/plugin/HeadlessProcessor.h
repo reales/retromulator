@@ -61,6 +61,13 @@ namespace retromulator
         // Returns true on success. Populates program names from SF2/ZBP presets.
         bool loadSoundFile(const std::string& filePath);
 
+        // Load an Akai ISO/BIN/CUE disk image. Scans partitions and populates
+        // program names with "A: ProgramName" labels. Returns true on success.
+        bool loadAkaiIso(const std::string& filePath);
+
+        // Select a program from the loaded Akai ISO.
+        bool selectAkaiIsoPreset(int index);
+
         // Select a preset within a multi-preset sound file (SF2/ZBP).
         bool selectSoundPreset(int index);
 
@@ -113,6 +120,9 @@ namespace retromulator
         const std::string& getAkaiBrowseFolder() const { return m_akaiBrowseFolder; }
         void setAkaiBrowseFolder(const std::string& f)  { m_akaiBrowseFolder = f; }
 
+        bool isAkaiIsoMode() const { return m_akaiIsoMode; }
+        const std::string& getAkaiIsoPath() const { return m_akaiIsoPath; }
+
         int  getAkaiSliceCount() const     { return m_akaiSliceCount; }
         void setAkaiSliceCount(int count)  { m_akaiSliceCount = count; }
         int  getAkaiTuneCents() const      { return m_akaiTuneCents; }
@@ -158,6 +168,8 @@ namespace retromulator
         std::string m_akaiBrowseFolder; // Akai browse-folder path (empty = not in browse mode)
         int m_akaiSliceCount = 0;       // 0 = root play, 4/8/16/32 = auto-sliced
         int m_akaiTuneCents  = 0;       // CC20 global tuning in cents
+        bool m_akaiIsoMode   = false;   // true when an Akai ISO is loaded
+        std::string m_akaiIsoPath;      // path to loaded ISO/BIN/CUE file
         std::vector<uint8_t> m_sysexData; // raw sysex bytes of the loaded file
 
         // Split messages from the loaded bank; index into it for program selection.

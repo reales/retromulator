@@ -284,6 +284,7 @@
     </GROUP>
     <GROUP id="akaiLib" name="akaiLib">
       <FILE id="ak001" name="device.cpp" compile="1" resource="0" file="source/akaiLib/device.cpp"/>
+      <FILE id="ak002" name="akaiIsoReader.cpp" compile="1" resource="0" file="source/akaiLib/akaiIsoReader.cpp"/>
     </GROUP>
     <GROUP id="openWurliLib" name="openWurliLib">
       <FILE id="ow001" name="device.cpp" compile="1" resource="0" file="source/openWurliLib/device.cpp"/>

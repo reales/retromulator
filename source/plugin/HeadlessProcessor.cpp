@@ -1065,6 +1065,8 @@ namespace retromulator
         m_sysexData.clear();
         m_bankMessages.clear();
         m_bankStride = 1;
+        m_akaiIsoMode = false;
+        m_akaiIsoPath.clear();
 
         // Populate program names from SF2/ZBP presets
         const int presetCount = dev->getPresetCount();
@@ -1082,6 +1084,56 @@ namespace retromulator
             m_bankMessages.resize(1);
         }
         m_currentProgram = 0;
+
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        return true;
+    }
+
+    bool HeadlessProcessor::loadAkaiIso(const std::string& filePath)
+    {
+        auto* dev = getAkaiDevice();
+        if(!dev)
+            return false;
+
+        if(!dev->loadIsoFile(filePath))
+            return false;
+
+        m_akaiIsoMode = true;
+        m_akaiIsoPath = filePath;
+        m_sysexFilePath = filePath;
+        m_patchName = dev->getIsoPresetName(0);
+        m_sysexData.clear();
+        m_bankMessages.clear();
+        m_bankStride = 1;
+
+        // Populate program names from ISO
+        const int isoCount = dev->getIsoPresetCount();
+        m_programNames.resize(static_cast<size_t>(isoCount));
+        for(int i = 0; i < isoCount; ++i)
+            m_programNames[static_cast<size_t>(i)] = dev->getIsoPresetName(i);
+        m_bankMessages.resize(static_cast<size_t>(isoCount));
+        m_currentProgram = 0;
+
+        // Clear browse mode when loading ISO
+        m_akaiBrowseFolder.clear();
+        m_akaiSliceCount = 0;
+
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        return true;
+    }
+
+    bool HeadlessProcessor::selectAkaiIsoPreset(int index)
+    {
+        auto* dev = getAkaiDevice();
+        if(!dev || !dev->isIsoLoaded())
+            return false;
+
+        if(!dev->selectIsoPreset(index))
+            return false;
+
+        m_currentProgram = index;
+        if(index >= 0 && index < static_cast<int>(m_programNames.size()))
+            m_patchName = m_programNames[static_cast<size_t>(index)];
 
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
         return true;
@@ -1293,14 +1345,16 @@ namespace retromulator
         // Akai extended state: fixed block of 16 int32s for future expansion.
         // [0] = auto-slice count (0=root, 4/8/16/32)
         // [1] = global tuning in cents (CC20)
-        // [2..15] = reserved (zero)
+        // [2] = ISO mode flag (1=ISO loaded, 0=normal)
+        // [3..15] = reserved (zero)
         static constexpr int kAkaiReservedSlots = 16;
         auto* akaiDev = getAkaiDevice();
         appendInt32(destData, static_cast<int32_t>(kAkaiReservedSlots));                    // slot count
         appendInt32(destData, static_cast<int32_t>(m_akaiSliceCount));                      // [0]
         appendInt32(destData, static_cast<int32_t>(akaiDev ? akaiDev->getTuneCents() : 0)); // [1]
-        for(int i = 2; i < kAkaiReservedSlots; ++i)
-            appendInt32(destData, 0);                                                        // [2..15]
+        appendInt32(destData, static_cast<int32_t>(m_akaiIsoMode ? 1 : 0));                 // [2]
+        for(int i = 3; i < kAkaiReservedSlots; ++i)
+            appendInt32(destData, 0);                                                        // [3..15]
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -1369,15 +1423,9 @@ namespace retromulator
 
         if(newType == SynthType::AkaiS1000)
         {
-            // Akai: reload from the original file path
-            if(!sysexFilePath.empty())
-            {
-                loadSoundFile(sysexFilePath);
-                if(savedProgram > 0)
-                    selectSoundPreset(static_cast<int>(savedProgram));
-
-                // Auto-slice and tuning are applied below after extended state is read
-            }
+            // Akai: reload from the original file path.
+            // ISO mode is determined below after reading extended state slots.
+            // For now, just store the path — we reload after reading slots.
         }
         else
         {
@@ -1421,16 +1469,31 @@ namespace retromulator
             }
             m_akaiSliceCount = static_cast<int>(slots[0]);
             m_akaiTuneCents  = static_cast<int>(slots[1]);
-            // slots[2..15] reserved for future use
+            m_akaiIsoMode    = (slots[2] != 0);
+            // slots[3..15] reserved for future use
         }
 
-        // Re-apply Akai auto-slice and tuning now that all state has been read
-        if(newType == SynthType::AkaiS1000)
+        // Reload Akai content now that all state (including ISO flag) has been read
+        if(newType == SynthType::AkaiS1000 && !sysexFilePath.empty())
         {
+            if(m_akaiIsoMode)
+            {
+                // Reload from ISO
+                loadAkaiIso(sysexFilePath);
+                if(savedProgram > 0)
+                    selectAkaiIsoPreset(static_cast<int>(savedProgram));
+            }
+            else
+            {
+                loadSoundFile(sysexFilePath);
+                if(savedProgram > 0)
+                    selectSoundPreset(static_cast<int>(savedProgram));
+            }
+
             auto* dev = getAkaiDevice();
             if(dev)
             {
-                if(m_akaiSliceCount > 0)
+                if(m_akaiSliceCount > 0 && !m_akaiIsoMode)
                     dev->autoSlice(m_akaiSliceCount);
                 if(m_akaiTuneCents != 0)
                     dev->setTuneCents(m_akaiTuneCents);
