@@ -31,6 +31,7 @@
 
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
+#include "opl3Lib/device.h"
 
 #include <cstring>
 #include <fstream>
@@ -514,11 +515,14 @@ namespace retromulator
                 else if(type == SynthType::VirusTI)
                     extractVirusRomPresets(getSynthDataFolder(SynthType::VirusTI),
                                           virusLib::DeviceModel::TI);
+                else if(type == SynthType::OPL3)
+                    juce::File(getSynthDataFolder(SynthType::OPL3)).createDirectory();
             }
         }
 
-        // JE-8086 and Akai run synchronously — no extra latency block needed.
-        setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000) ? 0 : 1);
+        // JE-8086, Akai, OpenWurli and OPL3 run synchronously — no extra latency block needed.
+        setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000
+                       || type == SynthType::OpenWurli || type == SynthType::OPL3) ? 0 : 1);
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -971,6 +975,29 @@ namespace retromulator
                                                const std::string& patchName,
                                                int programIndex)
     {
+        // OPL3: .sbi files go directly to the device — no sysex involved.
+        if(m_synthType == SynthType::OPL3 && hasSuffix(filePath, ".sbi"))
+        {
+            auto* dev = getOpl3Device();
+            if(!dev) return false;
+
+            if(!dev->loadSbi(filePath)) return false;
+
+            m_sysexFilePath  = filePath;
+            m_patchName      = patchName.empty()
+                ? dev->getPatchName()
+                : patchName;
+            m_sysexData.clear();
+            m_bankMessages.clear();
+            m_programNames.clear();
+            m_bankStride     = 1;
+            m_currentProgram = 0;
+
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
+                .withNonParameterStateChanged(true));
+            return true;
+        }
+
         std::ifstream f(filePath, std::ios::binary);
         if(!f.is_open())
         {
@@ -1015,6 +1042,13 @@ namespace retromulator
         if(m_synthType != SynthType::OpenWurli)
             return nullptr;
         return dynamic_cast<openWurliLib::Device*>(m_device.get());
+    }
+
+    opl3Lib::Device* HeadlessProcessor::getOpl3Device() const
+    {
+        if(m_synthType != SynthType::OPL3)
+            return nullptr;
+        return dynamic_cast<opl3Lib::Device*>(m_device.get());
     }
 
     bool HeadlessProcessor::loadSoundFile(const std::string& filePath)

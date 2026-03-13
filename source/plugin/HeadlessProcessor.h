@@ -14,6 +14,7 @@
 
 namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
+namespace opl3Lib { class Device; }
 
 namespace retromulator
 {
@@ -68,6 +69,9 @@ namespace retromulator
 
         // Returns the OpenWurli device if the current synth type is OpenWurli, else nullptr.
         openWurliLib::Device* getOpenWurliDevice() const;
+
+        // Returns the OPL3 device if the current synth type is OPL3, else nullptr.
+        opl3Lib::Device* getOpl3Device() const;
 
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most

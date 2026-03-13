@@ -21,6 +21,7 @@
 
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
+#include "opl3Lib/device.h"
 
 #include "synthLib/romLoader.h"
 #include "synthLib/deviceException.h"
@@ -181,6 +182,12 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new openWurliLib::Device(p);
+            }
+
+            case SynthType::OPL3:
+            {
+                synthLib::DeviceCreateParams p;
+                return new opl3Lib::Device(p);
             }
 
             default:

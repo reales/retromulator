@@ -14,6 +14,7 @@ namespace retromulator
         DX7      = 6,   // Yamaha DX7 (VDX7)
         AkaiS1000 = 7,  // Akai S1000 (SFZero sample player)
         OpenWurli = 8,  // Wurlitzer 200A (OpenWurli physical model)
+        OPL3      = 9,  // Yamaha OPL3 / YMF262 (Nuked OPL3)
 
         Count
     };
@@ -32,6 +33,7 @@ namespace retromulator
             SynthType::JE8086,
             SynthType::DX7,
             SynthType::OpenWurli,
+            SynthType::OPL3,
         };
         count = static_cast<int>(sizeof(order) / sizeof(order[0]));
         return order;
@@ -50,6 +52,7 @@ namespace retromulator
             case SynthType::DX7:       return "DX7";
             case SynthType::AkaiS1000: return "Akai S1000";
             case SynthType::OpenWurli: return "OpenWurli";
+            case SynthType::OPL3:      return "OPL3";
             default:                   return "None";
         }
     }
