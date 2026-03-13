@@ -82,5 +82,15 @@ namespace akaiLib
         // For multi-preset files (SF2, ZBP)
         int m_presetCount    = 0;
         int m_selectedPreset = 0;
+
+        // CC20 global tuning (cents, ±2400 range centered at CC value 64)
+    public:
+        int getTuneCents() const { return m_tuneCents; }
+        void setTuneCents(int cents) { m_tuneCents = cents; applyGlobalTranspose(); }
+    private:
+        int m_tuneCents = 0;
+        int m_lastPitchWheel[16] = { 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192,
+                                     8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192 };
+        void applyGlobalTranspose();
     };
 }

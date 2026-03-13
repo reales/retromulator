@@ -116,6 +116,13 @@ namespace akaiLib
         // Determine preset count
         const int presets = sound->numSubsounds();
 
+        // Re-apply current global tuning to new regions
+        if(m_tuneCents != 0)
+        {
+            for(auto* region : sound->getRegions())
+                region->tune = m_tuneCents;
+        }
+
         {
             std::lock_guard<std::mutex> lock(m_lock);
 
@@ -243,6 +250,13 @@ namespace akaiLib
                                    static_cast<unsigned int>(sfzText.length()));
         sound->loadSamples(m_formatManager.get());
 
+        // Re-apply current global tuning to new regions
+        if(m_tuneCents != 0)
+        {
+            for(auto* region : sound->getRegions())
+                region->tune = m_tuneCents;
+        }
+
         {
             std::lock_guard<std::mutex> lock(m_lock);
             m_synth->clearSounds();
@@ -253,6 +267,25 @@ namespace akaiLib
         }
 
         return true;
+    }
+
+    void Device::applyGlobalTranspose()
+    {
+        if(m_synth->getNumSounds() == 0)
+            return;
+
+        auto* sound = dynamic_cast<sfzero::Sound*>(m_synth->getSound(0).get());
+        if(!sound)
+            return;
+
+        // Update all regions' tune field (in cents) for smooth pitch control
+        for(auto* region : sound->getRegions())
+            region->tune = m_tuneCents;
+
+        // Re-send last pitch wheel value per channel to force active voices
+        // to recalculate their pitch ratio with the new transpose
+        for(int ch = 0; ch < 16; ++ch)
+            m_synth->handlePitchWheel(ch + 1, m_lastPitchWheel[ch]);
     }
 
     // ── Audio processing ──────────────────────────────────────────────────────
@@ -308,10 +341,28 @@ namespace akaiLib
             return true;
 
         case synthLib::M_PITCHBEND:
-            m_synth->handlePitchWheel(channel, (_ev.c << 7) | _ev.b);
+            {
+                const int pw = (_ev.c << 7) | _ev.b;
+                m_lastPitchWheel[(_ev.a & 0x0f)] = pw;
+                m_synth->handlePitchWheel(channel, pw);
+            }
             return true;
 
         case synthLib::M_CONTROLCHANGE:
+            // CC20 = global tuning in cents (±2400 cents / ±24 semitones, center 64)
+            // Applies smooth pitch offset to all regions and recalculates active voices.
+            if(_ev.b == 20)
+            {
+                // Map 0..127 → -2400..+2400 cents (center 64 = 0)
+                const int tuneCents = static_cast<int>(
+                    std::round((static_cast<double>(_ev.c) - 64.0) * (2400.0 / 63.0)));
+                if(tuneCents != m_tuneCents)
+                {
+                    m_tuneCents = tuneCents;
+                    applyGlobalTranspose();
+                }
+                return true;
+            }
             m_synth->handleController(channel, _ev.b, _ev.c);
             return true;
 
