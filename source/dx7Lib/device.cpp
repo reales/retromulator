@@ -223,6 +223,9 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 		{
 			// Copy 4096 bytes of voice data into internal voice RAM at 0x1000
 			memcpy(m_dx7.memory + 0x1000, _ev.sysex.data() + 6, 4096);
+			// Flush the serial RX buffer so any accumulated CC100/101 garbage
+			// (Logic AU floods these) doesn't delay or corrupt the PC that follows.
+			m_dx7.midiSerialRx.flush();
 			return true;
 		}
 
@@ -276,7 +279,9 @@ void Device::parseMIDI(const uint8_t* data, uint32_t size)
 	case 0xB0: // Control Change
 		switch(data[1])
 		{
-		case 0: return; // Bank MSB - eat to avoid firmware bug
+		case 0:   return; // Bank MSB - eat to avoid firmware bug
+		case 100: return; // RPN LSB  - Logic AU floods these; eat to protect serial RX buffer
+		case 101: return; // RPN MSB  - Logic AU floods these; eat to protect serial RX buffer
 		case 1: m_toSynth->analog(Message::CtrlID::modulate, data[2]); return;
 		case 2: m_toSynth->analog(Message::CtrlID::breath, data[2]); return;
 		case 4: m_toSynth->analog(Message::CtrlID::foot, data[2]); return;

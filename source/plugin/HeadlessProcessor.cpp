@@ -32,7 +32,6 @@
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
 
-#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sys/stat.h>
@@ -1332,10 +1331,11 @@ namespace retromulator
         else
         {
             // loadPreset splits the bank, stores messages, and sends message[savedProgram].
-            // We then restore the original sysexFilePath (loadPreset would set it via copySysexToDataFolder).
             if(!sysexData.empty())
                 loadPreset(sysexData, {}, patchName, static_cast<int>(savedProgram));
 
+            // Restore the saved file path so navigatePatch can find the file in
+            // the bank list for cross-bank navigation after a project reload.
             m_sysexFilePath = sysexFilePath;
         }
 

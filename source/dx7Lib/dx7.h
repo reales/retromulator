@@ -41,6 +41,7 @@ template <class T, int N> struct Buffer {
 		buffer[writeIdx++] = byte;
 		writeIdx &= (size-1);
 	}
+	void flush() { readIdx = writeIdx; }
 	bool empty() { return readIdx == writeIdx; }
 	bool read(T& data) {
 		if(empty()) return false;

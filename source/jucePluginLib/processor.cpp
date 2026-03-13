@@ -15,6 +15,7 @@
 #include "client/remoteDevice.h"
 
 #include "synthLib/deviceException.h"
+
 #include "synthLib/os.h"
 #include "synthLib/midiBufferParser.h"
 #include "synthLib/romLoader.h"
