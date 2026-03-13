@@ -12,6 +12,9 @@
 #ifndef SFZAKAISINCRESAMPLER_H_INCLUDED
 #define SFZAKAISINCRESAMPLER_H_INCLUDED
 
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include <cmath>
 
 namespace sfzero
