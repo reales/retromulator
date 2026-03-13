@@ -61,8 +61,8 @@ bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 {
 	if (_type == synthLib::StateTypeGlobal)
 	{
-		// Save parameters: volume, tremRate, tremDepth, speakerChar, mlpEnabled
-		_state.resize(5 * sizeof(float) + 1);
+		// Layout: volume, tremRate, tremDepth, speakerChar, mlpEnabled, velocityCurve (all float)
+		_state.resize(6 * sizeof(float));
 		auto* p = _state.data();
 		std::memcpy(p, &m_volume, sizeof(float)); p += sizeof(float);
 		std::memcpy(p, &m_tremoloRate, sizeof(float)); p += sizeof(float);
@@ -70,6 +70,8 @@ bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 		std::memcpy(p, &m_speakerCharacter, sizeof(float)); p += sizeof(float);
 		float mlp = m_mlpEnabled ? 1.0f : 0.0f;
 		std::memcpy(p, &mlp, sizeof(float)); p += sizeof(float);
+		float vc = static_cast<float>(m_velocityCurve);
+		std::memcpy(p, &vc, sizeof(float));
 		return true;
 	}
 	return false;
@@ -85,8 +87,19 @@ bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _t
 		std::memcpy(&m_tremoloDepth, p, sizeof(float)); p += sizeof(float);
 		std::memcpy(&m_speakerCharacter, p, sizeof(float)); p += sizeof(float);
 		float mlp;
-		std::memcpy(&mlp, p, sizeof(float));
+		std::memcpy(&mlp, p, sizeof(float)); p += sizeof(float);
 		m_mlpEnabled = mlp > 0.5f;
+		// velocityCurve added later — backwards compatible (missing = default)
+		if (_state.size() >= 6 * sizeof(float))
+		{
+			float vc;
+			std::memcpy(&vc, p, sizeof(float));
+			m_velocityCurve = std::clamp(static_cast<int>(vc + 0.5f), 0, 4);
+		}
+		else
+		{
+			m_velocityCurve = kVelocityCurveDefault;
+		}
 		return true;
 	}
 	return false;
@@ -98,7 +111,19 @@ void Device::noteOn(uint8_t note, uint8_t velocity)
 	if (velocity == 0) { noteOff(note); return; }
 
 	const uint8_t clampedNote = std::clamp(note, openWurli::MIDI_LO, openWurli::MIDI_HI);
-	const double vel = static_cast<double>(velocity) / 127.0;
+	const double rawVel = static_cast<double>(velocity) / 127.0;
+
+	// Apply velocity curve preset
+	double vel;
+	switch (m_velocityCurve)
+	{
+	case 0: vel = rawVel;                                     break; // Linear
+	case 1: vel = rawVel * rawVel;                            break; // Soft (square)
+	case 2: vel = rawVel;                                     break; // Medium (engine S-curve handles it)
+	case 3: vel = std::sqrt(rawVel);                          break; // Hard (sqrt — boosted low velocities)
+	case 4: vel = 0.75;                                       break; // Fixed (mezzo-forte)
+	default: vel = rawVel;                                    break;
+	}
 
 	const size_t slotIdx = allocateVoice();
 	auto& slot = m_voices[slotIdx];

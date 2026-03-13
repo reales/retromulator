@@ -44,6 +44,23 @@ public:
 	uint32_t getDspClockPercent() const override { return 100; }
 	uint64_t getDspClockHz() const override;
 
+	// ── Parameter accessors (for UI) ─────────────────────────────────────
+	float getVolume()           const { return m_volume; }
+	float getTremoloRate()      const { return m_tremoloRate; }
+	float getTremoloDepth()     const { return m_tremoloDepth; }
+	float getSpeakerCharacter() const { return m_speakerCharacter; }
+	bool  getMlpEnabled()       const { return m_mlpEnabled; }
+	int   getVelocityCurve()    const { return m_velocityCurve; }
+
+	void setVolume(float v)           { m_volume           = std::clamp(v, 0.0f, 1.0f); }
+	void setTremoloRate(float v)      { m_tremoloRate      = std::clamp(v, 0.1f, 15.0f); m_tremolo.setRate(m_tremoloRate, m_osSampleRate); }
+	void setTremoloDepth(float v)     { m_tremoloDepth     = std::clamp(v, 0.0f, 1.0f);  m_tremolo.setDepth(m_tremoloDepth); }
+	void setSpeakerCharacter(float v) { m_speakerCharacter = std::clamp(v, 0.0f, 1.0f); }
+	void setMlpEnabled(bool v)        { m_mlpEnabled = v; }
+	void setVelocityCurve(int curve)  { m_velocityCurve = std::clamp(curve, 0, 4); }
+
+	static constexpr int kVelocityCurveDefault = 2; // Medium
+
 protected:
 	void readMidiOut(std::vector<synthLib::SMidiEvent>& _midiOut) override;
 	void processAudio(const synthLib::TAudioInputs& _inputs, const synthLib::TAudioOutputs& _outputs, size_t _samples) override;
@@ -91,6 +108,7 @@ private:
 	float m_tremoloDepth = 0.5f;
 	float m_speakerCharacter = 0.0f;
 	bool m_mlpEnabled = true;
+	int   m_velocityCurve = kVelocityCurveDefault;
 
 	// Oversampling
 	bool m_oversample = true;

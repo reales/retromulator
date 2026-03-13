@@ -13,6 +13,7 @@
 #include <atomic>
 
 namespace akaiLib { class Device; }
+namespace openWurliLib { class Device; }
 
 namespace retromulator
 {
@@ -64,6 +65,9 @@ namespace retromulator
 
         // Returns the Akai device if the current synth type is AkaiS1000, else nullptr.
         akaiLib::Device* getAkaiDevice() const;
+
+        // Returns the OpenWurli device if the current synth type is OpenWurli, else nullptr.
+        openWurliLib::Device* getOpenWurliDevice() const;
 
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most

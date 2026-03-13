@@ -30,6 +30,7 @@
 #include "synthLib/romLoader.h"
 
 #include "akaiLib/device.h"
+#include "openWurliLib/device.h"
 
 #include <cstdio>
 #include <cstring>
@@ -1010,6 +1011,13 @@ namespace retromulator
         return dynamic_cast<akaiLib::Device*>(m_device.get());
     }
 
+    openWurliLib::Device* HeadlessProcessor::getOpenWurliDevice() const
+    {
+        if(m_synthType != SynthType::OpenWurli)
+            return nullptr;
+        return dynamic_cast<openWurliLib::Device*>(m_device.get());
+    }
+
     bool HeadlessProcessor::loadSoundFile(const std::string& filePath)
     {
         auto* dev = getAkaiDevice();
@@ -1236,6 +1244,15 @@ namespace retromulator
         appendInt32 (destData, static_cast<int32_t>(m_currentProgram));
         appendInt32 (destData, static_cast<int32_t>(m_savedEditorWidth));
         appendInt32 (destData, static_cast<int32_t>(m_savedEditorHeight));
+
+        // OpenWurli: save full device state blob (volume, tremolo, speaker, mlp, velCurve)
+        if(m_synthType == SynthType::OpenWurli)
+        {
+            std::vector<uint8_t> owState;
+            if(auto* ow = const_cast<openWurliLib::Device*>(getOpenWurliDevice()))
+                ow->getState(owState, synthLib::StateTypeGlobal);
+            appendBytes(destData, owState);
+        }
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -1320,6 +1337,16 @@ namespace retromulator
                 loadPreset(sysexData, {}, patchName, static_cast<int>(savedProgram));
 
             m_sysexFilePath = sysexFilePath;
+        }
+
+        // Restore OpenWurli device state blob (optional, backwards compatible)
+        if(newType == SynthType::OpenWurli)
+        {
+            std::vector<uint8_t> owState;
+            readBytes(bytes, sizeInBytes, offset, owState);
+            if(!owState.empty())
+                if(auto* ow = getOpenWurliDevice())
+                    ow->setState(owState, synthLib::StateTypeGlobal);
         }
     }
 }
