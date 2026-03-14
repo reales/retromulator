@@ -115,21 +115,25 @@ inline std::array<double, NUM_MODES> modeRatios(uint8_t midi)
 	return ratios;
 }
 
-/// Mode decay rates (dB/s) — register dependent
+/// Fundamental decay rate in dB/s — frequency power law calibrated against OBM recordings
+inline double fundamentalDecayRate(uint8_t midi)
+{
+	const double f = midiToFreq(midi);
+	return std::max(0.005 * std::pow(f, 1.22), 3.0); // floor at 3.0 dB/s
+}
+
+/// Mode decay rates (dB/s) — super-linear damping (ratio², p=2.0)
+/// Real steel reed damping: thermoelastic (Zener), air radiation, and clamping
+/// losses scale faster than linearly with frequency. At p=2.0, mode 2 at C4
+/// decays at ~326 dB/s, reaching -10 dB within 9ms — confining metallic
+/// inharmonic partials to the first 2-3 cycles of the attack.
 inline std::array<double, NUM_MODES> modeDecayRates(uint8_t midi)
 {
-	const double freq = midiToFreq(midi);
 	const auto ratios = modeRatios(midi);
+	const double base = fundamentalDecayRate(midi);
 	std::array<double, NUM_MODES> rates;
-
-	// Base: 3 dB/s at A1 fundamental, scaling with sqrt(freq)
-	const double baseRate = 3.0 * std::sqrt(freq / 55.0);
-
 	for (int i = 0; i < NUM_MODES; i++)
-	{
-		// Higher modes decay faster: rate ∝ mode_ratio^0.5
-		rates[i] = baseRate * std::sqrt(ratios[i]);
-	}
+		rates[i] = base * ratios[i] * ratios[i]; // ratio² (MODE_DECAY_EXPONENT = 2.0)
 	return rates;
 }
 
@@ -141,6 +145,71 @@ inline double reedLengthMm(uint8_t midi)
 		? 3.0 - n / 20.0
 		: 2.0 - (n - 20.0) / 44.0;
 	return inches * 25.4;
+}
+
+/// Cantilever beam mode shape phi_n(xi) with tip mass
+/// phi_n(xi) = cosh(beta*xi) - cos(beta*xi) - sigma*(sinh(beta*xi) - sin(beta*xi))
+inline double modeShape(double beta, double xi)
+{
+	const double sigma = (std::cosh(beta) + std::cos(beta)) / (std::sinh(beta) + std::sin(beta));
+	const double bx = beta * xi;
+	return std::cosh(bx) - std::cos(bx) - sigma * (std::sinh(bx) - std::sin(bx));
+}
+
+/// Active pickup plate length in mm
+static constexpr double PLATE_ACTIVE_LENGTH_MM = 6.0;
+
+/// Spatial coupling coefficients for pickup-reed interaction.
+/// The pickup plate integrates reed displacement over its active region near the tip.
+/// Higher bending modes' lobes partially cancel within the pickup window, producing
+/// a spatial low-pass filter. Normalized to mode 1 (returns kappa_n / kappa_1).
+inline std::array<double, NUM_MODES> spatialCouplingCoefficients(double mu, double reedLenMm)
+{
+	const auto betas = eigenvalues(mu);
+	const double ellOverL = std::clamp(PLATE_ACTIVE_LENGTH_MM / reedLenMm, 0.0, 1.0);
+
+	std::array<double, NUM_MODES> kappaRaw;
+
+	constexpr int N_SIMPSON = 32;
+	const double xiStart = 1.0 - ellOverL;
+
+	for (int mode = 0; mode < NUM_MODES; mode++)
+	{
+		const double beta = betas[mode];
+		const double tipVal = modeShape(beta, 1.0);
+
+		if (std::abs(tipVal) < 1e-30 || ellOverL < 1e-12)
+		{
+			kappaRaw[mode] = 1.0;
+			continue;
+		}
+
+		const double h = ellOverL / static_cast<double>(N_SIMPSON);
+		double sum = modeShape(beta, xiStart) + modeShape(beta, 1.0);
+
+		for (int j = 1; j < N_SIMPSON; j++)
+		{
+			const double xi = xiStart + static_cast<double>(j) * h;
+			const double coeff = (j % 2 == 1) ? 4.0 : 2.0;
+			sum += coeff * modeShape(beta, xi);
+		}
+
+		const double integral = sum * h / 3.0;
+		const double k = std::abs(integral / (ellOverL * tipVal));
+		kappaRaw[mode] = std::clamp(k, 0.0, 1.0);
+	}
+
+	const double k1 = kappaRaw[0];
+	if (k1 > 1e-30)
+	{
+		for (auto& k : kappaRaw)
+			k = std::clamp(k / k1, 0.0, 1.0);
+	}
+	else
+	{
+		kappaRaw.fill(1.0);
+	}
+	return kappaRaw;
 }
 
 /// Reed blank width and thickness in mm (200A series)
@@ -297,12 +366,22 @@ struct NoteParams
 
 inline NoteParams noteParams(uint8_t midi)
 {
+	const uint8_t m = std::clamp(midi, MIDI_LO, MIDI_HI);
 	NoteParams p;
-	p.fundamentalHz = midiToFreq(std::clamp(midi, MIDI_LO, MIDI_HI));
-	p.modeRatiosArr = modeRatios(midi);
-	p.modeDecayRatesArr = modeDecayRates(midi);
+	p.fundamentalHz = midiToFreq(m);
+	p.modeRatiosArr = modeRatios(m);
+	p.modeDecayRatesArr = modeDecayRates(m);
+
+	// Start with base amplitudes
 	for (int i = 0; i < NUM_MODES; i++)
 		p.modeAmplitudes[i] = BASE_MODE_AMPLITUDES[i];
+
+	// Apply spatial pickup coupling — finite plate length attenuates higher bending modes
+	const double mu = tipMassRatio(m);
+	const auto coupling = spatialCouplingCoefficients(mu, reedLengthMm(m));
+	for (int i = 0; i < NUM_MODES; i++)
+		p.modeAmplitudes[i] *= coupling[i];
+
 	return p;
 }
 
