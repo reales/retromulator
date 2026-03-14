@@ -4,12 +4,7 @@
 #include <vector>
 #include <cstdint>
 
-#if __has_include(<memory_resource>)
-#include <memory_resource>
-#define SYNTHLIB_HAS_PMR 1
-#else
 #define SYNTHLIB_HAS_PMR 0
-#endif
 
 namespace synthLib
 {
