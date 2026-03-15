@@ -19,21 +19,20 @@ namespace retromulator
         Count
     };
 
-    // Display order for the synth combo box (Akai S1000 first).
-    // Returns an array of SynthType values in the preferred combo order.
+    // Display order for the synth combo box (alphabetical).
     inline const SynthType* synthTypeDisplayOrder(int& count)
     {
         static const SynthType order[] = {
             SynthType::AkaiS1000,
+            SynthType::DX7,
+            SynthType::JE8086,
+            SynthType::MicroQ,
+            SynthType::NordN2X,
+            SynthType::OPL3,
+            SynthType::OpenWurli,
             SynthType::VirusABC,
             SynthType::VirusTI,
-            SynthType::MicroQ,
             SynthType::XT,
-            SynthType::NordN2X,
-            SynthType::JE8086,
-            SynthType::DX7,
-            SynthType::OpenWurli,
-            SynthType::OPL3,
         };
         count = static_cast<int>(sizeof(order) / sizeof(order[0]));
         return order;
