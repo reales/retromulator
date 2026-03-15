@@ -22,7 +22,8 @@ namespace retromulator
     {
     public:
         HeadlessProcessor();
-        ~HeadlessProcessor() override = default;
+        ~HeadlessProcessor() override;
+
 
         // ── Synth hot-swap ──────────────────────────────────────────────────
         void setSynthType(SynthType type, const std::string& romPath = {});
@@ -55,6 +56,12 @@ namespace retromulator
         // Export the entire loaded bank as a .syx file.
         // Names for all programs are embedded in each message.
         bool exportCurrentBankToFile(const std::string& destPath) const;
+
+        // Export the loaded Virus bank converted to a different model version.
+        // targetVersion: 'A', 'B', or 'C'.  Remaps C-only parameters (analog
+        // filters, saturation) to safe equivalents for the older model.
+        // Returns the number of patches converted, or -1 on error.
+        int exportConvertedVirusBank(const std::string& destPath, char targetVersion) const;
 
         // ── Sound file loading (Akai S1000) ──────────────────────────────────
         // Load a sound file (SFZ/SF2/WAV/FLAC/ZBP/ZBB) into the Akai device.

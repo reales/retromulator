@@ -123,6 +123,18 @@ namespace retromulator
                 onExportBank();
                 return;
             }
+            if(id == kConvertToVirusB)
+            {
+                m_bankCombo.setSelectedId(0, juce::dontSendNotification);
+                onConvertVirusBank('B');
+                return;
+            }
+            if(id == kConvertToVirusA)
+            {
+                m_bankCombo.setSelectedId(0, juce::dontSendNotification);
+                onConvertVirusBank('A');
+                return;
+            }
             if(id <= 0) return;
 
             const int idx = id - 1;
@@ -247,7 +259,8 @@ namespace retromulator
             subs.sort();
 
             const int subCount = subs.size();
-            bool needsRebuild = (m_bankCombo.getNumItems() != subCount + 1);
+            const int folderExtra = (type == SynthType::VirusABC) ? 5 : 3;
+            bool needsRebuild = (m_bankCombo.getNumItems() != subCount + folderExtra);
             if(!needsRebuild)
                 for(int i = 0; i < subCount; ++i)
                     if(m_bankCombo.getItemText(i) != subs[i].getFileName())
@@ -262,6 +275,11 @@ namespace retromulator
                 m_bankCombo.addItem("[ + Import... ]", kImportId);
                 m_bankCombo.addItem("[ Export Preset... ]", kExportPresetId);
                 m_bankCombo.addItem("[ Export Bank... ]",   kExportBankId);
+                if(type == SynthType::VirusABC)
+                {
+                    m_bankCombo.addItem("[ Convert to Virus B... ]", kConvertToVirusB);
+                    m_bankCombo.addItem("[ Convert to Virus A... ]", kConvertToVirusA);
+                }
             }
 
             int selId = 0;
@@ -282,7 +300,10 @@ namespace retromulator
             files.sort();
 
             const bool akai = isAkaiSampler(type);
-            const int extraItems = akai ? 1 : 3; // Akai: only Import; others: Import + Export x2
+            const bool virusABC = (type == SynthType::VirusABC);
+            // Import + ExportPreset + ExportBank = 3; +ConvertB + ConvertA = 5 for Virus ABC
+            // (separators don't count in getNumItems)
+            const int extraItems = akai ? 1 : (virusABC ? 5 : 3);
             const int fileCount = files.size();
             bool needsRebuild = (m_bankCombo.getNumItems() != fileCount + extraItems);
             if(!needsRebuild)
@@ -301,6 +322,11 @@ namespace retromulator
                 {
                     m_bankCombo.addItem("[ Export Preset... ]", kExportPresetId);
                     m_bankCombo.addItem("[ Export Bank... ]",   kExportBankId);
+                    if(virusABC)
+                    {
+                        m_bankCombo.addItem("[ Convert to Virus B... ]", kConvertToVirusB);
+                        m_bankCombo.addItem("[ Convert to Virus A... ]", kConvertToVirusA);
+                    }
                 }
             }
 
@@ -604,6 +630,61 @@ namespace retromulator
                             .withIconType(juce::MessageBoxIconType::WarningIcon)
                             .withTitle("Export Failed")
                             .withMessage("Could not write bank to:\n" + path)
+                            .withButton("OK"),
+                        nullptr);
+                }
+            });
+    }
+
+    void BasicEditor::onConvertVirusBank(char targetVersion)
+    {
+        const auto type = m_proc.getSynthType();
+        if(type != SynthType::VirusABC || m_proc.getProgramCount() == 0) return;
+
+        const juce::String currentPath(m_proc.getSysexFilePath());
+        const juce::String defaultName = currentPath.isEmpty()
+            ? "bank"
+            : juce::File(currentPath).getFileNameWithoutExtension();
+
+        const juce::String suffix = juce::String("_Virus") + juce::String::charToString(targetVersion);
+        const juce::File destFolder(HeadlessProcessor::getSynthDataFolder(type));
+
+        m_fileChooser = std::make_shared<juce::FileChooser>(
+            juce::String("Convert Bank to Virus ") + juce::String::charToString(targetVersion),
+            destFolder.getChildFile(defaultName + suffix + ".syx"),
+            "*.syx");
+
+        const char tv = targetVersion;
+        m_fileChooser->launchAsync(
+            juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this, tv](const juce::FileChooser& fc)
+            {
+                const auto chosen = fc.getResult();
+                if(chosen == juce::File{}) return;
+
+                juce::String path = chosen.getFullPathName();
+                if(!path.endsWithIgnoreCase(".syx"))
+                    path += ".syx";
+
+                const int result = m_proc.exportConvertedVirusBank(path.toStdString(), tv);
+                if(result < 0)
+                {
+                    juce::NativeMessageBox::showAsync(
+                        juce::MessageBoxOptions()
+                            .withIconType(juce::MessageBoxIconType::WarningIcon)
+                            .withTitle("Conversion Failed")
+                            .withMessage("Could not convert bank to:\n" + path)
+                            .withButton("OK"),
+                        nullptr);
+                }
+                else
+                {
+                    juce::NativeMessageBox::showAsync(
+                        juce::MessageBoxOptions()
+                            .withIconType(juce::MessageBoxIconType::InfoIcon)
+                            .withTitle("Conversion Complete")
+                            .withMessage(juce::String(result) + " patch(es) converted to Virus "
+                                         + juce::String::charToString(tv) + " format.\n\nSaved to:\n" + path)
                             .withButton("OK"),
                         nullptr);
                 }

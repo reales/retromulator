@@ -27,6 +27,7 @@
 #include "dx7Lib/romloader.h"
 #include "virusLib/deviceModel.h"
 #include "virusLib/microcontrollerTypes.h"
+#include "virusLib/presetConverter.h"
 #include "synthLib/romLoader.h"
 
 #include "akaiLib/device.h"
@@ -465,6 +466,11 @@ namespace retromulator
         m_plugin.reset(new synthLib::Plugin(m_device.get(), {}));
     }
 
+    HeadlessProcessor::~HeadlessProcessor()
+    {
+        suspendProcessing(true);
+    }
+
     // ── Synth hot-swap ────────────────────────────────────────────────────────
 
     void HeadlessProcessor::setSynthType(SynthType type, const std::string& romPath)
@@ -774,6 +780,25 @@ namespace retromulator
         {
             ev.sysex[7] = 0x00; // EditBuffer
             ev.sysex[8] = 0x40; // SINGLE part
+        }
+
+        // Waldorf XT single dump: F0 3E <machine> <devId> 10 <bank> <prog> ...
+        // SingleDump (0x10) to BankA (0x00) or BankB (0x01) stores to RAM but doesn't
+        // activate the sound. Redirect to SingleEditBufferSingleMode (0x20) so the
+        // patch plays immediately.
+        //
+        // Sysex layout (0-based from F0):
+        //   [0]=F0  [1]=0x3E(Waldorf)  [2]=machine  [3]=deviceId
+        //   [4]=command(0x10=SingleDump)  [5]=bank  [6]=program
+        //
+        // Bank values: 0x00=BankA, 0x01=BankB, 0x20=SingleEditBufferSingleMode
+        if(ev.sysex.size() >= 7 &&
+           ev.sysex[1] == 0x3e &&
+           ev.sysex[4] == 0x10 &&
+           (ev.sysex[5] == 0x00 || ev.sysex[5] == 0x01))
+        {
+            ev.sysex[5] = 0x20; // SingleEditBufferSingleMode
+            ev.sysex[6] = 0x00; // program 0 (edit buffer slot)
         }
 
         // JE-8086 UserPatch dump: area 0x02 stores the patch to a user slot.
@@ -1228,6 +1253,41 @@ namespace retromulator
             }
         }
         return f.good();
+    }
+
+    // ── Virus bank conversion export ────────────────────────────────────────────
+
+    int HeadlessProcessor::exportConvertedVirusBank(const std::string& destPath, char targetVersion) const
+    {
+        if(m_bankMessages.empty())
+            return -1;
+
+        if(m_synthType != SynthType::VirusABC && m_synthType != SynthType::VirusTI)
+            return -1;
+
+        virusLib::PresetVersion target;
+        switch(targetVersion)
+        {
+        case 'A': case 'a': target = virusLib::A; break;
+        case 'B': case 'b': target = virusLib::B; break;
+        case 'C': case 'c': target = virusLib::C; break;
+        default: return -1;
+        }
+
+        // Make a mutable copy of the bank messages
+        auto messages = m_bankMessages;
+        const int converted = virusLib::PresetConverter::convertSysexBank(messages, target);
+
+        // Write the converted bank to disk
+        std::ofstream f(destPath, std::ios::binary | std::ios::trunc);
+        if(!f.is_open())
+            return -1;
+
+        for(const auto& msg : messages)
+            f.write(reinterpret_cast<const char*>(msg.data()),
+                    static_cast<std::streamsize>(msg.size()));
+
+        return f.good() ? converted : -1;
     }
 
     // ── processBpm (deferred resend: pre-audio guard + JE-8086 boot delay) ──────
