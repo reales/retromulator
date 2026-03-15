@@ -165,10 +165,13 @@ namespace retromulator
         SynthType   m_synthType = SynthType::None;
         std::string m_romPath;
 
-        // GUI size saved/restored across DAW sessions
+        // GUI size saved/restored across DAW sessions and settings.xml
         int  m_savedEditorWidth  = 0;
         int  m_savedEditorHeight = 0;
         bool m_editorSizeDirty   = false; // true after setStateInformation restores a size
+
+        void loadEditorSizeFromSettings();
+        void saveEditorSizeToSettings(int w, int h);
 
         std::string m_sysexFilePath;   // path to the last loaded sysex file (in data folder)
         std::string m_patchName;       // human-readable patch name

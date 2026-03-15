@@ -124,6 +124,41 @@ namespace retromulator
         xml->writeTo(file);
     }
 
+    // ── Persistent editor size (settings.xml) ───────────────────────────────
+
+    void HeadlessProcessor::loadEditorSizeFromSettings()
+    {
+        const auto file = getSettingsFile();
+        if(!file.existsAsFile()) return;
+
+        if(const auto xml = juce::XmlDocument::parse(file))
+        {
+            const int w = xml->getIntAttribute("editorWidth", 0);
+            const int h = xml->getIntAttribute("editorHeight", 0);
+            if(w > 0 && h > 0)
+            {
+                m_savedEditorWidth  = w;
+                m_savedEditorHeight = h;
+            }
+        }
+    }
+
+    void HeadlessProcessor::saveEditorSizeToSettings(int w, int h)
+    {
+        const auto file = getSettingsFile();
+        std::unique_ptr<juce::XmlElement> xml;
+
+        if(file.existsAsFile())
+            xml = juce::XmlDocument::parse(file);
+
+        if(!xml)
+            xml = std::make_unique<juce::XmlElement>("RetromulatorSettings");
+
+        xml->setAttribute("editorWidth",  w);
+        xml->setAttribute("editorHeight", h);
+        xml->writeTo(file);
+    }
+
     // ── GPL boundary helpers ─────────────────────────────────────────────────
     // These three functions exist solely to keep GPL-specific headers (per-synth
     // ROM loaders, synthLib::DeviceError) out of source/custom/RetroEditor.cpp.
@@ -464,10 +499,15 @@ namespace retromulator
         // doesn't throw, then install the DummyDevice ourselves.
         m_device.reset(new pluginLib::DummyDevice({}));
         m_plugin.reset(new synthLib::Plugin(m_device.get(), {}));
+
+        loadEditorSizeFromSettings();
     }
 
     HeadlessProcessor::~HeadlessProcessor()
     {
+        if(m_savedEditorWidth > 0 && m_savedEditorHeight > 0)
+            saveEditorSizeToSettings(m_savedEditorWidth, m_savedEditorHeight);
+
         suspendProcessing(true);
     }
 
