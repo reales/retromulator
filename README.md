@@ -7,11 +7,11 @@ A DAW plugin (AAX / VST3 / AU) that emulates classic hardware synthesizers by ru
 | Hardware | Emulation | Format |
 |---|---|---|
 | Access Virus A / B / C | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Access Virus TI / TI2 / Snow | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Waldorf microQ / Q | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Waldorf Microwave II / XT | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
+| Access Virus TI | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
+| Waldorf microQ  | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
+| Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Roland JD-800 / JD-990 (JE-8086) | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
+| Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) | AAX, VST3, AU |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 (LGPL 2.1) | AAX, VST3, AU |
 | Akai S1000 | SFZero v3.0.0 sample engine (MIT) | AAX, VST3, AU |
@@ -27,9 +27,9 @@ The **Yamaha OPL3** emulates the YMF262 FM synthesis chip (18 channels, 4-operat
 
 ## How it differs from Gearmulator
 
-Retromulator is a **plugin wrapper** built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
+Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
 
-The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are unchanged from Gearmulator. The DX7 emulation is based on VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model developed by discoDSP.
+The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP.
 
 ## Credits
 
@@ -41,7 +41,8 @@ The emulation engines powering Retromulator are the work of the Gearmulator proj
 - **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
 - **Leo Olivers** — SFZero JUCE module port
-- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; OpenWurli Wurlitzer 200A physical model
+- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license;
+- **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
 
 This plugin wrapper (JUCE integration, UI, AAX/AU/VST3 plumbing) is developed separately and is not affiliated with or endorsed by the Gearmulator project.
 
