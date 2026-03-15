@@ -1092,6 +1092,7 @@ namespace retromulator
         m_bankStride = 1;
         m_akaiIsoMode = false;
         m_akaiIsoPath.clear();
+        m_akaiSliceCount = 0;
 
         // Populate program names from SF2/ZBP presets
         const int presetCount = dev->getPresetCount();
