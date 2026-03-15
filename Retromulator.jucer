@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.2.0"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.2.1"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
