@@ -109,8 +109,8 @@ void *resample_open(int highQuality, double minFactor, double maxFactor)
    hp->LpScl = 1.0;
    hp->Nwing = Npc*(hp->Nmult-1)/2; /* # of filter coeffs in right wing */
 
-   Rolloff = 0.97;
-   Beta = 9;
+   Rolloff = 0.90;
+   Beta = 6;
 
    Imp64 = (double *)malloc(hp->Nwing * sizeof(double));
 
