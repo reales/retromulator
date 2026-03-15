@@ -61,8 +61,21 @@ namespace retromulator
         addAndMakeVisible(m_synthCombo);
 
         // ── Prev / Next buttons ──────────────────────────────────────────────
-        m_prevBtn.onClick = [this] { navigatePatch(-1); };
-        m_nextBtn.onClick = [this] { navigatePatch(+1); };
+        // Shift+click jumps to the previous/next bank folder
+        m_prevBtn.onClick = [this]
+        {
+            if(juce::ModifierKeys::getCurrentModifiers().isShiftDown())
+                navigateBankFolder(-1);
+            else
+                navigatePatch(-1);
+        };
+        m_nextBtn.onClick = [this]
+        {
+            if(juce::ModifierKeys::getCurrentModifiers().isShiftDown())
+                navigateBankFolder(+1);
+            else
+                navigatePatch(+1);
+        };
         addAndMakeVisible(m_prevBtn);
         addAndMakeVisible(m_nextBtn);
 
@@ -796,6 +809,40 @@ namespace retromulator
             }
             updateStatus();
         }
+    }
+
+    // ── Shift+< / Shift+> : jump to previous/next bank folder ─────────────
+    void BasicEditor::navigateBankFolder(int delta)
+    {
+        const auto type = m_proc.getSynthType();
+        if(type == SynthType::None) return;
+
+        const juce::File synthFolder(HeadlessProcessor::getSynthDataFolder(type));
+        if(!isFolderMode(type, synthFolder)) return;
+
+        juce::Array<juce::File> subs;
+        synthFolder.findChildFiles(subs, juce::File::findDirectories, false);
+        subs.sort();
+        if(subs.isEmpty()) return;
+
+        int subCur = -1;
+        for(int i = 0; i < subs.size(); ++i)
+            if(subs[i].getFullPathName() == m_currentBankFolder)
+                { subCur = i; break; }
+
+        const int nextSub = (subCur + delta + subs.size()) % subs.size();
+        m_currentBankFolder = subs[nextSub].getFullPathName();
+
+        juce::Array<juce::File> patches;
+        findSysexFiles(subs[nextSub], patches);
+        patches.sort();
+
+        if(!patches.isEmpty())
+        {
+            m_proc.loadPresetFromFile(patches[0].getFullPathName().toStdString(),
+                                      patches[0].getFileNameWithoutExtension().toStdString());
+        }
+        updateStatus();
     }
 
     void BasicEditor::applyLoadedRom(SynthType type, const juce::String& romFolder)

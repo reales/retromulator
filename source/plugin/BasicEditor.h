@@ -47,6 +47,7 @@ namespace retromulator
         void onExportBank();
         void onConvertVirusBank(char targetVersion);
         void navigatePatch(int delta);
+        void navigateBankFolder(int delta);
         void onSynthTypeChanged();
         void onFirmwareMissing(SynthType type);
         void applyLoadedRom(SynthType type, const juce::String& romFolder);
