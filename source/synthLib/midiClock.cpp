@@ -40,6 +40,15 @@ namespace synthLib
 			stop();
 		}
 
+		// Re-sync to DAW position each block to prevent cumulative drift
+		if(m_isPlaying)
+		{
+			const double expectedTick = static_cast<double>(_ppqPos) * ClockTicksPerQuarter;
+			const double drift = expectedTick - m_expectedClockTick;
+			m_clockTickPos += drift;
+			m_expectedClockTick = expectedTick + clocksPerSample * static_cast<double>(_sampleCount);
+		}
+
 		for(uint32_t i=0; i<static_cast<uint32_t>(_sampleCount); ++i)
 		{
 			m_clockTickPos += clocksPerSample;
@@ -66,9 +75,11 @@ namespace synthLib
 	void MidiClock::start(const float _ppqPos)
 	{
 		const double ppqPos = _ppqPos;
-		const auto quarterPos = (ppqPos - std::floor(ppqPos + 1.0));
+		const auto quarterFrac = ppqPos - std::floor(ppqPos);
+		const auto tickWithinQuarter = quarterFrac * ClockTicksPerQuarter;
 
-		m_clockTickPos = quarterPos * (ClockTicksPerQuarter);
+		m_clockTickPos = -(1.0 - std::fmod(tickWithinQuarter, 1.0));
+		m_expectedClockTick = ppqPos * ClockTicksPerQuarter;
 
 		m_isPlaying = true;
 

@@ -24,5 +24,6 @@ namespace synthLib
 
 		bool m_isPlaying = false;
 		double m_clockTickPos = 0.0;
+		double m_expectedClockTick = 0.0;
 	};
 }
