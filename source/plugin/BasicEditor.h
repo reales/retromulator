@@ -10,7 +10,7 @@ namespace retromulator
     {
     public:
         explicit BasicEditor(HeadlessProcessor& p);
-        ~BasicEditor() override = default;
+        ~BasicEditor() override { stopTimer(); }
 
         void paint(juce::Graphics& g) override;
         void resized() override;
