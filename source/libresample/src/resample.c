@@ -181,7 +181,7 @@ int resample_process(void   *handle,
    float  *ImpD = hp->ImpD;
    float  LpScl = hp->LpScl;
    UWORD  Nwing = hp->Nwing;
-   BOOL interpFilt = FALSE; /* TRUE means interpolate filter coeffs */
+   BOOL interpFilt = TRUE;  /* Interpolate filter coeffs for cleaner non-integer ratios */
    int outSampleCount;
    UWORD Nout, Ncreep, Nreuse;
    int Nx;
