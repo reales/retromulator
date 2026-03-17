@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.2.2"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.2.3"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -284,7 +284,8 @@
     </GROUP>
     <GROUP id="akaiLib" name="akaiLib">
       <FILE id="ak001" name="device.cpp" compile="1" resource="0" file="source/akaiLib/device.cpp"/>
-      <FILE id="ak002" name="akaiIsoReader.cpp" compile="1" resource="0" file="source/akaiLib/akaiIsoReader.cpp"/>
+      <FILE id="ak002" name="akaiIsoReader.cpp" compile="1" resource="0"
+            file="source/akaiLib/akaiIsoReader.cpp"/>
     </GROUP>
     <GROUP id="openWurliLib" name="openWurliLib">
       <FILE id="ow001" name="device.cpp" compile="1" resource="0" file="source/openWurliLib/device.cpp"/>
