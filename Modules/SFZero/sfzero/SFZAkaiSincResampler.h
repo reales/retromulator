@@ -12,13 +12,12 @@
 #ifndef SFZAKAISINCRESAMPLER_H_INCLUDED
 #define SFZAKAISINCRESAMPLER_H_INCLUDED
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
 #include <cmath>
+#include <juce_core/juce_core.h>
 
 namespace sfzero
 {
+constexpr double kPi = juce::MathConstants<double>::pi;
 
 // Number of filter taps (fixed 8-point kernel: 4 lobes, taps -3..+4)
 static constexpr int kAkaiNumTaps   = 8;
@@ -81,10 +80,10 @@ inline float akaiSincInterpolate(const float* data, double position, int bufferS
         double x = static_cast<double>(t) - frac;
 
         // Hann window over the 8-tap span: maps [-3.x .. +4.x] to [-pi..+pi]
-        double window = 0.5 + 0.5 * std::cos(x / static_cast<double>(kAkaiTapOffset + 1) * M_PI);
+        double window = 0.5 + 0.5 * std::cos(x / static_cast<double>(kAkaiTapOffset + 1) * kPi);
 
         // Sinc with anti-aliasing cutoff
-        double sinc = std::sin(cutoff * M_PI * x) / (M_PI * x);
+        double sinc = std::sin(cutoff * kPi * x) / (kPi * x);
 
         mix += static_cast<double>(s[t + kHalfTaps]) * sinc * window;
     }

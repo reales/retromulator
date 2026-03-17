@@ -92,7 +92,7 @@ namespace retromulator
 
                 if(!rom.isValid())
                     throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing,
-                        "Virus TI firmware not found. Place a .bin file in the search path.");
+                        "Virus TI firmware not found. Place firmware.bin in the search path.");
 
                 p.romData    = rom.getRomFileData();
                 p.romName    = rom.getFilename();
@@ -109,7 +109,6 @@ namespace retromulator
                     p.romData = rom.getData();
                     p.romName = rom.getFilename();
                 }
-                // MicroQ can run without ROM (uses embedded fallback)
                 return new mqLib::Device(p);
             }
 
@@ -119,7 +118,7 @@ namespace retromulator
                 const auto rom = xt::RomLoader::findROM();
                 if(!rom.isValid())
                     throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing,
-                        "XT firmware not found. Place a .bin file in the search path.");
+                        "XT firmware not found. Place the two 128 KB IC dump .bin files in the search path.");
 
                 p.romData = rom.getData();
                 p.romName = rom.getFilename();
