@@ -739,11 +739,15 @@ namespace retromulator
         // will replay once the first audio block arrives.
         if(getHostSamplerate() == 0.0f)
         {
-            if(!m_pendingResend.load())
+            // Standalone: prepareToPlay hasn't been called yet.  Schedule a
+            // resend once the message loop returns — by that time the audio
+            // engine will be running and the samplerate will be set.
+            const int prog = index;
+            juce::MessageManager::callAsync([this, prog]()
             {
-                m_resendBlocksRemaining = 100;
-                m_pendingResend.store(true);
-            }
+                if(m_currentProgram >= 0 && m_currentProgram < getProgramCount())
+                    sendBankMessage(prog);
+            });
             return;
         }
 
