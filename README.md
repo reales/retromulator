@@ -1,6 +1,10 @@
 # Retromulator
 
-A DAW plugin (AAX / VST3 / AU) that emulates classic hardware synthesizers by running their original firmware on cycle-accurate CPU and DSP emulators.
+A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware synthesizers, samplers, and keyboards by running their original firmware on cycle-accurate CPU and DSP emulators.
+
+[![Retromulator](https://www.discodsp.com/img/retromulator.webp)](https://www.discodsp.com/retromulator/)
+
+[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $29](https://img.shields.io/badge/Buy_License-$29-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
 
 ## Hardware Cores
 
