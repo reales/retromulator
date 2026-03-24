@@ -8,18 +8,18 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 
 ## Hardware Cores
 
-| Hardware | Emulation | Format |
-|---|---|---|
-| Access Virus A / B / C | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Access Virus TI | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Waldorf microQ  | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate | AAX, VST3, AU |
-| Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) | AAX, VST3, AU |
-| Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 (LGPL 2.1) | AAX, VST3, AU |
-| Akai S1000 | SFZero v3.0.0 sample engine (MIT) | AAX, VST3, AU |
-| Wurlitzer 200A (OpenWurli) | Physical modeling synthesis | AAX, VST3, AU |
+| Hardware | Emulation |
+|---|---|
+| Access Virus A / B / C | Motorola DSP 56300 cycle-accurate |
+| Access Virus TI | Motorola DSP 56300 cycle-accurate |
+| Akai S1000 | SFZero v3.0.0 sample engine |
+| Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
+| Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate |
+| Waldorf microQ | Motorola DSP 56300 cycle-accurate |
+| Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate |
+| Wurlitzer 200A (OpenWurli) | Physical modeling synthesis |
+| Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
+| Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
 Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, and OPL3 cores are ROM-free.
 
@@ -37,9 +37,7 @@ The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libra
 
 ## Credits
 
-The emulation engines powering Retromulator are the work of the Gearmulator project:
-
-- **[dsp56300](https://github.com/dsp56300)** — project lead, DSP56300 emulator, Virus TI / microQ / XT / Nord N2X / JE-8086 engines
+- **[dsp56300](https://github.com/dsp56300)** — DSP56300 emulator, Virus TI / microQ / XT / Nord N2X / JE-8086 engines, GPL v3
 - All contributors to [github.com/dsp56300/gearmulator](https://github.com/dsp56300/gearmulator)
 - **chiaccona** — [VDX7](https://github.com/chiaccona/VDX7), cycle-accurate Yamaha DX7 emulation (HD6303R CPU, EGS, OPS), GPL v3
 - **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
@@ -48,7 +46,7 @@ The emulation engines powering Retromulator are the work of the Gearmulator proj
 - **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license
 - **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
 
-This plugin wrapper (JUCE integration, UI, AAX/AU/VST3 plumbing) is developed separately and is not affiliated with or endorsed by the Gearmulator project.
+JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 
 ## License
 
