@@ -15,7 +15,7 @@
               cppLanguageStandard="17">
   <EXPORTFORMATS>
     <XCODE_MAC targetFolder="Builds/MacOSX-GPL" objCExtraSuffix="Retromulator_xc"
-               postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1"
+               postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1&#10;OUTSIDE_SPEEX=1&#10;FLOATING_POINT=1&#10;RANDOM_PREFIX=synthLib_speex"
                extraCompilerFlags="-Wno-deprecated-declarations -include AppConfig.h"
                extraLinkerFlags="">
       <CONFIGURATIONS>
@@ -180,10 +180,8 @@
       <FILE id="wl007" name="wSysexRemoteControl.cpp" compile="1" resource="0"
             file="source/wLib/wSysexRemoteControl.cpp"/>
     </GROUP>
-    <GROUP id="libresample" name="libresample">
-      <FILE id="lr001" name="filterkit.c" compile="1" resource="0" file="source/libresample/src/filterkit.c"/>
-      <FILE id="lr002" name="resample.c" compile="1" resource="0" file="source/libresample/src/resample.c"/>
-      <FILE id="lr003" name="resamplesubs.c" compile="1" resource="0" file="source/libresample/src/resamplesubs.c"/>
+    <GROUP id="speex" name="speex">
+      <FILE id="spx001" name="resample.c" compile="1" resource="0" file="source/speex/resample.c"/>
     </GROUP>
     <GROUP id="virusLib" name="virusLib">
       <FILE id="vl001" name="demoplayback.cpp" compile="1" resource="0" file="source/virusLib/demoplayback.cpp"/>

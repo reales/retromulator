@@ -4,9 +4,17 @@
 #include <cassert>
 #include <utility>
 
-#include "libresample/include/libresample.h"
+#define OUTSIDE_SPEEX
+#define FLOATING_POINT
+#define RANDOM_PREFIX synthLib_speex
+#include "speex/speex_resampler.h"
 
 #include "dsp56kEmu/fastmath.h"
+
+namespace
+{
+	constexpr int kSpeexQuality = 5;
+}
 
 synthLib::Resampler::Resampler(const float _samplerateIn, const float _samplerateOut)
 	: m_samplerateIn(_samplerateIn)
@@ -80,15 +88,20 @@ uint32_t synthLib::Resampler::processResample(const TAudioOutputs& _output, cons
 	}
 
 	uint32_t outBufferUsed = 0;
-	int inBufferUsed = 0;
 
 	for (uint32_t i = 0; i < _numChannels; ++i)
 	{
 		float* output = _output[i];
 
-		outBufferUsed = resample_process(m_resamplerOut[i], m_factorOutToIn, &m_tempOutput[i][0], static_cast<int>(inputLen), 0, &inBufferUsed, output, static_cast<int>(_numSamples));
+		spx_uint32_t inLen = static_cast<spx_uint32_t>(inputLen);
+		spx_uint32_t outLen = static_cast<spx_uint32_t>(_numSamples);
 
-		if (static_cast<uint32_t>(inBufferUsed) < inputLen)
+		speex_resampler_process_float(static_cast<SpeexResamplerState*>(m_resamplerOut[i]), 0, &m_tempOutput[i][0], &inLen, output, &outLen);
+
+		outBufferUsed = outLen;
+		const auto inBufferUsed = static_cast<uint32_t>(inLen);
+
+		if (inBufferUsed < inputLen)
 		{
 //			LOG("inBufferUsed " << inBufferUsed << " inputLen " << inputLen);
 			const auto remaining = inputLen - inBufferUsed;
@@ -107,7 +120,7 @@ uint32_t synthLib::Resampler::processResample(const TAudioOutputs& _output, cons
 void synthLib::Resampler::destroyResamplers()
 {
 	for (const auto& resampler : m_resamplerOut)
-		resample_close(resampler);
+		speex_resampler_destroy(static_cast<SpeexResamplerState*>(resampler));
 	m_resamplerOut.clear();
 }
 
@@ -124,8 +137,12 @@ void synthLib::Resampler::setChannelCount(uint32_t _numChannels)
 	for (auto& buf : m_tempOutput)
 		buf.clear();
 
-	const auto factor = static_cast<double>(m_factorOutToIn);
+	const auto inRate = static_cast<spx_uint32_t>(m_samplerateIn);
+	const auto outRate = static_cast<spx_uint32_t>(m_samplerateOut);
 
 	for (auto& resampler : m_resamplerOut)
-		resampler = resample_open(1, factor, factor);
+	{
+		int err = 0;
+		resampler = speex_resampler_init(1, inRate, outRate, kSpeexQuality, &err);
+	}
 }
