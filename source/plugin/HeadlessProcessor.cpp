@@ -27,7 +27,9 @@
 #include "dx7Lib/romloader.h"
 #include "virusLib/deviceModel.h"
 #include "virusLib/microcontrollerTypes.h"
+#ifdef CUSTOM
 #include "virusLib/presetConverter.h"
+#endif
 #include "synthLib/romLoader.h"
 
 #include "akaiLib/device.h"
@@ -1300,6 +1302,7 @@ namespace retromulator
         return f.good();
     }
 
+#ifdef CUSTOM
     // ── Virus bank conversion export ────────────────────────────────────────────
 
     int HeadlessProcessor::exportConvertedVirusBank(const std::string& destPath, char targetVersion) const
@@ -1334,6 +1337,7 @@ namespace retromulator
 
         return f.good() ? converted : -1;
     }
+#endif
 
     // ── processBpm (deferred resend: pre-audio guard + JE-8086 boot delay) ──────
 
