@@ -8,7 +8,7 @@
 
 #include "../synthLib/device.h"
 #include "owVoice.h"
-#include "owDkPreamp.h"
+#include "owMelangePreamp.h"
 #include "owTremolo.h"
 #include "owOversampler.h"
 #include "owPowerAmp.h"
@@ -46,14 +46,12 @@ public:
 
 	// ── Parameter accessors (for UI) ─────────────────────────────────────
 	float getVolume()           const { return m_volume; }
-	float getTremoloRate()      const { return m_tremoloRate; }
 	float getTremoloDepth()     const { return m_tremoloDepth; }
 	float getSpeakerCharacter() const { return m_speakerCharacter; }
 	bool  getMlpEnabled()       const { return m_mlpEnabled; }
 	int   getVelocityCurve()    const { return m_velocityCurve; }
 
 	void setVolume(float v)           { m_volume           = std::clamp(v, 0.0f, 1.0f); }
-	void setTremoloRate(float v)      { m_tremoloRate      = std::clamp(v, 0.1f, 15.0f); m_tremolo.setRate(m_tremoloRate, m_osSampleRate); }
 	void setTremoloDepth(float v)     { m_tremoloDepth     = std::clamp(v, 0.0f, 1.0f);  m_tremolo.setDepth(m_tremoloDepth); }
 	void setSpeakerCharacter(float v) { m_speakerCharacter = std::clamp(v, 0.0f, 1.0f); }
 	void setMlpEnabled(bool v)        { m_mlpEnabled = v; }
@@ -96,7 +94,7 @@ private:
 	uint64_t m_ageCounter = 0;
 
 	// Shared signal chain (mono, post voice-sum)
-	openWurli::DkPreamp m_preamp;
+	openWurli::MelangePreamp m_preamp;
 	openWurli::Tremolo m_tremolo;
 	openWurli::Oversampler m_oversampler;
 	openWurli::PowerAmp m_powerAmp;
@@ -104,7 +102,6 @@ private:
 
 	// Parameters (MIDI CC mapped)
 	float m_volume = 1.0f;
-	float m_tremoloRate = 5.63f;
 	float m_tremoloDepth = 0.5f;
 	float m_speakerCharacter = 0.0f;
 	bool m_mlpEnabled = true;

@@ -46,8 +46,8 @@ public:
 		const double x3 = x2 * input;
 		const double shaped = (input + m_a2 * x2 + m_a3 * x3) / (1.0 + m_a2 + m_a3);
 
-		// 2. Cone excursion limiter
-		const double limited = std::tanh(shaped);
+		// 2. Cone excursion limiter (bypass at character ≈ 0 to avoid tanh coloration)
+		const double limited = (m_character < 0.001) ? shaped : std::tanh(shaped);
 
 		// 3. Thermal voice coil compression
 		m_thermalState += (x2 - m_thermalState) * m_thermalAlpha;

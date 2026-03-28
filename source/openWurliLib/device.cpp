@@ -19,7 +19,7 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 	m_osSampleRate = m_oversample ? m_sampleRate * 2.0 : m_sampleRate;
 
 	m_preamp.init(m_osSampleRate);
-	m_tremolo.init(m_tremoloRate, m_tremoloDepth, m_osSampleRate);
+	m_tremolo.init(m_tremoloDepth, m_osSampleRate);
 	m_oversampler.init();
 	m_speaker.init(m_sampleRate);
 
@@ -61,11 +61,13 @@ bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 {
 	if (_type == synthLib::StateTypeGlobal)
 	{
-		// Layout: volume, tremRate, tremDepth, speakerChar, mlpEnabled, velocityCurve (all float)
+		// Layout: volume, (reserved/tremRate), tremDepth, speakerChar, mlpEnabled, velocityCurve (all float)
+		// Slot 1 kept for backwards compatibility (was tremRate, now ignored on load)
 		_state.resize(6 * sizeof(float));
 		auto* p = _state.data();
 		std::memcpy(p, &m_volume, sizeof(float)); p += sizeof(float);
-		std::memcpy(p, &m_tremoloRate, sizeof(float)); p += sizeof(float);
+		float reserved = 5.63f; // backwards compat placeholder
+		std::memcpy(p, &reserved, sizeof(float)); p += sizeof(float);
 		std::memcpy(p, &m_tremoloDepth, sizeof(float)); p += sizeof(float);
 		std::memcpy(p, &m_speakerCharacter, sizeof(float)); p += sizeof(float);
 		float mlp = m_mlpEnabled ? 1.0f : 0.0f;
@@ -83,7 +85,7 @@ bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _t
 	{
 		auto* p = _state.data();
 		std::memcpy(&m_volume, p, sizeof(float)); p += sizeof(float);
-		std::memcpy(&m_tremoloRate, p, sizeof(float)); p += sizeof(float);
+		p += sizeof(float); // skip slot 1 (was tremRate, removed in 0.3)
 		std::memcpy(&m_tremoloDepth, p, sizeof(float)); p += sizeof(float);
 		std::memcpy(&m_speakerCharacter, p, sizeof(float)); p += sizeof(float);
 		float mlp;
@@ -265,10 +267,7 @@ void Device::renderSubblock(size_t offset, size_t len)
 
 		for (size_t i = 0; i < len; i++)
 		{
-			const double depth = static_cast<double>(m_tremoloDepth);
-			const double rate = static_cast<double>(m_tremoloRate);
-			m_tremolo.setDepth(depth);
-			m_tremolo.setRate(rate, m_osSampleRate);
+			m_tremolo.setDepth(static_cast<double>(m_tremoloDepth));
 
 			for (int j = 0; j < 2; j++)
 			{
@@ -402,9 +401,6 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 					}
 				}
 			}
-			break;
-		case 70: // Sound Controller 1 → tremolo rate
-			m_tremoloRate = 0.1f + (static_cast<float>(_ev.c) / 127.0f) * 14.9f;
 			break;
 		case 71: // Sound Controller 2 → speaker character
 			m_speakerCharacter = static_cast<float>(_ev.c) / 127.0f;

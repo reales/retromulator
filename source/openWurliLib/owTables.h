@@ -22,8 +22,8 @@ static constexpr int NUM_MODES = 7;
 static constexpr uint8_t MIDI_LO = 33;
 static constexpr uint8_t MIDI_HI = 96;
 
-/// Post-speaker gain: +13 dB — calibrated with outputScale TARGET_DB=-35 dBFS
-static constexpr double POST_SPEAKER_GAIN = 4.467; // 10^(13/20)
+/// Post-speaker gain: +10.5 dB — calibrated with outputScale TARGET_DB=-35 dBFS
+static constexpr double POST_SPEAKER_GAIN = 3.349654391578277; // 10^(10.5/20)
 
 /// Base mode amplitudes calibrated against OBM recordings
 static constexpr double BASE_MODE_AMPLITUDES[NUM_MODES] =
