@@ -15,6 +15,7 @@ namespace retromulator
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.mid");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.bin");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.pfm");
+        folder.findChildFiles(out, juce::File::findFiles, recursive, "*.sbi");
     }
 
     static void findSoundFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
@@ -92,7 +93,7 @@ namespace retromulator
             {
                 juce::Array<juce::File> patches;
                 juce::File(m_currentBankFolder).findChildFiles(
-                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
+                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
                 patches.sort();
 
                 if(sel < patches.size())
@@ -166,7 +167,7 @@ namespace retromulator
 
                     juce::Array<juce::File> patches;
                     subs[idx].findChildFiles(patches, juce::File::findFiles, false,
-                                             "*.syx;*.mid;*.bin;*.pfm");
+                                             "*.syx;*.mid;*.bin;*.pfm;*.sbi");
                     patches.sort();
 
                     if(!patches.isEmpty())
@@ -183,7 +184,7 @@ namespace retromulator
                     findSoundFiles(synthFolder, files);
                 else
                     synthFolder.findChildFiles(files, juce::File::findFiles, false,
-                                               "*.syx;*.mid;*.bin;*.pfm");
+                                               "*.syx;*.mid;*.bin;*.pfm;*.sbi");
                 files.sort();
 
                 if(idx < files.size())
@@ -426,7 +427,7 @@ namespace retromulator
         {
             juce::Array<juce::File> patches;
             juce::File(m_currentBankFolder).findChildFiles(
-                patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
+                patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
             patches.sort();
 
             const int patchCount = patches.size();
@@ -505,7 +506,7 @@ namespace retromulator
 
         const juce::String filter = isAkaiSampler(type)
             ? juce::String(kSoundFilePattern)
-            : juce::String("*.syx;*.mid;*.bin;*.pfm");
+            : juce::String("*.syx;*.mid;*.bin;*.pfm;*.sbi");
 
         const juce::String title = isAkaiSampler(type)
             ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
@@ -719,7 +720,7 @@ namespace retromulator
             {
                 juce::Array<juce::File> patches;
                 juce::File(m_currentBankFolder).findChildFiles(
-                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
+                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
                 patches.sort();
 
                 int cur = -1;
