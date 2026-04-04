@@ -117,6 +117,11 @@ struct DX7: public HD6303R {
 	void sustain(bool on) { if(on) P_CRT_PEDALS_LCD |= 1; else P_CRT_PEDALS_LCD &= 0xFE; }
 	void porta(bool on) { if(on) P_CRT_PEDALS_LCD |= 2; else P_CRT_PEDALS_LCD &= 0xFD; }
 
+	// Direct pitch/mod offsets (added to EGS pitch mod on each firmware write)
+	// Used as fallback when patch has PB range or mod sensitivity set to 0
+	int16_t pitchBendOffset = 0;
+	int16_t modWheelOffset = 0;
+
 	bool isRomLoaded() const { return m_firmwareLoaded; }
 
 	// Display hardware

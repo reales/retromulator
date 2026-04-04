@@ -136,7 +136,18 @@ void DX7::run() {
 	}
 
 	// Writing to EGS address space 0x30**
-	if((ADDR&0xFF00)==0x3000) egs.update(uint8_t(ADDR));
+	if((ADDR&0xFF00)==0x3000) {
+		// Add pitch bend and mod wheel offsets to firmware's pitch mod value
+		if(ADDR == 0x30F3 && (pitchBendOffset != 0 || modWheelOffset != 0)) {
+			int16_t fwVal = static_cast<int16_t>((memory[0x30F2] << 8) | memory[0x30F3]);
+			int32_t combined = fwVal + pitchBendOffset + modWheelOffset;
+			if(combined > 32767) combined = 32767;
+			if(combined < -32768) combined = -32768;
+			memory[0x30F2] = static_cast<uint8_t>((combined >> 8) & 0xFF);
+			memory[0x30F3] = static_cast<uint8_t>(combined & 0xFF);
+		}
+		egs.update(uint8_t(ADDR));
+	}
 
 	// Writing to Cartridge 0x4***
 	if((ADDR&0xF000)==0x4000) saveCart = true;

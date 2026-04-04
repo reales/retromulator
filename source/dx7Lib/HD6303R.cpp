@@ -22,41 +22,7 @@
 namespace dx7Emu {
 
 void HD6303R::step() {
-	if(halt) {
-		// CPU is halted (WAI/SLP) — advance timers normally so interrupts fire.
-		// Re-use the cycle count from the instruction that caused halt (WAI=9, SLP=4)
-		// so audio timing stays consistent.
-		int c = inst->cycles;
-		if(c < 1) c = 1;
-
-		cycle += c;
-		sci_tx_counter += c;
-		sci_rx_counter += c;
-
-		// Advance free-running timer
-		uint32_t p_timer1 = getm16(0x09);
-		uint32_t timer1 = p_timer1 + c;
-		stom16(0x09, timer1 & 0xFFFF);
-
-		// Check output compare
-		uint32_t ocr = getm16(0x0B);
-		if(timer1 >= ocr && p_timer1 < ocr) {
-			TCSR = set(TCSR, OCF);
-			readTCSR = wroteOCR = false;
-		}
-
-		// Fire OCI if enabled
-		if(bit(TCSR, OCF) && bit(TCSR, EOCI)) oci();
-
-		// Check external IRQ
-		if(!irqpin) irq();
-
-		// Check SCI
-		constexpr const uint8_t mask1 = 1<<TDRE | 1<<TIE | 1<<TE;
-		constexpr const uint8_t mask2 = 1<<RDRF | 1<<RIE | 1<<RE;
-		if((TRCSR & mask1) == mask1 || (TRCSR & mask2) == mask2) sci();
-		return;
-	}
+	if(halt) return;
 
 	opcode = memory[PC++];
 	inst = instructions+opcode;
@@ -174,7 +140,6 @@ bool HD6303R::maskable_interrupt(uint16_t vector) {
 }
 
 void HD6303R::interrupt(uint16_t vector) {
-	halt = false;
 	push(PC);
 	push(IX);
 	memory[SP--] = A;

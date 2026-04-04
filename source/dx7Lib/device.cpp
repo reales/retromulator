@@ -201,6 +201,38 @@ void Device::processMessage(Message msg)
 			m_dx7.cartWriteProtect(msg.byte2 != 0);
 			break;
 
+		case Message::CtrlID::pitchbend:
+		{
+			// Read patch pitch bend range from edit buffer (0=use default 2)
+			uint8_t pbRange = m_dx7.memory[0x2076] & 0x0F;
+			if(pbRange == 0) pbRange = 2;
+			// EGS: 1 semitone ≈ 85.3 freq units, pitchMod = EGS_reg / 16
+			// So 1 semitone = 1365 EGS units. Scale by patch PB range.
+			int centered = static_cast<int>(msg.byte2) - 64;
+			m_dx7.pitchBendOffset = static_cast<int16_t>(centered * 1365 * pbRange / 63);
+			// Also deliver to firmware via sub-CPU
+			m_dx7.msg = msg;
+			m_dx7.haveMsg = true;
+			break;
+		}
+
+		case Message::CtrlID::modulate:
+		{
+			// Read pitch mod sensitivity from edit buffer (bits 4-6 of byte 0x2074)
+			uint8_t pms = (m_dx7.memory[0x2074] >> 4) & 0x07;
+			if(pms == 0) {
+				// Patch has no mod sensitivity: apply mod wheel as vibrato depth
+				// Scale to ~1 semitone pitch mod at full wheel
+				m_dx7.modWheelOffset = static_cast<int16_t>(msg.byte2 * 1365 / 127);
+			} else {
+				m_dx7.modWheelOffset = 0; // let firmware handle it
+			}
+			// Always deliver to firmware via sub-CPU
+			m_dx7.msg = msg;
+			m_dx7.haveMsg = true;
+			break;
+		}
+
 		default:
 			// Key events: velocity is inverted for DX7 internal keyboard
 			if(msg.byte1 > 158 && msg.byte2 != 0)
