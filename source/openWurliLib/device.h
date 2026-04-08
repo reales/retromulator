@@ -121,7 +121,7 @@ private:
 
 	// Sustain pedal
 	bool m_sustainPedal = false;
-	uint8_t m_sustainedNotes[128] = {};
+	uint8_t m_sustainedNotes[128] = {};  // count of deferred note-offs per note
 
 	std::atomic<bool> m_shutdown{false};
 };

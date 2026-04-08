@@ -152,7 +152,7 @@ void Device::noteOff(uint8_t note)
 {
 	if (m_sustainPedal)
 	{
-		m_sustainedNotes[note & 0x7F] = 1;
+		m_sustainedNotes[note & 0x7F]++;
 		return;
 	}
 
@@ -181,6 +181,9 @@ void Device::noteOff(uint8_t note)
 
 void Device::allNotesOff()
 {
+	m_sustainPedal = false;
+	std::memset(m_sustainedNotes, 0, sizeof(m_sustainedNotes));
+
 	for (auto& slot : m_voices)
 	{
 		if (slot.state == VoiceState::Held)
@@ -391,12 +394,12 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			m_sustainPedal = (_ev.c >= 64);
 			if (!m_sustainPedal)
 			{
-				// Release all sustained notes
+				// Release sustained notes (one noteOff per deferred note-off)
 				for (int n = 0; n < 128; n++)
 				{
-					if (m_sustainedNotes[n])
+					while (m_sustainedNotes[n] > 0)
 					{
-						m_sustainedNotes[n] = 0;
+						m_sustainedNotes[n]--;
 						noteOff(static_cast<uint8_t>(n));
 					}
 				}
