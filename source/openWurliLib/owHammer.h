@@ -21,12 +21,16 @@ inline double dwellTime(double velocity, double fundamentalHz)
 	return std::clamp(cycles / fundamentalHz, 0.0003, 0.020);
 }
 
-/// Onset ramp time (reed mechanical inertia)
+/// Onset ramp time (reed mechanical inertia).
+/// 2.5 periods at ff, 5.0 at pp, with 2 ms floor.
+/// No upper clamp — bass reeds are heavy and physically need more cycles
+/// to reach full amplitude. C2 ff: 38 ms, C2 pp: 77 ms. The velocity
+/// dependence in bass attack timing is audible and correct.
 inline double onsetRampTime(double velocity, double fundamentalHz)
 {
 	const double periodS = 1.0 / fundamentalHz;
 	const double periods = 2.5 + 2.5 * (1.0 - velocity);
-	return std::clamp(periods * periodS, 0.002, 0.030);
+	return std::max(periods * periodS, 0.002);
 }
 
 /// Gaussian dwell filter per-mode attenuation

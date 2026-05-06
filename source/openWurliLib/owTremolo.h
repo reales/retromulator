@@ -24,7 +24,10 @@ public:
 	{
 		constexpr double attackTau = 0.003;
 		constexpr double releaseTau = 0.050;
-		constexpr double rLdrMin = 50.0;
+		// LDR bright-phase floor lifted from 50 → 18 320 Ω so the shunt
+		// (680 Ω + r_ldr) lands at the documented 19 kΩ bright calibration
+		// point instead of clamping into the preamp's 1 kΩ floor.
+		constexpr double rLdrMin = 18320.0;
 
 		m_depth = depth;
 		m_rLdr = m_rLdrMax;
@@ -34,7 +37,6 @@ public:
 		m_gamma = 1.1;
 		m_lnRMax = std::log(m_rLdrMax);
 		m_lnMinMinusMax = std::log(rLdrMin) - m_lnRMax;
-		m_rSeries = 18000.0;
 
 		// Initialize Twin-T circuit oscillator
 		m_oscState = genTremolo::CircuitState();
@@ -49,9 +51,10 @@ public:
 
 	void setDepth(double depth)
 	{
+		// The 50 kΩ VIBRATO pot is in the LED drive path (already scaled
+		// via `led_drive = osc * depth`) — it is NOT in the shunt path.
+		// Shunt = R_SHUNT_SERIES (680 Ω, LG-1 pin 5) + r_ldr only.
 		m_depth = std::clamp(depth, 0.0, 1.0);
-		const double potResistance = 50000.0 * (1.0 - m_depth);
-		m_rSeries = 18000.0 + potResistance;
 	}
 
 	double process()
@@ -73,10 +76,10 @@ public:
 			m_rLdr = std::exp(logR);
 		}
 
-		return m_rSeries + m_rLdr;
+		return R_SHUNT_SERIES + m_rLdr;
 	}
 
-	double currentResistance() const { return m_rSeries + m_rLdr; }
+	double currentResistance() const { return R_SHUNT_SERIES + m_rLdr; }
 
 	void reset()
 	{
@@ -97,6 +100,9 @@ private:
 	static constexpr double V_OUT_MIN = 0.70;
 	static constexpr double V_OUT_MAX = 10.95;
 
+	// Fixed series resistance in the LDR shunt path (680 Ω on LG-1 pin 5).
+	static constexpr double R_SHUNT_SERIES = 680.0;
+
 	genTremolo::CircuitState m_oscState;
 	double m_depth = 0.5;
 	double m_rLdr = 1000000.0;
@@ -107,7 +113,6 @@ private:
 	double m_gamma = 1.1;
 	double m_lnRMax = 0.0;
 	double m_lnMinMinusMax = 0.0;
-	double m_rSeries = 18000.0;
 };
 
 } // namespace openWurli

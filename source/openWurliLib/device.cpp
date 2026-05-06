@@ -27,8 +27,6 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 	m_sumBuf.resize(MAX_BLOCK, 0.0);
 	m_upBuf.resize(MAX_BLOCK * 2, 0.0);
 	m_outBuf.resize(MAX_BLOCK, 0.0);
-
-	std::memset(m_sustainedNotes, 0, sizeof(m_sustainedNotes));
 }
 
 Device::~Device()
@@ -127,6 +125,17 @@ void Device::noteOn(uint8_t note, uint8_t velocity)
 	default: vel = rawVel;                                    break;
 	}
 
+	// Re-striking a sustained note releases the old voice first
+	// (one reed per pitch on the real 200A).
+	for (auto& s : m_voices)
+	{
+		if (s.state == VoiceState::Sustained && s.midiNote == note)
+		{
+			s.state = VoiceState::Releasing;
+			s.voice.noteOff();
+		}
+	}
+
 	const size_t slotIdx = allocateVoice();
 	auto& slot = m_voices[slotIdx];
 
@@ -150,19 +159,18 @@ void Device::noteOn(uint8_t note, uint8_t velocity)
 
 void Device::noteOff(uint8_t note)
 {
-	if (m_sustainPedal)
-	{
-		m_sustainedNotes[note & 0x7F]++;
-		return;
-	}
+	// Clamp identically to noteOn — otherwise an out-of-range note-on (stored
+	// as the clamped pitch) could never be released by the matching note-off.
+	const uint8_t matchNote = std::clamp(note, openWurli::MIDI_LO, openWurli::MIDI_HI);
 
-	// Release oldest held voice matching this note
+	// Release oldest held voice matching this note. With the pedal down,
+	// Held → Sustained (still ringing); otherwise Held → Releasing.
 	size_t bestIdx = MAX_VOICES;
 	uint64_t bestAge = UINT64_MAX;
 
 	for (size_t i = 0; i < MAX_VOICES; i++)
 	{
-		if (m_voices[i].state == VoiceState::Held && m_voices[i].midiNote == note)
+		if (m_voices[i].state == VoiceState::Held && m_voices[i].midiNote == matchNote)
 		{
 			if (m_voices[i].age < bestAge)
 			{
@@ -174,19 +182,25 @@ void Device::noteOff(uint8_t note)
 
 	if (bestIdx < MAX_VOICES)
 	{
-		m_voices[bestIdx].state = VoiceState::Releasing;
-		m_voices[bestIdx].voice.noteOff();
+		if (m_sustainPedal)
+		{
+			m_voices[bestIdx].state = VoiceState::Sustained;
+		}
+		else
+		{
+			m_voices[bestIdx].state = VoiceState::Releasing;
+			m_voices[bestIdx].voice.noteOff();
+		}
 	}
 }
 
 void Device::allNotesOff()
 {
 	m_sustainPedal = false;
-	std::memset(m_sustainedNotes, 0, sizeof(m_sustainedNotes));
 
 	for (auto& slot : m_voices)
 	{
-		if (slot.state == VoiceState::Held)
+		if (slot.state == VoiceState::Held || slot.state == VoiceState::Sustained)
 		{
 			slot.state = VoiceState::Releasing;
 			slot.voice.noteOff();
@@ -196,17 +210,22 @@ void Device::allNotesOff()
 
 size_t Device::allocateVoice()
 {
+	// Priority: Free > oldest Releasing > oldest Sustained > oldest Held.
+	// Sustained voices already had their key released — less disruptive
+	// to steal than Held voices the player is still pressing.
 	size_t bestIdx = 0;
 	uint64_t bestPriority = UINT64_MAX;
 
 	for (size_t i = 0; i < MAX_VOICES; i++)
 	{
-		if (m_voices[i].state == VoiceState::Free)
-			return i;
-
-		const uint64_t priority = (m_voices[i].state == VoiceState::Releasing)
-			? m_voices[i].age
-			: m_voices[i].age + UINT64_MAX / 2;
+		uint64_t priority;
+		switch (m_voices[i].state)
+		{
+		case VoiceState::Free:      return i;
+		case VoiceState::Releasing: priority = m_voices[i].age;                       break;
+		case VoiceState::Sustained: priority = m_voices[i].age + UINT64_MAX / 4;      break;
+		case VoiceState::Held:      priority = m_voices[i].age + UINT64_MAX / 2;      break;
+		}
 
 		if (priority < bestPriority)
 		{
@@ -394,13 +413,14 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			m_sustainPedal = (_ev.c >= 64);
 			if (!m_sustainPedal)
 			{
-				// Release sustained notes (one noteOff per deferred note-off)
-				for (int n = 0; n < 128; n++)
+				// Release every Sustained voice — they kept ringing while the
+				// pedal was held; lifting it triggers the deferred note-off.
+				for (auto& slot : m_voices)
 				{
-					while (m_sustainedNotes[n] > 0)
+					if (slot.state == VoiceState::Sustained)
 					{
-						m_sustainedNotes[n]--;
-						noteOff(static_cast<uint8_t>(n));
+						slot.state = VoiceState::Releasing;
+						slot.voice.noteOff();
 					}
 				}
 			}

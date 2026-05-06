@@ -57,7 +57,8 @@ public:
 			correctedDecay[i + 1] /= corrections.decayOffsets[i];
 
 		// Displacement scale correction
-		const double correctedDs = pickupDisplacementScale(m_midiNote) * corrections.dsCorrection;
+		const double baseDs = pickupDisplacementScale(m_midiNote);
+		const double correctedDs = baseDs * corrections.dsCorrection;
 
 		m_reed.init(detunedFundamental, correctedRatios, amplitudes, correctedDecay,
 					onsetTime, velocity, sampleRate, noiseSeed);
@@ -65,7 +66,23 @@ public:
 		m_pickup.init(sampleRate, correctedDs);
 		m_noise.init(velocity, detunedFundamental, sampleRate, noiseSeed);
 
-		m_postPickupGain = outputScale(m_midiNote, velocity);
+		// MLP ds_correction shifts pickup drive, which changes output level
+		// as a side effect (the MLP targets H2/H1 spectral shape, not level).
+		// sqrt of the proxy ratio matches the RC pickup's smoothing — the
+		// static Fourier proxy overestimates response at high ds because
+		// charge dynamics self-limit peak excursions. Empirically: half-in-dB.
+		double mlpLevelCompensation = 1.0;
+		if (std::abs(corrections.dsCorrection - 1.0) > 1e-6)
+		{
+			constexpr double HPF_FC = 2312.0;
+			const double f0 = midiToFreq(m_midiNote);
+			const double proxyBase = pickupRmsProxy(baseDs, f0, HPF_FC);
+			const double proxyCorrected = pickupRmsProxy(correctedDs, f0, HPF_FC);
+			if (proxyCorrected > 1e-10)
+				mlpLevelCompensation = std::sqrt(proxyBase / proxyCorrected);
+		}
+
+		m_postPickupGain = outputScale(m_midiNote, velocity) * mlpLevelCompensation;
 		m_active = true;
 	}
 

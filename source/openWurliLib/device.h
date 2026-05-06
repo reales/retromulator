@@ -75,7 +75,7 @@ private:
 	// Voice management
 	static constexpr size_t MAX_VOICES = 64;
 
-	enum class VoiceState { Free, Held, Releasing };
+	enum class VoiceState { Free, Held, Sustained, Releasing };
 
 	struct VoiceSlot
 	{
@@ -119,9 +119,9 @@ private:
 	std::vector<double> m_upBuf;
 	std::vector<double> m_outBuf;
 
-	// Sustain pedal
+	// Sustain pedal — held voices transition Held → Sustained on note-off,
+	// freed when pedal lifts (voices in Sustained state are still ringing).
 	bool m_sustainPedal = false;
-	uint8_t m_sustainedNotes[128] = {};  // count of deferred note-offs per note
 
 	std::atomic<bool> m_shutdown{false};
 };
