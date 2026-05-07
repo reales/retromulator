@@ -130,6 +130,19 @@ namespace synthLib
 		// must be refreshed or the resampler passes null pointers for extra channels.
 		m_resampler.setChannelCounts(_device->getChannelCountIn(), _device->getChannelCountOut());
 
+		// Re-resolve device samplerate for the new device. Without this, switching
+		// from a 44100-Hz device to a different-rate one (e.g. DX7 at 49096) leaves
+		// m_deviceSamplerate stale; the resampler keeps the previous rate and pitch
+		// is wrong.
+		if(m_hostSamplerate > 0)
+		{
+			m_deviceSamplerate = m_device->getDeviceSamplerate(0.0f, m_hostSamplerate);
+			m_resampler.setSamplerates(m_hostSamplerate, m_deviceSamplerate);
+		}
+		else
+		{
+			m_deviceSamplerate = m_device->getSamplerate();
+		}
 		m_device->setSamplerate(m_deviceSamplerate);
 		if(!deviceState.empty())
 			setState(deviceState);
