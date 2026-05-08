@@ -91,7 +91,7 @@ namespace synthLib
 		processMidiInEvents();
 		processMidiClock(_bpm, _ppqPos, _isPlaying, _count);
 
-		m_resampler.process(inputs, outputs, m_midiIn, m_midiOut, static_cast<uint32_t>(_count), 
+		m_resampler.process(inputs, outputs, m_midiIn, m_midiOut, static_cast<uint32_t>(_count),
 			[&](const TAudioInputs& _ins, const TAudioOutputs& _outs, size_t _c, const ResamplerInOut::TMidiVec& _midiIn, ResamplerInOut::TMidiVec& _midiOut)
 		{
 			m_device->process(_ins, _outs, _c, _midiIn, _midiOut);

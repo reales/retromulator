@@ -15,6 +15,7 @@ namespace retromulator
         AkaiS1000 = 7,  // Akai S1000 (SFZero sample player)
         OpenWurli = 8,  // Wurlitzer 200A (OpenWurli physical model)
         OPL3      = 9,  // Yamaha OPL3 / YMF262 (Nuked OPL3)
+        SID       = 10, // Commodore 64 SID 6581/8580 (reSID)
 
         Count
     };
@@ -30,6 +31,7 @@ namespace retromulator
             SynthType::NordN2X,
             SynthType::OPL3,
             SynthType::OpenWurli,
+            SynthType::SID,
             SynthType::VirusABC,
             SynthType::VirusTI,
             SynthType::XT,
@@ -52,6 +54,7 @@ namespace retromulator
             case SynthType::AkaiS1000: return "Akai S1000";
             case SynthType::OpenWurli: return "OpenWurli";
             case SynthType::OPL3:      return "OPL3";
+            case SynthType::SID:       return "SID";
             default:                   return "None";
         }
     }

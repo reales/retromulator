@@ -15,7 +15,17 @@ namespace retromulator
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.mid");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.bin");
         folder.findChildFiles(out, juce::File::findFiles, recursive, "*.pfm");
-        folder.findChildFiles(out, juce::File::findFiles, recursive, "*.sbi");
+    }
+
+    static void findBankFiles(SynthType type, const juce::File& folder,
+                              juce::Array<juce::File>& out, bool recursive = false)
+    {
+        if(type == SynthType::SID)
+        {
+            folder.findChildFiles(out, juce::File::findFiles, recursive, "*.sng");
+            folder.findChildFiles(out, juce::File::findFiles, recursive, "*.ins");
+        }
+        else findSysexFiles(folder, out, recursive);
     }
 
     static void findSoundFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
@@ -93,7 +103,7 @@ namespace retromulator
             {
                 juce::Array<juce::File> patches;
                 juce::File(m_currentBankFolder).findChildFiles(
-                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
+                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
                 patches.sort();
 
                 if(sel < patches.size())
@@ -167,7 +177,7 @@ namespace retromulator
 
                     juce::Array<juce::File> patches;
                     subs[idx].findChildFiles(patches, juce::File::findFiles, false,
-                                             "*.syx;*.mid;*.bin;*.pfm;*.sbi");
+                                             "*.syx;*.mid;*.bin;*.pfm");
                     patches.sort();
 
                     if(!patches.isEmpty())
@@ -184,7 +194,7 @@ namespace retromulator
                     findSoundFiles(synthFolder, files);
                 else
                     synthFolder.findChildFiles(files, juce::File::findFiles, false,
-                                               "*.syx;*.mid;*.bin;*.pfm;*.sbi");
+                                               "*.syx;*.mid;*.bin;*.pfm");
                 files.sort();
 
                 if(idx < files.size())
@@ -310,7 +320,7 @@ namespace retromulator
             if(isAkaiSampler(type))
                 findSoundFiles(folder, files);
             else
-                findSysexFiles(folder, files);
+                findBankFiles(type, folder, files);
             files.sort();
 
             const bool akai = isAkaiSampler(type);
@@ -427,7 +437,7 @@ namespace retromulator
         {
             juce::Array<juce::File> patches;
             juce::File(m_currentBankFolder).findChildFiles(
-                patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
+                patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
             patches.sort();
 
             const int patchCount = patches.size();
@@ -506,7 +516,7 @@ namespace retromulator
 
         const juce::String filter = isAkaiSampler(type)
             ? juce::String(kSoundFilePattern)
-            : juce::String("*.syx;*.mid;*.bin;*.pfm;*.sbi");
+            : juce::String("*.syx;*.mid;*.bin;*.pfm");
 
         const juce::String title = isAkaiSampler(type)
             ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
@@ -720,7 +730,7 @@ namespace retromulator
             {
                 juce::Array<juce::File> patches;
                 juce::File(m_currentBankFolder).findChildFiles(
-                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm;*.sbi");
+                    patches, juce::File::findFiles, false, "*.syx;*.mid;*.bin;*.pfm");
                 patches.sort();
 
                 int cur = -1;
@@ -787,7 +797,7 @@ namespace retromulator
             if(isAkaiSampler(type))
                 findSoundFiles(synthFolder2, files);
             else
-                findSysexFiles(synthFolder2, files);
+                findBankFiles(type, synthFolder2, files);
             files.sort();
             if(files.isEmpty()) return;
 
@@ -893,7 +903,7 @@ namespace retromulator
             if(isAkaiSampler(type))
                 findSoundFiles(folder, files);
             else
-                findSysexFiles(folder, files);
+                findBankFiles(type, folder, files);
             files.sort();
             if(!files.isEmpty())
             {
@@ -986,7 +996,7 @@ namespace retromulator
             if(isAkaiSampler(newType))
                 findSoundFiles(folder, files);
             else
-                findSysexFiles(folder, files);
+                findBankFiles(newType, folder, files);
             files.sort();
             if(!files.isEmpty())
             {

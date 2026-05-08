@@ -15,6 +15,7 @@
 namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
 namespace opl3Lib { class Device; }
+namespace sidLib { class Device; }
 
 namespace retromulator
 {
@@ -57,13 +58,11 @@ namespace retromulator
         // Names for all programs are embedded in each message.
         bool exportCurrentBankToFile(const std::string& destPath) const;
 
-#ifdef CUSTOM
         // Export the loaded Virus bank converted to a different model version.
         // targetVersion: 'A', 'B', or 'C'.  Remaps C-only parameters (analog
         // filters, saturation) to safe equivalents for the older model.
         // Returns the number of patches converted, or -1 on error.
         int exportConvertedVirusBank(const std::string& destPath, char targetVersion) const;
-#endif
 
         // ── Sound file loading (Akai S1000) ──────────────────────────────────
         // Load a sound file (SFZ/SF2/WAV/FLAC/ZBP/ZBB) into the Akai device.
@@ -89,10 +88,19 @@ namespace retromulator
         // Returns the OPL3 device if the current synth type is OPL3, else nullptr.
         opl3Lib::Device* getOpl3Device() const;
 
+        // Returns the SID device if the current synth type is SID, else nullptr.
+        sidLib::Device* getSidDevice() const;
+
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most
         // synths; >1 for JE-8086 where each performance = several sub-messages).
-        int getProgramCount()   const { return static_cast<int>(m_bankMessages.size()) / m_bankStride; }
+        int getProgramCount()   const
+        {
+            // SID has no sysex bank; instrument count lives in m_programNames.
+            if(m_bankMessages.empty() && !m_programNames.empty())
+                return static_cast<int>(m_programNames.size());
+            return static_cast<int>(m_bankMessages.size()) / m_bankStride;
+        }
         int getCurrentProgram() override { return m_currentProgram; }
 
         // ── Data folder helpers ─────────────────────────────────────────────

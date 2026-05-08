@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.3.3"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.4.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -293,6 +293,30 @@
       <FILE id="op002" name="device.h" compile="0" resource="0" file="source/opl3Lib/device.h"/>
       <FILE id="op003" name="device.cpp" compile="1" resource="0" file="source/opl3Lib/device.cpp"/>
       <FILE id="op004" name="opl3.h" compile="0" resource="0" file="source/opl3Lib/opl3.h"/>
+    </GROUP>
+    <GROUP id="sidLib" name="sidLib">
+      <FILE id="si001" name="device.h" compile="0" resource="0" file="source/sidLib/device.h"/>
+      <FILE id="si002" name="device.cpp" compile="1" resource="0" file="source/sidLib/device.cpp"/>
+      <FILE id="si003" name="insLoader.h" compile="0" resource="0" file="source/sidLib/insLoader.h"/>
+      <FILE id="si004" name="insLoader.cpp" compile="1" resource="0" file="source/sidLib/insLoader.cpp"/>
+      <FILE id="si010" name="siddefs.h" compile="0" resource="0" file="source/sidLib/resid/siddefs.h"/>
+      <FILE id="si011" name="sid.h" compile="0" resource="0" file="source/sidLib/resid/sid.h"/>
+      <FILE id="si012" name="sid.cc" compile="1" resource="0" file="source/sidLib/resid/sid.cc"/>
+      <FILE id="si013" name="voice.h" compile="0" resource="0" file="source/sidLib/resid/voice.h"/>
+      <FILE id="si014" name="voice.cc" compile="1" resource="0" file="source/sidLib/resid/voice.cc"/>
+      <FILE id="si015" name="filter.h" compile="0" resource="0" file="source/sidLib/resid/filter.h"/>
+      <FILE id="si016" name="filter.cc" compile="1" resource="0" file="source/sidLib/resid/filter.cc"/>
+      <FILE id="si017" name="envelope.h" compile="0" resource="0" file="source/sidLib/resid/envelope.h"/>
+      <FILE id="si018" name="envelope.cc" compile="1" resource="0" file="source/sidLib/resid/envelope.cc"/>
+      <FILE id="si019" name="extfilt.h" compile="0" resource="0" file="source/sidLib/resid/extfilt.h"/>
+      <FILE id="si020" name="extfilt.cc" compile="1" resource="0" file="source/sidLib/resid/extfilt.cc"/>
+      <FILE id="si021" name="pot.h" compile="0" resource="0" file="source/sidLib/resid/pot.h"/>
+      <FILE id="si022" name="pot.cc" compile="1" resource="0" file="source/sidLib/resid/pot.cc"/>
+      <FILE id="si023" name="wave.h" compile="0" resource="0" file="source/sidLib/resid/wave.h"/>
+      <FILE id="si024" name="wave.cc" compile="1" resource="0" file="source/sidLib/resid/wave.cc"/>
+      <FILE id="si025" name="dac.h" compile="0" resource="0" file="source/sidLib/resid/dac.h"/>
+      <FILE id="si026" name="spline.h" compile="0" resource="0" file="source/sidLib/resid/spline.h"/>
+      <FILE id="si027" name="version.cc" compile="1" resource="0" file="source/sidLib/resid/version.cc"/>
     </GROUP>
     <GROUP id="dx7Lib" name="dx7Lib">
       <FILE id="dx001" name="HD6303R.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R.cpp"/>
