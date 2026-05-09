@@ -258,6 +258,9 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			// Flush the serial RX buffer so any accumulated CC100/101 garbage
 			// (Logic AU floods these) doesn't delay or corrupt the PC that follows.
 			m_dx7.midiSerialRx.flush();
+			// Firmware's bulk-dump handler clears master tune (writes 0 to 0x2311).
+			// Re-apply A440 tuning so notes don't drift after a patch reload.
+			m_dx7.tune(0);
 			return true;
 		}
 
