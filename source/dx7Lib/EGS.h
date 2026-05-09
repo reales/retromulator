@@ -286,7 +286,7 @@ private:
 			int32_t f = opPitch[op]>>2;
 			f += opDetune[op]&0x8 ? -static_cast<int16_t>(opDetune[op]&0x7) : opDetune[op];
 			if(!(opPitch[op]&1)) {
-				f += voicePitch[voice] - 107;
+				f += voicePitch[voice] - 171;
 				f += pitchMod;
 			}
 			if(f>0x3FFF) f=0x3FFF; else if(f<0) f=0;
