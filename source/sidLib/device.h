@@ -80,7 +80,7 @@ public:
 #endif
 
     // Bank/patch management — called by HeadlessProcessor on browse/program-change
-    bool loadBankFile(const std::string& filePath);   // .sng or .ins
+    bool loadBankFile(const std::string& filePath);   // .sng / .ins / .sid
     bool selectInstrument(int index);                  // 1-based; 0 = none
     int  getInstrumentCount() const;                   // number of instruments (excl. index 0)
     std::string getInstrumentName(int index) const;    // 1-based

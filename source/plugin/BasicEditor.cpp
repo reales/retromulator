@@ -479,7 +479,8 @@ namespace retromulator
 
             // Update current item text (name may have been set after initial load via sendBankMessage).
             // Skip for Akai — program names are already set correctly by loadSoundFile.
-            if(progCount > 0 && !isAkaiSampler(type))
+            // Skip for SID — instrument names from the bank file are authoritative.
+            if(progCount > 0 && !isAkaiSampler(type) && type != SynthType::SID)
             {
                 const juce::String patch(m_proc.getPatchName());
                 const juce::String bankStr = currentPath.isEmpty()

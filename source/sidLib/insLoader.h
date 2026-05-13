@@ -63,7 +63,14 @@ bool loadSng(const std::string& filePath, SidBank& out);
 // one instrument plus its referenced tables (rebased to start at offset 1).
 bool loadIns(const std::string& filePath, SidBank& out);
 
-// Auto-dispatch based on file extension (.sng or .ins). Case-insensitive.
+// Parse a GoatTracker-packed PSID/RSID (.sid) file and extract instruments +
+// macro tables. Songs/patterns are decoded only as far as needed to determine
+// the highest-referenced instrument and table indices. Works on .sid files
+// produced by GoatTracker 2's "Pack" exporter; returns false otherwise.
+// Algorithm adapted from 2bt/sid2sng (https://github.com/2bt/sid2sng).
+bool loadSid(const std::string& filePath, SidBank& out);
+
+// Auto-dispatch based on file extension (.sng, .ins, .sid). Case-insensitive.
 bool loadBank(const std::string& filePath, SidBank& out);
 
 } // namespace sidLib

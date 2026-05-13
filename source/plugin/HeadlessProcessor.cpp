@@ -1087,9 +1087,9 @@ namespace retromulator
             return true;
         }
 
-        // SID: .sng / .ins are multi-instrument banks loaded directly into the device.
+        // SID: .sng / .ins / .sid are multi-instrument banks loaded directly into the device.
         if(m_synthType == SynthType::SID
-            && (hasSuffix(filePath, ".sng") || hasSuffix(filePath, ".ins")))
+            && (hasSuffix(filePath, ".sng") || hasSuffix(filePath, ".ins") || hasSuffix(filePath, ".sid")))
         {
             auto* dev = getSidDevice();
             if(!dev) return false;
@@ -1600,7 +1600,7 @@ namespace retromulator
         }
         else if(newType == SynthType::SID)
         {
-            // SID: bank lives in the .sng/.ins file (no embedded sysex).
+            // SID: bank lives in the .sng/.ins/.sid file (no embedded sysex).
             // Reload it and select the saved instrument.
             if(!sysexFilePath.empty() && juce::File(sysexFilePath).existsAsFile())
                 loadPresetFromFile(sysexFilePath, patchName, static_cast<int>(savedProgram));
