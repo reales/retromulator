@@ -85,6 +85,7 @@ struct DX7: public HD6303R {
 	bool saveRAM(std::vector<uint8_t>& ramData) const;
 
 	void tune(int tuning); // Master tuning -256 to +255
+	void initControllers(); // Restore wheel/pedal defaults after firmware boot
 
 	// Interrupt to transfer events from sub-cpu to main
 	bool byte1Sent = false, haveMsg = false;
@@ -117,10 +118,10 @@ struct DX7: public HD6303R {
 	void sustain(bool on) { if(on) P_CRT_PEDALS_LCD |= 1; else P_CRT_PEDALS_LCD &= 0xFE; }
 	void porta(bool on) { if(on) P_CRT_PEDALS_LCD |= 2; else P_CRT_PEDALS_LCD &= 0xFD; }
 
-	// Direct pitch/mod offsets (added to EGS pitch mod on each firmware write)
-	// Used as fallback when patch has PB range or mod sensitivity set to 0
+	// Direct pitch bend offset, added to EGS pitch mod on each firmware write.
+	// Needed because the firmware ignores MIDI pitch bend on patches with
+	// PB range 0.
 	int16_t pitchBendOffset = 0;
-	int16_t modWheelOffset = 0;
 
 	bool isRomLoaded() const { return m_firmwareLoaded; }
 
@@ -145,6 +146,18 @@ struct DX7: public HD6303R {
 	uint8_t  &P_EGS_VOICE_EVENTS                  =  memory[0x30F1];
 	uint8_t  &P_EGS_PITCH_MOD_HIGH                =  memory[0x30F2];
 	uint8_t  &P_EGS_PITCH_MOD_LOW                 =  memory[0x30F3];
+
+	// Controller table: ASSIGN at 0x232E+2n, RANGE at 0x2336+2n
+	// (n = 0 wheel, 1 breath, 2 foot, 3 aftertouch). Assign bits: 1=pitch,
+	// 2=amplitude, 4=EG bias.
+	uint8_t  &M_MOD_WHEEL_ASSIGN                  =  memory[0x232E];
+	uint8_t  &M_BREATH_CTRL_ASSIGN                =  memory[0x2330];
+	uint8_t  &M_FOOT_CTRL_ASSIGN                  =  memory[0x2332];
+	uint8_t  &M_AFTERTOUCH_ASSIGN                 =  memory[0x2334];
+	uint8_t  &M_MOD_WHEEL_RANGE                   =  memory[0x2336];
+	uint8_t  &M_BREATH_CTRL_RANGE                 =  memory[0x2338];
+	uint8_t  &M_FOOT_CTRL_RANGE                   =  memory[0x233A];
+	uint8_t  &M_AFTERTOUCH_RANGE                  =  memory[0x233C];
 
 	// RAM address space (firmware-specific locations)
 	uint8_t  &M_MASTER_TUNE                       =  memory[0x2311];

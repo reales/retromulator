@@ -36,6 +36,7 @@
 #include "openWurliLib/device.h"
 #include "opl3Lib/device.h"
 #include "sidLib/device.h"
+#include "ayumiLib/device.h"
 
 #include <cstring>
 #include <fstream>
@@ -568,13 +569,23 @@ namespace retromulator
                     juce::File(getSynthDataFolder(SynthType::OPL3)).createDirectory();
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
+                else if(type == SynthType::Ayumi)
+                {
+                    // Two banks: Factory (read-only presets) and User (imports).
+                    // Keeping imports out of Factory means Factory's MIDI Program
+                    // Change numbers never shift.
+                    const juce::File root(getSynthDataFolder(SynthType::Ayumi));
+                    root.createDirectory();
+                    root.getChildFile("Factory").createDirectory();
+                    root.getChildFile("User").createDirectory();
+                }
             }
         }
 
-        // JE-8086, Akai, OpenWurli, OPL3, SID run synchronously — no extra latency block needed.
+        // JE-8086, Akai, OpenWurli, OPL3, SID, Ayumi run synchronously — no extra latency block needed.
         setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000
                        || type == SynthType::OpenWurli || type == SynthType::OPL3
-                       || type == SynthType::SID) ? 0 : 1);
+                       || type == SynthType::SID || type == SynthType::Ayumi) ? 0 : 1);
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -1064,6 +1075,27 @@ namespace retromulator
                                                const std::string& patchName,
                                                int programIndex)
     {
+        // Ayumi: .ay patch files go directly to the device — no sysex involved.
+        if(m_synthType == SynthType::Ayumi && hasSuffix(filePath, ".ay"))
+        {
+            auto* dev = getAyumiDevice();
+            if(!dev) return false;
+
+            if(!dev->loadPatchFile(filePath)) return false;
+
+            m_sysexFilePath  = filePath;
+            m_patchName      = patchName.empty() ? dev->getPatchName() : patchName;
+            m_sysexData.clear();
+            m_bankMessages.clear();
+            m_programNames.clear();
+            m_bankStride     = 1;
+            m_currentProgram = 0;
+
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
+                .withNonParameterStateChanged(true));
+            return true;
+        }
+
         // OPL3: .sbi files go directly to the device — no sysex involved.
         if(m_synthType == SynthType::OPL3 && hasSuffix(filePath, ".sbi"))
         {
@@ -1179,6 +1211,59 @@ namespace retromulator
         if(m_synthType != SynthType::SID)
             return nullptr;
         return dynamic_cast<sidLib::Device*>(m_device.get());
+    }
+
+    ayumiLib::Device* HeadlessProcessor::getAyumiDevice() const
+    {
+        if(m_synthType != SynthType::Ayumi)
+            return nullptr;
+        return dynamic_cast<ayumiLib::Device*>(m_device.get());
+    }
+
+    int HeadlessProcessor::getAyumiEngine() const
+    {
+        auto* dev = getAyumiDevice();
+        return dev ? dev->getEngine() : 0;
+    }
+
+    void HeadlessProcessor::setAyumiEngine(int isAY)
+    {
+        if(auto* dev = getAyumiDevice())
+            dev->setEngine(isAY);
+    }
+
+    void HeadlessProcessor::updateAyumiProgramList(const std::string& bankFolder)
+    {
+        auto* dev = getAyumiDevice();
+        if(!dev) return;
+
+        std::vector<std::string> paths;
+        juce::File folder(bankFolder);
+        if(folder.isDirectory())
+        {
+            juce::Array<juce::File> files;
+            folder.findChildFiles(files, juce::File::findFiles, false, "*.ay");
+            files.sort();
+            for(const auto& f : files)
+                paths.push_back(f.getFullPathName().toStdString());
+        }
+        dev->setProgramList(std::move(paths));
+    }
+
+    void HeadlessProcessor::pollAyumiProgramChange()
+    {
+        auto* dev = getAyumiDevice();
+        if(!dev) return;
+
+        const int idx = dev->takePendingProgramChange();
+        if(idx < 0) return;
+
+        const auto& list = dev->getProgramList();
+        if(idx >= static_cast<int>(list.size())) return;
+
+        const juce::File f(list[static_cast<size_t>(idx)]);
+        loadPresetFromFile(f.getFullPathName().toStdString(),
+                           f.getFileNameWithoutExtension().toStdString());
     }
 
     bool HeadlessProcessor::loadSoundFile(const std::string& filePath)
@@ -1510,6 +1595,16 @@ namespace retromulator
             appendBytes(destData, owState);
         }
 
+        // Ayumi: save full device state blob (engine + CC1..CC11 + patch name) so
+        // live CC edits and the chip variant are recalled on reload.
+        if(m_synthType == SynthType::Ayumi)
+        {
+            std::vector<uint8_t> ayState;
+            if(auto* dev = getAyumiDevice())
+                dev->getState(ayState, synthLib::StateTypeGlobal);
+            appendBytes(destData, ayState);
+        }
+
         // Akai browse folder path (optional, backwards compatible)
         appendString(destData, m_akaiBrowseFolder);
 
@@ -1607,6 +1702,24 @@ namespace retromulator
             else
                 m_sysexFilePath = sysexFilePath; // path lost; keep for display
         }
+        else if(newType == SynthType::Ayumi)
+        {
+            // Ayumi: reload the .ay preset by path (populates the folder/bank UI),
+            // then the device state blob below restores live CC edits + engine.
+            if(!sysexFilePath.empty() && juce::File(sysexFilePath).existsAsFile())
+                loadPresetFromFile(sysexFilePath, patchName);
+            else
+                m_sysexFilePath = sysexFilePath; // path lost; keep for display
+        }
+        else if(newType == SynthType::OPL3)
+        {
+            // OPL3: patch lives in the .sbi file (no embedded sysex). Reload it so
+            // the instrument is recalled on project reopen.
+            if(!sysexFilePath.empty() && juce::File(sysexFilePath).existsAsFile())
+                loadPresetFromFile(sysexFilePath, patchName);
+            else
+                m_sysexFilePath = sysexFilePath; // path lost; keep for display
+        }
         else
         {
             // loadPreset splits the bank, stores messages, and sends message[savedProgram].
@@ -1626,6 +1739,17 @@ namespace retromulator
             if(!owState.empty())
                 if(auto* ow = getOpenWurliDevice())
                     ow->setState(owState, synthLib::StateTypeGlobal);
+        }
+
+        // Restore Ayumi device state blob (engine + CC1..CC11 + name). Applied after
+        // the .ay reload above so live CC edits win over the preset's stored values.
+        if(newType == SynthType::Ayumi)
+        {
+            std::vector<uint8_t> ayState;
+            readBytes(bytes, sizeInBytes, offset, ayState);
+            if(!ayState.empty())
+                if(auto* dev = getAyumiDevice())
+                    dev->setState(ayState, synthLib::StateTypeGlobal);
         }
 
         // Restore Akai browse folder path (optional, backwards compatible)

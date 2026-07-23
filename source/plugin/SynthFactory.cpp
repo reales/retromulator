@@ -23,6 +23,7 @@
 #include "openWurliLib/device.h"
 #include "opl3Lib/device.h"
 #include "sidLib/device.h"
+#include "ayumiLib/device.h"
 
 #include "synthLib/romLoader.h"
 #include "synthLib/deviceException.h"
@@ -194,6 +195,12 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new sidLib::Device(p);
+            }
+
+            case SynthType::Ayumi:
+            {
+                synthLib::DeviceCreateParams p;
+                return new ayumiLib::Device(p);
             }
 
             default:

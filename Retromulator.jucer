@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.4.2"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.5.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -317,6 +317,15 @@
       <FILE id="si025" name="dac.h" compile="0" resource="0" file="source/sidLib/resid/dac.h"/>
       <FILE id="si026" name="spline.h" compile="0" resource="0" file="source/sidLib/resid/spline.h"/>
       <FILE id="si027" name="version.cc" compile="1" resource="0" file="source/sidLib/resid/version.cc"/>
+    </GROUP>
+    <GROUP id="ayumiLib" name="ayumiLib">
+      <FILE id="ay001" name="ayumi.h" compile="0" resource="0" file="source/ayumiLib/ayumi.h"/>
+      <FILE id="ay002" name="ayumi.c" compile="1" resource="0" file="source/ayumiLib/ayumi.c"/>
+      <FILE id="ay003" name="synthTables.h" compile="0" resource="0" file="source/ayumiLib/synthTables.h"/>
+      <FILE id="ay004" name="synthVoice.h" compile="0" resource="0" file="source/ayumiLib/synthVoice.h"/>
+      <FILE id="ay005" name="synthVoice.cpp" compile="1" resource="0" file="source/ayumiLib/synthVoice.cpp"/>
+      <FILE id="ay006" name="device.h" compile="0" resource="0" file="source/ayumiLib/device.h"/>
+      <FILE id="ay007" name="device.cpp" compile="1" resource="0" file="source/ayumiLib/device.cpp"/>
     </GROUP>
     <GROUP id="dx7Lib" name="dx7Lib">
       <FILE id="dx001" name="HD6303R.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R.cpp"/>

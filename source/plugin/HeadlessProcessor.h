@@ -16,6 +16,7 @@ namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
 namespace opl3Lib { class Device; }
 namespace sidLib { class Device; }
+namespace ayumiLib { class Device; }
 
 namespace retromulator
 {
@@ -90,6 +91,22 @@ namespace retromulator
 
         // Returns the SID device if the current synth type is SID, else nullptr.
         sidLib::Device* getSidDevice() const;
+
+        // Returns the Ayumi device if the current synth type is Ayumi, else nullptr.
+        ayumiLib::Device* getAyumiDevice() const;
+
+        // Ayumi chip variant: 0 = YM2149, 1 = AY-3-8910. No-op if not Ayumi.
+        int  getAyumiEngine() const;
+        void setAyumiEngine(int isAY);
+
+        // Push the sorted .ay file list of the given folder to the Ayumi device
+        // so MIDI Program Change 0..N selects file 1..N+1. No-op if not Ayumi.
+        void updateAyumiProgramList(const std::string& bankFolder);
+
+        // Poll a latched MIDI Program Change from the Ayumi device and load the
+        // corresponding .ay file on the message thread. Call periodically from the
+        // editor timer. No-op if not Ayumi or nothing pending.
+        void pollAyumiProgramChange();
 
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most

@@ -50,6 +50,8 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 		// Run boot cycles to get the firmware initialized
 		for(int i = 0; i < 3000000; i++)
 			m_dx7.run();
+
+		m_dx7.initControllers();
 	}
 }
 
@@ -83,7 +85,6 @@ bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 {
 	if(_type == synthLib::StateTypeGlobal)
 	{
-		// Save the 6K battery-backed RAM
 		m_dx7.saveRAM(_state);
 		return true;
 	}
@@ -217,21 +218,12 @@ void Device::processMessage(Message msg)
 		}
 
 		case Message::CtrlID::modulate:
-		{
-			// Read pitch mod sensitivity from edit buffer (bits 4-6 of byte 0x2074)
-			uint8_t pms = (m_dx7.memory[0x2074] >> 4) & 0x07;
-			if(pms == 0) {
-				// Patch has no mod sensitivity: apply mod wheel as vibrato depth
-				// Scale to ~1 semitone pitch mod at full wheel
-				m_dx7.modWheelOffset = static_cast<int16_t>(msg.byte2 * 1365 / 127);
-			} else {
-				m_dx7.modWheelOffset = 0; // let firmware handle it
-			}
-			// Always deliver to firmware via sub-CPU
+			// Firmware drives mod wheel -> LFO depth natively via the sub-CPU.
+			// No direct EGS injection: the wheel modulates the LFO, it does not
+			// transpose pitch.
 			m_dx7.msg = msg;
 			m_dx7.haveMsg = true;
 			break;
-		}
 
 		default:
 			// Key events: velocity is inverted for DX7 internal keyboard
@@ -297,17 +289,17 @@ void Device::parseMIDI(const uint8_t* data, uint32_t size)
 	switch(status)
 	{
 	case 0x80: // Note Off
-		if(data[1] >= 34)
-			m_toSynth->key_off(data[1] - 34);
+		if(data[1] >= 36)
+			m_toSynth->key_off(data[1] - 36);
 		return;
 
 	case 0x90: // Note On
-		if(data[1] >= 34)
+		if(data[1] >= 36)
 		{
 			if(data[2] == 0)
-				m_toSynth->key_off(data[1] - 34);
+				m_toSynth->key_off(data[1] - 36);
 			else
-				m_toSynth->key_on(data[1] - 34, m_midiVelocity[data[2]]);
+				m_toSynth->key_on(data[1] - 36, m_midiVelocity[data[2]]);
 		}
 		return;
 

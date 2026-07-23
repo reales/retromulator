@@ -70,6 +70,30 @@ void DX7::start() {
 	reset(); // Start processor
 }
 
+void DX7::initControllers() {
+	// Controller range/assign live in battery RAM and the firmware never
+	// initialises them -- on hardware they simply persist. Booting from
+	// cleared RAM leaves range 0, so every wheel and pedal is dead, and
+	// this ROM exposes no sysex path to change them.
+	//
+	// Mod wheel -> pitch at full range: matches what factory cartridge
+	// patches assume (they program LFO pitch-mod sensitivity expecting the
+	// wheel to bring in vibrato). Deliberately more useful than hardware,
+	// which would need the values dialled in on the front panel.
+	M_MOD_WHEEL_RANGE    = 99;
+	M_MOD_WHEEL_ASSIGN   = 0x01;
+
+	// Breath and foot -> EG bias, per Yamaha's own recommended setup.
+	M_BREATH_CTRL_RANGE  = 99;
+	M_BREATH_CTRL_ASSIGN = 0x04;
+	M_FOOT_CTRL_RANGE    = 99;
+	M_FOOT_CTRL_ASSIGN   = 0x04;
+
+	// Aftertouch -> pitch + EG bias at moderate range.
+	M_AFTERTOUCH_RANGE   = 50;
+	M_AFTERTOUCH_ASSIGN  = 0x05;
+}
+
 void DX7::tune(int tuning) {
 	if(tuning < 256 && tuning >= -256) {
 		uint16_t t = static_cast<uint16_t>(tuning + 256);
@@ -137,10 +161,10 @@ void DX7::run() {
 
 	// Writing to EGS address space 0x30**
 	if((ADDR&0xFF00)==0x3000) {
-		// Add pitch bend and mod wheel offsets to firmware's pitch mod value
-		if(ADDR == 0x30F3 && (pitchBendOffset != 0 || modWheelOffset != 0)) {
+		// Add pitch bend offset to firmware's pitch mod value
+		if(ADDR == 0x30F3 && pitchBendOffset != 0) {
 			int16_t fwVal = static_cast<int16_t>((memory[0x30F2] << 8) | memory[0x30F3]);
-			int32_t combined = fwVal + pitchBendOffset + modWheelOffset;
+			int32_t combined = fwVal + pitchBendOffset;
 			if(combined > 32767) combined = 32767;
 			if(combined < -32768) combined = -32768;
 			memory[0x30F2] = static_cast<uint8_t>((combined >> 8) & 0xFF);

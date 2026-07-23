@@ -25,6 +25,15 @@ namespace retromulator
             folder.findChildFiles(out, juce::File::findFiles, recursive, "*.sng");
             folder.findChildFiles(out, juce::File::findFiles, recursive, "*.ins");
         }
+        else if(type == SynthType::Ayumi)
+        {
+            // Presets live in the Factory/User subfolders — always search into them.
+            folder.findChildFiles(out, juce::File::findFiles, true, "*.ay");
+        }
+        else if(type == SynthType::OPL3)
+        {
+            folder.findChildFiles(out, juce::File::findFiles, true, "*.sbi");
+        }
         else findSysexFiles(folder, out, recursive);
     }
 
@@ -515,13 +524,18 @@ namespace retromulator
         const auto lastFolder = HeadlessProcessor::getLastLoadFolder(type);
         const auto destFolder = lastFolder.empty() ? synthFolder : juce::File(lastFolder);
 
-        const juce::String filter = isAkaiSampler(type)
-            ? juce::String(kSoundFilePattern)
-            : juce::String("*.syx;*.mid;*.bin;*.pfm");
+        const juce::String filter =
+              isAkaiSampler(type)        ? juce::String(kSoundFilePattern)
+            : type == SynthType::Ayumi   ? juce::String("*.ay")
+            : type == SynthType::OPL3    ? juce::String("*.sbi")
+            : type == SynthType::SID     ? juce::String("*.sng;*.ins;*.sid")
+                                         : juce::String("*.syx;*.mid;*.bin;*.pfm");
 
-        const juce::String title = isAkaiSampler(type)
-            ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
-            : "Select SysEx patch file";
+        const juce::String title =
+              isAkaiSampler(type)        ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
+            : type == SynthType::Ayumi   ? "Select AY preset file"
+            : type == SynthType::OPL3    ? "Select OPL SBI instrument file"
+                                         : "Select SysEx patch file";
 
         m_fileChooser = std::make_shared<juce::FileChooser>(title, destFolder, filter);
 
