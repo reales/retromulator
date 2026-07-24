@@ -15,6 +15,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Akai S1000 | SFZero v3.0.0 sample engine |
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
 | Commodore 64 SID 6581 / 8580 | reSID cycle-accurate |
+| General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
 | Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate |
 | Waldorf microQ | Motorola DSP 56300 cycle-accurate |
 | Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate |
@@ -22,7 +23,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, and OPL3 cores are ROM-free.
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, and AY-3-8910 cores are ROM-free.
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
@@ -32,11 +33,13 @@ The **Yamaha OPL3** emulates the YMF262 FM synthesis chip (18 channels, 4-operat
 
 The **Commodore 64 SID** emulates the MOS 6581 / 8580 chip using the reSID engine with 3-voice polyphony, oldest-voice stealing, and a full 50 Hz macro playback engine (wavetable, pulsetable, filtertable, speedtable). It loads GoatTracker `.sng` banks and `.ins` standalone instruments, with live MIDI control via CC 1 (vibrato depth), CC 22 (pitch bend range, 1–48 semitones), CC 64 (sustain pedal), CC 71 (resonance), CC 74 (cutoff), and CC 75 (pulse width).
 
+The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
+
 ## How it differs from Gearmulator
 
 Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
 
-The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The SID emulation uses reSID by Dag Lem. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP.
+The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The SID emulation uses reSID by Dag Lem. The AY-3-8910 / YM2149 emulation uses Ayumi by Peter Sovietov. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP.
 
 ## Credits
 
@@ -46,6 +49,8 @@ The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libra
 - **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
 - **Dag Lem** — [reSID](https://en.wikipedia.org/wiki/ReSID), cycle-accurate MOS 6581 / 8580 SID emulation, GPL v2
 - **Lasse Öörni / Cadaver** — [GoatTracker](https://sourceforge.net/projects/goattracker2/) `.sng` / `.ins` format reference, GPL v2
+- **Peter Sovietov** — [Ayumi](https://github.com/true-grue/ayumi), AY-3-8910 / YM2149 emulation, MIT license
+- **Timothy Lamb** — [Ym2149Synth](https://github.com/trash80/Ym2149Synth), voice engine and soft envelope firmware, GPL v3
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
 - **Leo Olivers** — SFZero JUCE module port
 - **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license
@@ -55,4 +60,4 @@ JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 
 ## License
 
-The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** — see [LICENSE.txt](LICENSE.txt). The SFZero module is licensed under the **MIT License** — see [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE). The Nuked OPL3 engine is licensed under the **GNU Lesser General Public License v2.1**. The reSID engine is licensed under the **GNU General Public License v2.0**.
+The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** — see [LICENSE.txt](LICENSE.txt). The SFZero module is licensed under the **MIT License** — see [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE). The Nuked OPL3 engine is licensed under the **GNU Lesser General Public License v2.1**. The reSID engine is licensed under the **GNU General Public License v2.0**. The Ayumi engine is licensed under the **MIT License** — see [source/ayumiLib/AYUMI_LICENSE.txt](source/ayumiLib/AYUMI_LICENSE.txt).
