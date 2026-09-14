@@ -256,6 +256,18 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			return true;
 		}
 
+		// Voice parameter change (F0 43 1n gg pp vv F7): the firmware only accepts
+		// it on its own RX channel, so patch the channel nibble in.
+		if(_ev.sysex.size() == 7 && _ev.sysex[1] == 0x43 && (_ev.sysex[2] & 0xF0) == 0x10)
+		{
+			m_dx7.setSysInfoAvail(true);
+			auto sysex = _ev.sysex;
+			sysex[2] = static_cast<uint8_t>(0x10 | (m_dx7.getMidiRxChannel() & 0x0F));
+			for(const auto byte : sysex)
+				m_dx7.midiSerialRx.write(byte);
+			return true;
+		}
+
 		// Other sysex: send through serial interface
 		for(const auto byte : _ev.sysex)
 			m_dx7.midiSerialRx.write(byte);

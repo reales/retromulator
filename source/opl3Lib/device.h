@@ -94,6 +94,8 @@ private:
     // OPL3 register helpers
     void writeReg(uint16_t reg, uint8_t val);
     void applyPatch(uint8_t oplCh);          // apply m_currentPatch to channel oplCh
+    void applyPatchToActive();               // re-apply after a live CC edit
+    void onPatchCC(uint8_t cc, uint8_t value);
     void keyOn (uint8_t oplCh, uint8_t note, float pitchBend);
     void keyOff(uint8_t oplCh);
     void setPitch(uint8_t oplCh, uint8_t note, float semitones);
@@ -118,6 +120,7 @@ private:
     static constexpr float  kPitchBendRange = 2.0f; // ±2 semitones
 
     opl3_chip   m_chip{};
+    uint8_t     m_volume = 127;   // CC7, applied as carrier attenuation
     float       m_sampleRate = 44100.0f;
     SbiPatch    m_currentPatch{};
     std::string m_patchName;

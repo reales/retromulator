@@ -95,6 +95,8 @@ struct DX7: public HD6303R {
 	// MIDI buffers size 2^13=8192 bytes
 	Buffer<uint8_t, 13> midiSerialRx, midiSerialTx;
 	uint8_t getMidiRxChannel() { return M_MIDI_RX_CH; }
+	// Firmware gate for SysEx parameter changes and dumps (function mode "SYS INFO AVAIL")
+	void setSysInfoAvail(bool on) { M_MIDI_SYS_INFO_AVAIL = on ? 1 : 0; }
 
 	// MIDI volume control through DAC
 	uint8_t midiVolume = 7;
@@ -163,6 +165,7 @@ struct DX7: public HD6303R {
 	uint8_t  &M_MASTER_TUNE                       =  memory[0x2311];
 	uint8_t  &M_MASTER_TUNE_LOW                   =  memory[0x2312];
 	uint8_t  &M_MIDI_RX_CH                        =  memory[0x2573];
+	uint8_t  &M_MIDI_SYS_INFO_AVAIL               =  memory[0x00F8];   // zero page
 
 private:
 	bool m_firmwareLoaded = false;

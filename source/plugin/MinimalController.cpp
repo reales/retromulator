@@ -1,4 +1,6 @@
 #include "MinimalController.h"
+#include "HeadlessProcessor.h"
+#include "ParameterPool.h"
 #include "jucePluginLib/processor.h"
 
 namespace retromulator
@@ -17,5 +19,11 @@ namespace retromulator
         ev.a = 0xf0;
         getProcessor().addMidiEvent(ev);
         return true;
+    }
+
+    bool MinimalController::parseControllerMessage(const synthLib::SMidiEvent& ev)
+    {
+        auto* pool = static_cast<HeadlessProcessor&>(getProcessor()).getParameterPool();
+        return pool && pool->handleIncomingCC(ev);
     }
 }

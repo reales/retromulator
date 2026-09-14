@@ -92,6 +92,10 @@ void DX7::initControllers() {
 	// Aftertouch -> pitch + EG bias at moderate range.
 	M_AFTERTOUCH_RANGE   = 50;
 	M_AFTERTOUCH_ASSIGN  = 0x05;
+
+	// Cleared RAM boots with SYS INFO UNAVAIL, which makes the firmware drop
+	// incoming voice parameter changes (F0 43 1n ...). Host parameters need it.
+	setSysInfoAvail(true);
 }
 
 void DX7::tune(int tuning) {

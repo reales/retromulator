@@ -325,6 +325,22 @@ namespace n2x
 			e.offset = _ev.offset;
 			changeSingleParameter(part, e);
 		}
+		else if (bank == SysexByte::EmuSetMultiParam)
+		{
+			// performance params (LFO sync etc.) have no CC; patch the multi
+			// edit buffer and resend it so the hardware picks up the change
+			if(sysex.size() < 10)
+				return false;
+			const auto param = static_cast<MultiParam>((sysex[5] << 7) | sysex[6]);
+			const auto part = sysex[7];
+			if(part >= m_singles.size())
+				return false;
+			updateMultiFromSingles();
+			setMultiParam(m_multi, param, part, sysex[8]);
+			synthLib::SMidiEvent e(_ev.source);
+			e.sysex = validateDump(synthLib::SysexBuffer(m_multi.begin(), m_multi.end()));
+			return receive(_responses, e);
+		}
 
 		return false;
 	}

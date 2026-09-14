@@ -176,6 +176,54 @@ void Device::writeReg(uint16_t reg, uint8_t val)
 }
 
 // ── Apply current patch to OPL3 channel ch ───────────────────────────────────
+void Device::applyPatchToActive()
+{
+    for (uint8_t i = 0; i < kNumChannels; ++i)
+        if (m_voices[i].active)
+            applyPatch(i);
+}
+
+// CC20-31 modulator, CC40-51 carrier: Attack, Decay, Sustain, Release, Level,
+// KSL, Multiplier, Waveform, Tremolo, Vibrato, Sustain On, KSR. CC52 feedback,
+// CC53 algorithm. Values are taken raw when within the field range, otherwise
+// scaled down from 0-127 so external controllers work too.
+void Device::onPatchCC(uint8_t cc, uint8_t v)
+{
+    const bool carrier = cc >= 40;
+    const uint8_t idx  = static_cast<uint8_t>(cc - (carrier ? 40 : 20));
+
+    auto field = [v](int bits) -> uint8_t
+    {
+        const int maxv = (1 << bits) - 1;
+        return static_cast<uint8_t>(v <= maxv ? v : (v * (maxv + 1)) / 128);
+    };
+    const bool on = (v == 1 || v >= 64);
+
+    uint8_t& tvsksr = carrier ? m_currentPatch.carTVSKSRMult : m_currentPatch.modTVSKSRMult;
+    uint8_t& ksltl  = carrier ? m_currentPatch.carKSLTL      : m_currentPatch.modKSLTL;
+    uint8_t& ardr   = carrier ? m_currentPatch.carARDR       : m_currentPatch.modARDR;
+    uint8_t& slrr   = carrier ? m_currentPatch.carSLRR       : m_currentPatch.modSLRR;
+    uint8_t& wf     = carrier ? m_currentPatch.carWF         : m_currentPatch.modWF;
+
+    switch (idx)
+    {
+    case 0:  ardr   = static_cast<uint8_t>((ardr & 0x0F) | (field(4) << 4)); break;         // attack
+    case 1:  ardr   = static_cast<uint8_t>((ardr & 0xF0) | field(4)); break;                // decay
+    case 2:  slrr   = static_cast<uint8_t>((slrr & 0x0F) | (field(4) << 4)); break;         // sustain level
+    case 3:  slrr   = static_cast<uint8_t>((slrr & 0xF0) | field(4)); break;                // release
+    case 4:  ksltl  = static_cast<uint8_t>((ksltl & 0xC0) | (63 - field(6))); break;        // level (inverted TL)
+    case 5:  ksltl  = static_cast<uint8_t>((ksltl & 0x3F) | (field(2) << 6)); break;        // KSL
+    case 6:  tvsksr = static_cast<uint8_t>((tvsksr & 0xF0) | field(4)); break;              // multiplier
+    case 7:  wf     = field(3); break;                                                       // waveform
+    case 8:  tvsksr = static_cast<uint8_t>((tvsksr & ~0x80) | (on ? 0x80 : 0)); break;      // tremolo
+    case 9:  tvsksr = static_cast<uint8_t>((tvsksr & ~0x40) | (on ? 0x40 : 0)); break;      // vibrato
+    case 10: tvsksr = static_cast<uint8_t>((tvsksr & ~0x20) | (on ? 0x20 : 0)); break;      // sustain on
+    case 11: tvsksr = static_cast<uint8_t>((tvsksr & ~0x10) | (on ? 0x10 : 0)); break;      // KSR
+    default: break;
+    }
+    applyPatchToActive();
+}
+
 void Device::applyPatch(uint8_t ch)
 {
     uint16_t bank;
@@ -188,7 +236,11 @@ void Device::applyPatch(uint8_t ch)
     writeReg(bank | (0x20 + so), m_currentPatch.modTVSKSRMult);
     writeReg(bank | (0x20 + sc), m_currentPatch.carTVSKSRMult);
     writeReg(bank | (0x40 + so), m_currentPatch.modKSLTL);
-    writeReg(bank | (0x40 + sc), m_currentPatch.carKSLTL);
+    {
+        // carrier total level plus CC7 attenuation (0..63, 6-bit field)
+        const uint8_t tl  = static_cast<uint8_t>(std::min(63, (m_currentPatch.carKSLTL & 0x3F) + (127 - m_volume) / 2));
+        writeReg(bank | (0x40 + sc), static_cast<uint8_t>((m_currentPatch.carKSLTL & 0xC0) | tl));
+    }
     writeReg(bank | (0x60 + so), m_currentPatch.modARDR);
     writeReg(bank | (0x60 + sc), m_currentPatch.carARDR);
     writeReg(bank | (0x80 + so), m_currentPatch.modSLRR);
@@ -405,8 +457,17 @@ bool Device::sendMidi(const synthLib::SMidiEvent& ev, std::vector<synthLib::SMid
     case 0xB0: // Control Change
         switch (ev.b)
         {
-        case 7:  // Main volume — scale all carrier TLs
-            // Simple approach: store and apply on next note
+        case 7:  // Main volume — carrier attenuation
+            m_volume = ev.c;
+            applyPatchToActive();
+            break;
+        case 52: // feedback (3 bits)
+            m_currentPatch.fbAlg = static_cast<uint8_t>((m_currentPatch.fbAlg & ~0x0E) | ((ev.c <= 7 ? ev.c : ev.c >> 4) << 1));
+            applyPatchToActive();
+            break;
+        case 53: // algorithm: 0 = FM, 1 = additive
+            m_currentPatch.fbAlg = static_cast<uint8_t>((m_currentPatch.fbAlg & ~0x01) | ((ev.c == 1 || ev.c >= 64) ? 1 : 0));
+            applyPatchToActive();
             break;
         case 64: // Sustain pedal
             m_sustainPedal = (ev.c >= 64);
@@ -427,6 +488,10 @@ bool Device::sendMidi(const synthLib::SMidiEvent& ev, std::vector<synthLib::SMid
         case 120: // All sound off
         case 123: // All notes off
             onAllNotesOff();
+            break;
+        default:
+            if ((ev.b >= 20 && ev.b <= 31) || (ev.b >= 40 && ev.b <= 51))
+                onPatchCC(ev.b, ev.c);
             break;
         }
         break;

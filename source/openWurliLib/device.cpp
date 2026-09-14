@@ -401,13 +401,11 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 		switch (_ev.b)
 		{
 		case 1: // Mod wheel → tremolo depth
-			m_tremoloDepth = static_cast<float>(_ev.c) / 127.0f;
+			setTremoloDepth(static_cast<float>(_ev.c) / 127.0f);
 			break;
 		case 7: // Volume
-			m_volume = static_cast<float>(_ev.c) / 127.0f;
-			break;
 		case 11: // Expression
-			m_volume = static_cast<float>(_ev.c) / 127.0f;
+			setVolume(static_cast<float>(_ev.c) / 127.0f);
 			break;
 		case 64: // Sustain pedal
 			m_sustainPedal = (_ev.c >= 64);
@@ -425,8 +423,14 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 				}
 			}
 			break;
+		case 70: // Sound Controller 1 → pickup (MLP) on/off
+			setMlpEnabled(_ev.c >= 64);
+			break;
 		case 71: // Sound Controller 2 → speaker character
-			m_speakerCharacter = static_cast<float>(_ev.c) / 127.0f;
+			setSpeakerCharacter(static_cast<float>(_ev.c) / 127.0f);
+			break;
+		case 75: // Sound Controller 6 → velocity curve, 0-4 direct or 0-127 scaled
+			setVelocityCurve(_ev.c < 5 ? _ev.c : _ev.c / 26);
 			break;
 		case 123: // All notes off
 			allNotesOff();

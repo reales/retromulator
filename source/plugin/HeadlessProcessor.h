@@ -7,10 +7,12 @@
 #  include "synthLib/deviceTypes.h"
 #endif
 
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <atomic>
+#include <memory>
 
 namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
@@ -20,6 +22,8 @@ namespace ayumiLib { class Device; }
 
 namespace retromulator
 {
+    class ParameterPool;
+
     class HeadlessProcessor final : public pluginLib::Processor
     {
     public:
@@ -119,6 +123,21 @@ namespace retromulator
             return static_cast<int>(m_bankMessages.size()) / m_bankStride;
         }
         int getCurrentProgram() override { return m_currentProgram; }
+        int getNumPrograms() override { return std::max(1, getProgramCount()); }
+        void setCurrentProgram(int index) override
+        {
+            if(index != m_currentProgram)
+                selectProgram(index);
+        }
+        const juce::String getProgramName(int index) override
+        {
+            if(index >= 0 && index < static_cast<int>(m_programNames.size()))
+                return m_programNames[static_cast<size_t>(index)];
+            return index >= 0 && index < getProgramCount() ? juce::String("Program ") + juce::String(index + 1) : juce::String();
+        }
+
+        // 128 fixed host parameters, rebound per core. Null until the constructor finishes.
+        ParameterPool* getParameterPool() const { return m_paramPool.get(); }
 
         // ── Data folder helpers ─────────────────────────────────────────────
         static std::string getDataFolder();
@@ -191,6 +210,7 @@ namespace retromulator
     private:
         SynthType   m_synthType = SynthType::None;
         std::string m_romPath;
+        std::unique_ptr<ParameterPool> m_paramPool;
 
         // GUI size saved/restored across DAW sessions and settings.xml
         int  m_savedEditorWidth  = 0;

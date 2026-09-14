@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.5.0"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.6.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -51,6 +51,21 @@
     </XCODE_MAC>
   </EXPORTFORMATS>
   <MAINGROUP id="JCS7L" name="Retromulator">
+    <GROUP id="{9A1F2C40-0000-4000-8000-524D50415241}" name="Assets">
+      <FILE id="pj0000" name="parameterDescriptions_akai.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_akai.json"/>
+      <FILE id="pj0001" name="parameterDescriptions_ayumi.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_ayumi.json"/>
+      <FILE id="pj0002" name="parameterDescriptions_dx7.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_dx7.json"/>
+      <FILE id="pj0003" name="parameterDescriptions_generic.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_generic.json"/>
+      <FILE id="pj0004" name="parameterDescriptions_je8086.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_je8086.json"/>
+      <FILE id="pj0005" name="parameterDescriptions_mq.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_mq.json"/>
+      <FILE id="pj0006" name="parameterDescriptions_n2x.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_n2x.json"/>
+      <FILE id="pj0007" name="parameterDescriptions_opl3.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_opl3.json"/>
+      <FILE id="pj0008" name="parameterDescriptions_sid.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_sid.json"/>
+      <FILE id="pj0009" name="parameterDescriptions_virus_a.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_virus_a.json"/>
+      <FILE id="pj0010" name="parameterDescriptions_virus_ti.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_virus_ti.json"/>
+      <FILE id="pj0011" name="parameterDescriptions_wurli.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_wurli.json"/>
+      <FILE id="pj0012" name="parameterDescriptions_xt.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_xt.json"/>
+    </GROUP>
     <GROUP id="plugin" name="plugin">
       <FILE id="f0001" name="HeadlessProcessor.h" compile="0" resource="0"
             file="source/plugin/HeadlessProcessor.h"/>
@@ -66,6 +81,8 @@
       <FILE id="f0008" name="PluginEntry.cpp" compile="1" resource="0" file="source/plugin/PluginEntry.cpp"/>
       <FILE id="f0009" name="BasicEditor.h" compile="0" resource="0" file="source/plugin/BasicEditor.h"/>
       <FILE id="f0010" name="BasicEditor.cpp" compile="1" resource="0" file="source/plugin/BasicEditor.cpp"/>
+      <FILE id="f0011" name="ParameterPool.h" compile="0" resource="0" file="source/plugin/ParameterPool.h"/>
+      <FILE id="f0012" name="ParameterPool.cpp" compile="1" resource="0" file="source/plugin/ParameterPool.cpp"/>
     </GROUP>
     <GROUP id="jucePluginLib" name="jucePluginLib">
       <FILE id="jp001" name="bypassBuffer.cpp" compile="1" resource="0" file="source/jucePluginLib/bypassBuffer.cpp"/>

@@ -790,7 +790,7 @@ namespace pluginLib
 		const auto nrpnStr = _value["nrpn"].toString().toStdString();
 		const auto paramName = _value["param"].toString().toStdString();
 
-		if(ccStr.empty() && ppStr.empty())
+		if(ccStr.empty() && ppStr.empty() && nrpnStr.empty())
 		{
 			_errors << "Controller needs to define control change (cc), poly pressure (pp) or NRPN (nrpn) parameter\n";
 			return;
@@ -822,7 +822,7 @@ namespace pluginLib
 
 		if(!nrpnStr.empty())
 		{
-			nrpn = static_cast<uint8_t>(::strtol(nrpnStr.c_str(), nullptr, 16));
+			nrpn = static_cast<uint16_t>(::strtol(nrpnStr.c_str(), nullptr, 16));
 			if(nrpn < 0 || nrpn > 0x3fff)
 			{
 				_errors << "NRPN parameter needs to be in range $0-$3fff, param " << paramName << '\n';

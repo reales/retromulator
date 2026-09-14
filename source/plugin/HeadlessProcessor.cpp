@@ -6,6 +6,8 @@
 #endif
 #include "MinimalController.h"
 #include "SynthFactory.h"
+#include "ParameterPool.h"
+#include "BinaryData.h"
 
 #include "synthLib/deviceException.h"
 #include "synthLib/midiToSysex.h"
@@ -491,10 +493,19 @@ namespace retromulator
                 false,            // isMidiEffect
                 "RtMU",           // plugin4CC
                 "",               // lv2Uri
-                {}                // binaryData (no embedded resources)
+                pluginLib::Processor::BinaryDataRef{   // parameter descriptions
+                    BinaryData::namedResourceListSize,
+                    BinaryData::originalFilenames,
+                    BinaryData::namedResourceList,
+                    BinaryData::getNamedResource
+                }
             })
     {
         getController();
+
+        // Host parameters must exist before the host queries the tree.
+        m_paramPool = std::make_unique<ParameterPool>(*this);
+        m_paramPool->setCore(SynthType::None);
 
         // Pre-initialize m_plugin with a silent DummyDevice so that prepareToPlay
         // never triggers getPlugin()'s lazy-init, which would call createDevice(),
@@ -536,6 +547,9 @@ namespace retromulator
         m_programNames.clear();
         m_currentProgram = 0;
         m_bankStride     = 1;
+
+        if(m_paramPool)
+            m_paramPool->setCore(type);
 
         suspendProcessing(true);
 
@@ -734,8 +748,12 @@ namespace retromulator
         }
 
         // Send only the selected program, not the entire bank dump.
+        if(m_paramPool)
+            m_paramPool->clearTouched();
         sendBankMessage(m_currentProgram);
-        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
+                              .withNonParameterStateChanged(true)
+                              .withProgramChanged(true));
         return true;
     }
 
@@ -963,6 +981,10 @@ namespace retromulator
     {
         if(index < 0 || index >= getProgramCount())
             return false;
+
+        // The new patch is now the source of truth; drop stale slot edits.
+        if(m_paramPool)
+            m_paramPool->clearTouched();
 
         m_currentProgram = index;
 
@@ -1502,6 +1524,9 @@ namespace retromulator
                 m_deviceBooted = true;  // boot delay done; no more auto-resends
                 if(m_currentProgram >= 0 && m_currentProgram < getProgramCount())
                     sendBankMessage(m_currentProgram);
+                // Re-apply host parameter edits the bank message just overwrote.
+                if(m_paramPool)
+                    m_paramPool->resendTouched();
             }
         }
     }
@@ -1621,6 +1646,23 @@ namespace retromulator
         appendInt32(destData, static_cast<int32_t>(m_akaiIsoMode ? 1 : 0));                 // [2]
         for(int i = 3; i < kAkaiReservedSlots; ++i)
             appendInt32(destData, 0);                                                        // [3..15]
+
+        // Host parameter slots edited since the last program change:
+        // ['PRMS':int32][count:int32][(slot:u8, value:u8) * count]
+        static constexpr int32_t kParamsMagic = 0x534d5250; // "PRMS"
+        std::vector<uint8_t> slotBytes;
+        if(m_paramPool)
+        {
+            for(const auto& [slot, value] : m_paramPool->getTouchedValues())
+            {
+                slotBytes.push_back(slot);
+                slotBytes.push_back(value);
+            }
+        }
+        appendInt32(destData, kParamsMagic);
+        appendInt32(destData, static_cast<int32_t>(slotBytes.size() / 2));
+        if(!slotBytes.empty())
+            destData.append(slotBytes.data(), slotBytes.size());
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -1802,6 +1844,20 @@ namespace retromulator
                 if(m_akaiTuneCents != 0)
                     dev->setTuneCents(m_akaiTuneCents);
             }
+        }
+
+        // Restore host parameter slot edits (optional, appended after the Akai block)
+        int32_t magic = 0, count = 0;
+        if(m_paramPool && readInt32(bytes, sizeInBytes, offset, magic) && magic == 0x534d5250
+           && readInt32(bytes, sizeInBytes, offset, count) && count > 0
+           && offset + count * 2 <= sizeInBytes)
+        {
+            std::vector<std::pair<uint8_t, uint8_t>> values;
+            values.reserve(static_cast<size_t>(count));
+            for(int32_t i = 0; i < count; ++i)
+                values.emplace_back(bytes[offset + i * 2], bytes[offset + i * 2 + 1]);
+            offset += count * 2;
+            m_paramPool->restoreValues(values);
         }
     }
 }
