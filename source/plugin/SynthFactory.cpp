@@ -16,6 +16,9 @@
 #include "ronaldo/je8086/jeLib/device.h"
 #include "ronaldo/je8086/jeLib/romloader.h"
 
+#include "ronaldo/88emu/88lib/hardwareDevice.h"
+#include "ronaldo/88emu/88lib/romloader.h"
+
 #include "dx7Lib/device.h"
 #include "dx7Lib/romloader.h"
 
@@ -56,19 +59,43 @@ namespace retromulator
         return {};
     }
 
-    synthLib::Device* SynthFactory::create(SynthType type, const std::string& romPath)
+    namespace
+    {
+        // -1 = auto: boot the first board whose ROM set is complete.
+        int s_emu88Model = -1;
+
+        const std::string& romSearchPath()
+        {
+            static const std::string s_path = getRomSearchPath();
+            return s_path;
+        }
+    }
+
+    void SynthFactory::setEmu88Model(const int model) { s_emu88Model = model; }
+    int  SynthFactory::getEmu88Model()                { return s_emu88Model; }
+
+    void SynthFactory::addDefaultRomSearchPaths(const std::string& extraPath)
     {
         // Register the platform ROM search paths once (base folder + ROM/ subfolder)
-        static const std::string s_romPath = getRomSearchPath();
+        const auto& s_romPath = romSearchPath();
         if(!s_romPath.empty())
         {
             synthLib::RomLoader::addSearchPath(s_romPath);
             synthLib::RomLoader::addSearchPath(s_romPath + "ROM/");
+            // The SC-88 family needs a whole set of images per board, so they live together
+            // rather than loose in ROM/. Recursive because the set is identified by content:
+            // a user can drop a collection in unsorted and every recognized dump still lands.
+            synthLib::RomLoader::addSearchPath(s_romPath + "88emu/", true);
         }
 
-        // If a custom romPath was provided, add it too
-        if(!romPath.empty())
-            synthLib::RomLoader::addSearchPath(romPath);
+        if(!extraPath.empty())
+            synthLib::RomLoader::addSearchPath(extraPath);
+    }
+
+    synthLib::Device* SynthFactory::create(SynthType type, const std::string& romPath,
+                                           const int emu88Model)
+    {
+        addDefaultRomSearchPaths(romPath);
 
         switch(type)
         {
@@ -156,7 +183,7 @@ namespace retromulator
 
                 p.romData   = rom.getData();
                 p.romName   = rom.getName();
-                p.homePath  = s_romPath.empty() ? romPath : s_romPath;
+                p.homePath  = romSearchPath().empty() ? romPath : romSearchPath();
                 return new jeLib::Device(p);
             }
 
@@ -201,6 +228,44 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new ayumiLib::Device(p);
+            }
+
+            case SynthType::Emu88:
+            {
+                // ROMs are identified by content, so the loader finds its own sets - there is no
+                // romData to hand over. Rescan first: the user may just have imported a dump.
+                emu88Lib::RomLoader::rescan();
+
+                // The caller's board wins where it gave one, so a restore does not depend
+                // on a global another instance may be writing at the same moment.
+                const int wanted = emu88Model >= 0 ? emu88Model : s_emu88Model;
+                auto model = static_cast<emu88Lib::DeviceModel>(wanted);
+                if(wanted < 0 || !emu88Lib::RomLoader::isDeviceAvailable(model))
+                {
+                    // Fall back to the first board whose set is complete rather than booting
+                    // one into silence.
+                    bool found = false;
+                    for(uint32_t i = 0; i < emu88Lib::deviceModelCount(); ++i)
+                    {
+                        const auto candidate = static_cast<emu88Lib::DeviceModel>(i);
+                        if(emu88Lib::RomLoader::isDeviceAvailable(candidate))
+                        {
+                            model = candidate;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if(!found)
+                        throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing,
+                            "No complete SC-88 family ROM set found. Place the ROMs in the 88emu folder.");
+                }
+
+                synthLib::DeviceCreateParams p;
+                p.customData = static_cast<uint32_t>(model);
+                p.romName    = emu88Lib::getDeviceProfile(model).displayName;
+                p.homePath   = romSearchPath().empty() ? romPath : romSearchPath();
+                return new emu88Lib::HardwareDevice(p);
             }
 
             default:

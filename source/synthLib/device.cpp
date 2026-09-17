@@ -40,6 +40,14 @@ namespace synthLib
 
 		for (const auto& ev : _midiIn)
 		{
+			// A transport marker carries no MIDI bytes; handing it to the translator or to
+			// sendMidi would feed a bare 0x00 into the device's UART.
+			if(ev.type == MidiEventType::TransportDiscontinuity)
+			{
+				onTransportDiscontinuity(ev);
+				continue;
+			}
+
 			m_translatorOut.clear();
 
 			m_midiTranslator.process(m_translatorOut, ev);

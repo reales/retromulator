@@ -95,6 +95,22 @@ namespace synthLib
 
 		void dummyProcess(uint32_t _numSamples);
 
+		// Host transport start / stop / seek. This is a marker, not MIDI: it carries no status or
+		// data bytes, so it must never be handed to sendMidi, where a device pushes an event's
+		// bytes into its emulated UART - a lone 0x00 there completes the firmware's running-status
+		// message and fakes a Program Change. Devices that rate limit their MIDI input override
+		// this to pass the generation on; for everyone else it is a no-op.
+		virtual void onTransportDiscontinuity(const SMidiEvent& /*_ev*/) {}
+
+		// Per-channel polyphony limiter. Returns true if the event
+		// should be forwarded, false if it should be dropped.
+		bool polyLimitFilter(const SMidiEvent& _ev);
+
+		// Override to limit polyphony. Default 128 = no limit.
+		virtual uint8_t getMaxPolyphony() const { return 128; }
+
+		static constexpr uint8_t kDefaultMaxPolyphony = 4;
+
 	private:
 		DeviceCreateParams m_createParams;
 		std::vector<SMidiEvent> m_midiIn;

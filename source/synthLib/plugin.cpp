@@ -111,6 +111,14 @@ namespace synthLib
 		return m_device->isValid();
 	}
 
+	Device* Plugin::releaseDevice()
+	{
+		std::lock_guard lock(m_lock);
+		auto* d = m_device;
+		m_device = nullptr;
+		return d;
+	}
+
 	void Plugin::setDevice(Device* _device)
 	{
 		if(!_device)

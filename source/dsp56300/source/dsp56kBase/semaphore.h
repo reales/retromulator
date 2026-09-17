@@ -26,6 +26,16 @@ namespace dsp56k
 	        m_cv.notify_one();
 	    }
 
+		void notifyAll(const uint32_t _count)
+		{
+			{
+				Lock lock(m_mutex);
+				m_count += _count;
+			}
+
+			m_cv.notify_all();
+		}
+
 	    void wait(const uint32_t _count = 1)
 		{
 	        Lock lock(m_mutex);
@@ -73,7 +83,8 @@ namespace dsp56k
 	class SpscSemaphoreWithCount
 	{
 	public:
-		explicit SpscSemaphoreWithCount(const int _count = 0) : m_count(_count)
+		SpscSemaphoreWithCount() : m_count(0) {}
+		explicit SpscSemaphoreWithCount(const int _count) : m_count(_count)
 		{
 		}
 
@@ -91,7 +102,16 @@ namespace dsp56k
 
 	        if (prev < 0)
 	        {
-				for (uint32_t i = 0; i < _count; ++i)
+				// Post exactly one inner credit per waiter in deficit, i.e. min(_count, -prev). Posting
+				// _count regardless mints spurious credits whenever the deficit is smaller than the batch:
+				// they sit in the inner semaphore forever, and a later wait() that goes into deficit consumes
+				// one and returns although nothing was produced - the consumer reads a frame that is not
+				// there and the ring counters desync from the semaphore counts. With the batched ring pushes
+				// (emplace_back(count)/pop_front(count)) racing single-frame pops this intermittently
+				// corrupted frames and permanently wedged the audio pipeline.
+				const auto deficit = -prev;
+				const auto wake = deficit < static_cast<int>(_count) ? deficit : static_cast<int>(_count);
+				for (int i = 0; i < wake; ++i)
 					m_sem.notify();
 	        }
 		}
@@ -110,11 +130,25 @@ namespace dsp56k
 
 			const int prev = m_count.fetch_sub(count, std::memory_order_acquire);
 
-			if (prev  < count)
+			if (prev < count)
 			{
-				for (int i = prev; i < count; ++i)
+				// This call's own deficit is count - max(prev, 0): a negative prev belongs to waits that
+				// already accounted for it themselves (mirror of the notify() clamp above).
+				for (int i = prev > 0 ? prev : 0; i < count; ++i)
 					m_sem.wait();
 			}
+		}
+
+		bool tryWait()
+		{
+			int count = m_count.load(std::memory_order_acquire);
+			while(count > 0)
+			{
+				if(m_count.compare_exchange_weak(count, count - 1,
+					std::memory_order_acquire, std::memory_order_relaxed))
+					return true;
+			}
+			return false;
 		}
 	private:
 		std::atomic<int> m_count;
@@ -127,5 +161,6 @@ namespace dsp56k
 		explicit NopSemaphore (const uint32_t _count = 0)	{}
 	    void notify(uint32_t _count = 1)					{}
 		void wait(uint32_t _count = 1)						{}
+		bool tryWait()									{return true;}
 	};
 };

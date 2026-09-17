@@ -24,10 +24,25 @@ namespace baseLib
 		bool getDirectoryEntries(std::vector<std::string>& _files, const std::string& _folder);
 
 		bool findFiles(std::vector<std::string>& _files, const std::string& _rootPath, const std::string& _extension, size_t _minSize, size_t _maxSize);
+
+		struct FoundFile
+		{
+			std::string path;
+			size_t size;
+		};
+
+		// As findFiles, but descends into subdirectories, and reports the size it already had to
+		// look up rather than making the caller open every file a second time.
+		bool findFilesRecursive(std::vector<FoundFile>& _files, const std::string& _rootPath, const std::string& _extension, size_t _minSize, size_t _maxSize, uint32_t _maxDepth = 6, size_t _maxEntries = 50000);
+
 		std::string findFile(const std::string& _rootPath, const std::string& _extension, const size_t _minSize, const size_t _maxSize);
 
 		bool hasExtension(const std::string& _filename, const std::string& _extension);
 		size_t getFileSize(const std::string& _file);
+
+		// An opaque stamp that changes when the file does, or 0 when it cannot be stat'ed.
+		// Compare two of these for equality and nothing else.
+		uint64_t getFileModificationTime(const std::string& _file);
 
 		bool isDirectory(const std::string& _path);
 

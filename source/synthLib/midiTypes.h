@@ -215,24 +215,47 @@ namespace synthLib
 		Count
 	};
 
+	enum class MidiEventType : uint8_t
+	{
+		Midi,
+		TransportDiscontinuity
+	};
+
+	enum class TransportDiscontinuity : uint8_t
+	{
+		None,
+		Start,
+		Stop,
+		Seek
+	};
+
 	struct SMidiEvent
 	{
 		uint8_t a, b, c;
 		SysexBuffer sysex;
 		uint32_t offset;
 		MidiEventSource source;
+		MidiEventType type = MidiEventType::Midi;
+		uint32_t transportGeneration = 0;
+		// Physical / virtual MIDI port the event belongs to (devices with several
+		// MIDI inputs or outputs, e.g. the SC-88 family's IN A/B and USB cables).
+		uint8_t port = 0;
 
 		SMidiEvent(const MidiEventSource _source = MidiEventSource::Unknown, const uint8_t _a = 0, const uint8_t _b = 0, const uint8_t _c = 0, const uint32_t _offset = 0)
 			: a(_a), b(_b), c(_c), offset(_offset), source(_source)
 		{
 		}
 
-		SMidiEvent(const SMidiEvent& _e) : a(_e.a), b(_e.b), c(_e.c), sysex(_e.sysex), offset(_e.offset), source(_e.source)
+		SMidiEvent(const SMidiEvent& _e)
+			: a(_e.a), b(_e.b), c(_e.c), sysex(_e.sysex), offset(_e.offset), source(_e.source), type(_e.type)
+			, transportGeneration(_e.transportGeneration), port(_e.port)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
 
-		SMidiEvent(SMidiEvent&& _e) noexcept : a(_e.a), b(_e.b), c(_e.c), sysex(std::move(_e.sysex)), offset(_e.offset), source(_e.source)
+		SMidiEvent(SMidiEvent&& _e) noexcept
+			: a(_e.a), b(_e.b), c(_e.c), sysex(std::move(_e.sysex)), offset(_e.offset), source(_e.source), type(_e.type)
+			, transportGeneration(_e.transportGeneration), port(_e.port)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
@@ -247,6 +270,9 @@ namespace synthLib
 			sysex = _e.sysex;
 			offset = _e.offset;
 			source = _e.source;
+			type = _e.type;
+			transportGeneration = _e.transportGeneration;
+			port = _e.port;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
 		}
@@ -259,13 +285,25 @@ namespace synthLib
 			sysex = std::move(_e.sysex);
 			offset = _e.offset;
 			source = _e.source;
+			type = _e.type;
+			transportGeneration = _e.transportGeneration;
+			port = _e.port;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
 		}
 
 		bool empty() const
 		{
-			return a == 0 && sysex.empty();
+			return type == MidiEventType::Midi && a == 0 && sysex.empty();
 		}
 	};
+
+	// Whether this event's delivery is tied to the host transport: it belongs to a generation, is
+	// discarded when the transport jumps, and is replaced by the All Sound Off that follows. SysEx
+	// never is, and neither is anything a device produced itself.
+	inline bool isTransportBound(const SMidiEvent& _event)
+	{
+		return _event.sysex.empty() &&
+			(_event.source == MidiEventSource::Host || _event.source == MidiEventSource::Internal);
+	}
 }

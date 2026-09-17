@@ -16,11 +16,14 @@
 
 #define RESID_FPGA_CODE 0
 
-// On C++20+ we honour reSID's intended `consteval` / non-static `constexpr`
-// member usage. On C++17, libc++'s log2/exp aren't constexpr, so the
-// ExternalFilterCoefficients ctor cannot be evaluated at compile time —
-// fall back to runtime initialization (drop the keywords).
-#if __cplusplus >= 202002L
+// reSID intends `consteval` / non-static `constexpr` members here, but that only works where
+// the maths the ExternalFilterCoefficients ctor calls is usable in a constant expression.
+// libc++ does not make log2/exp constexpr in C++20 either, so gating on __cplusplus alone
+// picks the compile-time path on a library that cannot support it: the ctor stops being a
+// constant expression and a non-static constexpr member is ill-formed regardless. Gate on the
+// library instead and fall back to runtime initialization (drop the keywords) unless the
+// standard library actually advertises constexpr <cmath>.
+#if defined(__cpp_lib_constexpr_cmath) && __cpp_lib_constexpr_cmath >= 202202L
   #define RESID_CONSTEVAL consteval
   #define RESID_CONSTEXPR constexpr
 #else

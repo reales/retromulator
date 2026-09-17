@@ -42,6 +42,9 @@ namespace synthLib
 		bool isValid() const;
 
 		void setDevice(Device* _device);
+		// Release ownership of the current device without deleting it.
+		// Caller takes ownership. Used for async device swap.
+		Device* releaseDevice();
 
 #if !SYNTHLIB_DEMO_MODE
 		bool getState(std::vector<uint8_t>& _state, StateType _type) const;
