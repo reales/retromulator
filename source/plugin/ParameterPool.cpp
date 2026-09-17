@@ -179,6 +179,7 @@ namespace retromulator
         case SynthType::OPL3:      return "opl3";
         case SynthType::SID:       return "sid";
         case SynthType::Ayumi:     return "ayumi";
+        case SynthType::Emu88:     return "emu88";
         default:                   return "generic";
         }
     }
@@ -202,6 +203,56 @@ namespace retromulator
         return {};
     }
 
+    void ParameterPool::patchEmu88ToneLists(std::string& json) const
+    {
+        const auto* hp = dynamic_cast<const HeadlessProcessor*>(&m_processor);
+        if(!hp)
+            return;
+
+        // "001 Piano 1" style, matching the tone menu. A program the ROM leaves empty
+        // keeps its bare number so the list stays 128 entries long either way.
+        const auto buildList = [hp](const bool drums)
+        {
+            std::string out;
+            for(int i = 0; i < 128; ++i)
+            {
+                const auto name = hp->getEmu88ProgramName(drums ? 9 : 0, i);
+                char num[8];
+                snprintf(num, sizeof(num), "%03d", i + 1);
+                out += i ? ",\n      \"" : "\"";
+                out += num;
+                if(!name.empty())
+                {
+                    out += ' ';
+                    // The ROM names are plain ASCII, but a stray quote or backslash would
+                    // break the document, so both are dropped rather than escaped.
+                    for(const char c : name)
+                        if(c != '"' && c != '\\')
+                            out += c;
+                }
+                out += '"';
+            }
+            return out;
+        };
+
+        const auto replaceList = [&json](const std::string& key, const std::string& body)
+        {
+            const auto keyPos = json.find("\"" + key + "\"");
+            if(keyPos == std::string::npos)
+                return;
+            const auto open = json.find('[', keyPos);
+            if(open == std::string::npos)
+                return;
+            const auto close = json.find(']', open);
+            if(close == std::string::npos)
+                return;
+            json.replace(open + 1, close - open - 1, "\n      " + body + "\n    ");
+        };
+
+        replaceList("gs_prog", buildList(false));
+        replaceList("gs_kit",  buildList(true));
+    }
+
     std::unique_ptr<ParameterPool::CoreMap> ParameterPool::buildMap(SynthType type) const
     {
         auto map = std::make_unique<CoreMap>();
@@ -209,12 +260,16 @@ namespace retromulator
         map->ppToSlot.fill(-1);
         map->type = type;
         map->virusSysex = (type == SynthType::VirusABC || type == SynthType::VirusTI);
+        map->perPart    = (type == SynthType::Emu88);
 
         auto json = loadJson(coreFileName(type));
         if(json.empty() && type != SynthType::None)
             json = loadJson(coreFileName(SynthType::None));
         if(json.empty())
             return map;
+
+        if(type == SynthType::Emu88)
+            patchEmu88ToneLists(json);
 
         map->descriptions = std::make_unique<pluginLib::ParameterDescriptions>(json);
 
@@ -243,20 +298,20 @@ namespace retromulator
             const auto ccs = cm.getControlTypes(synthLib::M_CONTROLCHANGE, static_cast<uint32_t>(i));
             if(!ccs.empty() && ccs.front() < 128)
             {
-                b.cc = ccs.front();
+                b.cc = static_cast<int>(ccs.front());
                 map->ccToSlot[static_cast<size_t>(b.cc)] = static_cast<int8_t>(d.index);
             }
 
             const auto pps = cm.getControlTypes(synthLib::M_POLYPRESSURE, static_cast<uint32_t>(i));
             if(!pps.empty() && pps.front() < 128)
             {
-                b.pp = pps.front();
+                b.pp = static_cast<int>(pps.front());
                 map->ppToSlot[static_cast<size_t>(b.pp)] = static_cast<int8_t>(d.index);
             }
 
             const auto natives = cm.getControlTypes(pluginLib::ControllerMap::NrpnType, static_cast<uint32_t>(i));
             if(!natives.empty())
-                b.native = natives.front();
+                b.native = static_cast<int>(natives.front());
         }
         return map;
     }
@@ -268,6 +323,14 @@ namespace retromulator
         if(!slot)
             slot = buildMap(type);
         return *slot;
+    }
+
+    void ParameterPool::refreshFor(const SynthType type)
+    {
+        const auto idx = static_cast<size_t>(static_cast<int>(type) + 1);
+        m_maps[idx].reset();
+        if(m_core == type)
+            setCore(type);
     }
 
     void ParameterPool::setCore(SynthType type)
@@ -292,6 +355,12 @@ namespace retromulator
         if(!map)
             return false;
 
+        // On a multitimbral core the same CC means something different per part, so only the
+        // part being edited feeds the visible parameters. Mono-timbral cores keep channel 0
+        // on both sides and are unaffected.
+        if(map->perPart && (ev.a & 0x0f) != getPartChannel())
+            return false;
+
         const int slot = status == synthLib::M_CONTROLCHANGE ? map->ccToSlot[ev.b] : map->ppToSlot[ev.b];
         if(slot < 0)
             return false;
@@ -305,6 +374,10 @@ namespace retromulator
     void ParameterPool::sendSlot(const SlotParameter&, const SlotParameter::Binding& b, int midiValue)
     {
         if(b.cc < 0 && b.pp < 0 && b.native < 0)
+            return;
+
+        // Mirroring only reports what the device already did; sending it back loops.
+        if(isMirroring())
             return;
 
         const auto* map = m_current.load(std::memory_order_acquire);
@@ -327,6 +400,11 @@ namespace retromulator
             {
                 // Yamaha voice parameter change; the device patches in its RX channel
                 ev.sysex = {0xf0, 0x43, 0x10, hi, lo, value, 0xf7};
+            }
+            else if(map && map->type == SynthType::Emu88)
+            {
+                sendEmu88Native(b.native, value);
+                return;
             }
             else
                 return;
@@ -356,14 +434,170 @@ namespace retromulator
             ev.sysex = {0xf0, 0x00, 0x20, 0x33, 0x01, 0x10, 0x70, 0x40, cc, value, 0xf7};
             ev.a = 0xf0;
         }
+        else if(map && map->type == SynthType::Emu88 && (b.cc == 0 || b.cc == 32))
+        {
+            // Bank select is per-part state the processor caches, so it takes the same
+            // route as the Bank MSB/LSB natives rather than going out as a bare CC.
+            if(auto* hp = dynamic_cast<HeadlessProcessor*>(&m_processor))
+                hp->setEmu88PartBank(getPartChannel(), b.cc, value);
+            return;
+        }
         else
         {
-            ev.a = synthLib::M_CONTROLCHANGE;
+            // The part channel is 0 for every mono-timbral core, so this is the old behaviour
+            // there; on 88emu it addresses the part the editor is showing.
+            ev.a = static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | getPartChannel());
             ev.b = static_cast<uint8_t>(b.cc);
             ev.c = value;
         }
 
         m_processor.addMidiEvent(ev);
+    }
+
+    void ParameterPool::markNativeTouched(const int native)
+    {
+        for(auto* s : m_slots)
+        {
+            const auto& b = s->binding();
+            if(b.desc && b.native == native)
+            {
+                s->markTouched();
+                return;
+            }
+        }
+    }
+
+    void ParameterPool::sendEmu88Native(const int native, const uint8_t value)
+    {
+        auto* hp = dynamic_cast<HeadlessProcessor*>(&m_processor);
+
+        // Checked before the GS address range, which starts lower and would match.
+        if(native >= kEmu88PartProgFirst && native <= kEmu88PartProgLast)
+        {
+            if(hp)
+                hp->setEmu88PartProgram(native - kEmu88PartProgFirst, value);
+            return;
+        }
+
+        if(native >= kEmu88GsAddressFirst)
+        {
+            // Roland DT1: address is three 7-bit bytes, checksum makes the sum of
+            // address+data a multiple of 128.
+            const auto a1 = static_cast<uint8_t>((native >> 16) & 0x7f);
+            const auto a2 = static_cast<uint8_t>((native >>  8) & 0x7f);
+            const auto a3 = static_cast<uint8_t>( native        & 0x7f);
+            const auto sum = static_cast<uint8_t>((a1 + a2 + a3 + value) & 0x7f);
+            const auto chk = static_cast<uint8_t>((128 - sum) & 0x7f);
+
+            synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+            ev.sysex = {0xf0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, value, chk, 0xf7};
+            ev.a = 0xf0;
+            m_processor.addMidiEvent(ev);
+            return;
+        }
+
+        switch(native)
+        {
+        // Both of these rebuild the tone-name list the editor reads, so they run on the
+        // message thread: automation reaches sendSlot from the audio thread.
+        case kEmu88TransportNative:
+            // A two-value switch, so the host shows Stop/Play rather than 128 rows of
+            // them. It only acts on a change, as the editor's timer mirrors the transport
+            // back into this slot and re-applying the echo would restart the song every block.
+            if(hp && hp->hasMidiFile())
+            {
+                const bool play = value != 0;
+                if(play != hp->isMidiFilePlaying())
+                {
+                    juce::MessageManager::callAsync([hp, play]
+                    {
+                        if(!hp->hasMidiFile() || play == hp->isMidiFilePlaying())
+                            return;
+                        if(play) hp->playMidiFile();
+                        else     hp->stopMidiFile();
+                    });
+                }
+            }
+            return;
+
+        case kEmu88PartNative:
+            // The part is a view selector: it repoints every CC parameter at that
+            // channel and reloads the tone names, as the editor's part menu does.
+            // setEmu88Part clears every touched flag (the old part's edits must not
+            // land on the new one), so the selector re-marks itself afterwards.
+            // The equality test also swallows the host's echo of the timer mirror:
+            // re-applying the part there would clear the flags of edits already made.
+            if(hp && value < 16 && value != getPartChannel())
+            {
+                juce::MessageManager::callAsync([this, hp, value]
+                {
+                    if(value == getPartChannel())
+                        return;
+                    hp->setEmu88Part(value);
+                    markNativeTouched(kEmu88PartNative);
+                });
+            }
+            return;
+
+        case kEmu88ProgramNative:
+            // Route through the processor so the patch name and the editor's tone
+            // list follow the automation, exactly as picking a tone in the UI does.
+            // Only when it actually differs: the editor mirrors this slot from
+            // m_currentProgram on a timer, so acting on every echo would re-send
+            // program changes the device already made.
+            if(hp && hp->getCurrentProgram() != static_cast<int>(value))
+                juce::MessageManager::callAsync([hp, value]
+                {
+                    if(hp->getCurrentProgram() != static_cast<int>(value))
+                        hp->selectProgram(value);
+                });
+            return;
+
+        case kEmu88BankMsbNative:
+        case kEmu88BankLsbNative:
+            sendEmu88ProgramChange(native, value);
+            return;
+
+        default:
+            return;
+        }
+    }
+
+    void ParameterPool::sendEmu88ProgramChange(const int native, const uint8_t value)
+    {
+        const auto cc = native == kEmu88BankMsbNative ? 0 : 32;
+
+        // Routed through the processor so the per-part bank cache follows the edit:
+        // sending the CC straight to the device would leave the cache on the old bank,
+        // and a later resend would put that stale variation back.
+        if(auto* hp = dynamic_cast<HeadlessProcessor*>(&m_processor))
+            hp->setEmu88PartBank(getPartChannel(), cc, value);
+    }
+
+    void ParameterPool::setNativeSlotValue(const int native, const int value, const bool notifyHost,
+                                           const bool transient)
+    {
+        for(auto* s : m_slots)
+        {
+            const auto& b = s->binding();
+            if(!b.desc || b.native != native)
+                continue;
+            if(s->getMidiValue() != value)
+            {
+                // The device is already in this state, so the update must not be sent back
+                // to it. Without the guard the host echoes the new value into setValue,
+                // that reaches sendSlot, and for the program slot each send changes the
+                // program the next mirror then disagrees with, flooding the board.
+                m_mirroring.store(true, std::memory_order_release);
+                s->setFromMidi(value, notifyHost);
+                m_mirroring.store(false, std::memory_order_release);
+            }
+            // Transient state is not a sound edit: never resent after boot nor saved.
+            // The part and program are, so they keep their touched flag.
+            if(transient)
+                s->clearTouched();
+            return;
+        }
     }
 
     void ParameterPool::clearTouched()

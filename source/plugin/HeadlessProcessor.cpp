@@ -22,6 +22,13 @@
 #include "xtLib/xtRomLoader.h"
 #include "ronaldo/je8086/jeLib/state.h"
 #include "ronaldo/je8086/jeLib/romloader.h"
+#include "ronaldo/88emu/88lib/romloader.h"
+#include "ronaldo/88emu/88lib/hardwareDevice.h"
+#include "ronaldo/88emu/88emuplayer/midifile.hpp"
+#include "Emu88Tones.h"
+#include "Mp3Encoder.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include "virusLib/romloader.h"
 #include "virusLib/romfile.h"
@@ -83,6 +90,15 @@ namespace retromulator
         if(!home) home = "";
         return std::string(home) + "/Documents/discoDSP/Retromulator/";
 #endif
+    }
+
+    bool HeadlessProcessor::ensureDataDirectory(const juce::File& dir)
+    {
+        if(dir.isDirectory())
+            return true;
+        if(dir.existsAsFile() && dir.getSize() == 0)
+            dir.deleteFile();
+        return dir.createDirectory();
     }
 
     std::string HeadlessProcessor::getSynthDataFolder(SynthType type)
@@ -193,14 +209,25 @@ namespace retromulator
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
         case SynthType::DX7:       return dx7Emu::RomLoader::findROM().isValid();
+        case SynthType::Emu88:
+        {
+            // Content-identified sets; rescan so a dump the user just imported is seen.
+            const auto inventory = emu88Lib::RomLoader::rescan();
+            for(uint32_t i = 0; i < emu88Lib::deviceModelCount(); ++i)
+            {
+                if(inventory.isComplete(emu88Lib::RomLoader::toRomDevice(static_cast<emu88Lib::DeviceModel>(i))))
+                    return true;
+            }
+            return false;
+        }
         case SynthType::AkaiS1000: return true; // No ROM needed
         default:                   return false;
         }
     }
 
-    void HeadlessProcessor::addRomSearchPath(const std::string& path)
+    void HeadlessProcessor::addRomSearchPath(const std::string& path, const bool recursive)
     {
-        synthLib::RomLoader::addSearchPath(path);
+        synthLib::RomLoader::addSearchPath(path, recursive);
     }
     // ── End GPL boundary helpers ─────────────────────────────────────────────
 
@@ -507,6 +534,15 @@ namespace retromulator
         m_paramPool = std::make_unique<ParameterPool>(*this);
         m_paramPool->setCore(SynthType::None);
 
+        // Seed the ROM search path with the shared data folder so all loaders
+        // can find firmware files placed there.
+        ensureDataDirectory(juce::File(getDataFolder() + "ROM/"));
+        addRomSearchPath(getDataFolder() + "ROM/");
+        // 88emu identifies its ROM sets by content, so its folder is searched recursively.
+        // Registered here, not in SynthFactory, because isRomValid() runs before any device exists.
+        ensureDataDirectory(juce::File(getDataFolder() + "88emu/"));
+        addRomSearchPath(getDataFolder() + "88emu/", true);
+
         // Pre-initialize m_plugin with a silent DummyDevice so that prepareToPlay
         // never triggers getPlugin()'s lazy-init, which would call createDevice(),
         // throw for SynthType::None, and show a "firmware missing" dialog on startup.
@@ -520,6 +556,16 @@ namespace retromulator
 
     HeadlessProcessor::~HeadlessProcessor()
     {
+        // Must join before any member is destroyed: ~thread on a joinable
+        // thread calls std::terminate.
+        m_shuttingDown.store(true);
+        joinBootThread();
+
+        // A render in flight holds the device, so it has to finish before anything below.
+        m_renderCancel.store(true);
+        if(m_renderThread && m_renderThread->joinable())
+            m_renderThread->join();
+
         if(m_savedEditorWidth > 0 && m_savedEditorHeight > 0)
             saveEditorSizeToSettings(m_savedEditorWidth, m_savedEditorHeight);
 
@@ -581,6 +627,8 @@ namespace retromulator
                                           virusLib::DeviceModel::TI);
                 else if(type == SynthType::OPL3)
                     juce::File(getSynthDataFolder(SynthType::OPL3)).createDirectory();
+                else if(type == SynthType::Emu88)
+                    restoreEmu88Parts(getEmu88Part());
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
                 else if(type == SynthType::Ayumi)
@@ -603,6 +651,190 @@ namespace retromulator
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+    }
+
+    void HeadlessProcessor::joinBootThread()
+    {
+        if(m_bootThread && m_bootThread->joinable())
+            m_bootThread->join();
+        m_bootThread.reset();
+    }
+
+    void HeadlessProcessor::setSynthTypeAsync(SynthType type, const std::string& romPath,
+                                              std::function<void()> onComplete)
+    {
+        // Wait for any previous async boot to finish.
+        joinBootThread();
+
+        if(type == SynthType::None)
+        {
+            // SynthType::None is instant — no need for a background thread.
+            setSynthType(type, romPath);
+            if(onComplete)
+                onComplete();
+            return;
+        }
+
+        // ── Prepare state on the calling (GUI) thread ────────────────────────
+        m_isBooting.store(true);
+        m_synthType   = type;
+        m_romPath     = romPath;
+        m_deviceError = synthLib::DeviceError::None;
+        m_deviceBooted = false;
+        m_pendingResend.store(false);
+        m_resendBlocksRemaining = 0;
+
+        m_sysexFilePath.clear();
+        m_patchName.clear();
+        m_sysexData.clear();
+        m_bankMessages.clear();
+        m_programNames.clear();
+        m_currentProgram = 0;
+        m_bankStride     = 1;
+
+        if(m_paramPool)
+            m_paramPool->setCore(type);
+
+        suspendProcessing(true);
+
+        // Detach the old device from Plugin without deleting it — device destructors
+        // join DSP threads which can block for a long time. We'll delete on the boot thread.
+        getPlugin().releaseDevice();
+        std::unique_ptr<synthLib::Device> oldDevice(m_device.release());
+
+        // Install a DummyDevice so the audio callback has something safe while booting.
+        auto* dummy = new pluginLib::DummyDevice({});
+        getPlugin().setDevice(dummy);
+        m_device.reset(dummy);
+
+        suspendProcessing(false);
+
+        // Delete old device on a fire-and-forget thread — its DSP thread join
+        // can block for a long time and must not delay the new device boot.
+        auto oldDeviceReady = std::make_shared<std::atomic<bool>>(false);
+        if(oldDevice)
+        {
+            std::thread([dev = std::move(oldDevice), ready = oldDeviceReady]() mutable {
+                fprintf(stderr, "[Boot] destroying old device...\n");
+                dev.reset();
+                fprintf(stderr, "[Boot] old device destroyed\n");
+                ready->store(true);
+            }).detach();
+        }
+        else
+        {
+            oldDeviceReady->store(true);
+        }
+
+        // ── Boot on a background thread ──────────────────────────────────────
+        m_bootThread = std::make_unique<std::thread>([this, type, romPath,
+                                                      oldDeviceReady,
+                                                      onComplete = std::move(onComplete)]()
+        {
+            // Wait for old device destruction to finish before allocating new
+            // DSP resources — MemoryBuffer temp files must not overlap.
+            // Timeout after 5 seconds to avoid hanging if the old DSP thread is stuck.
+            for(int i = 0; i < 500 && !oldDeviceReady->load() && !m_shuttingDown.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if(m_shuttingDown.load())
+                return;
+            if(!oldDeviceReady->load())
+                fprintf(stderr, "[Boot] WARNING: old device destruction timed out, proceeding anyway\n");
+
+            fprintf(stderr, "[Boot] async: suspendProcessing(true)\n");
+            suspendProcessing(true);
+
+            fprintf(stderr, "[Boot] async: rebootDevice for type %d\n", static_cast<int>(type));
+            bool ok = rebootDevice();
+            fprintf(stderr, "[Boot] async: rebootDevice returned %d\n", ok);
+
+            // Set latency blocks AFTER rebootDevice so the new device's
+            // samplerate is used for the latency calculation.
+            {
+                const bool isSynchronous = (type == SynthType::JE8086 || type == SynthType::AkaiS1000
+                                         || type == SynthType::OpenWurli || type == SynthType::OPL3
+                                         || type == SynthType::Ayumi || type == SynthType::None);
+                const bool isN2X = (type == SynthType::NordN2X);
+                setLatencyBlocks(isSynchronous ? 0 : (isN2X ? 1 : 3));
+            }
+            if(!ok)
+                m_deviceError = synthLib::DeviceError::FirmwareMissing;
+
+            if(m_deviceError == synthLib::DeviceError::None)
+            {
+                fprintf(stderr, "[Boot] async: extracting presets\n");
+                if(type == SynthType::JE8086)
+                    extractRomPresets(getSynthDataFolder(SynthType::JE8086));
+                else if(type == SynthType::VirusABC)
+                    extractVirusRomPresets(getSynthDataFolder(SynthType::VirusABC),
+                                          virusLib::DeviceModel::ABC);
+                else if(type == SynthType::VirusTI)
+                    extractVirusRomPresets(getSynthDataFolder(SynthType::VirusTI),
+                                          virusLib::DeviceModel::TI);
+                else if(type == SynthType::OPL3)
+                    juce::File(getSynthDataFolder(SynthType::OPL3)).createDirectory();
+                else if(type == SynthType::Emu88)
+                    restoreEmu88Parts(getEmu88Part());
+                else if(type == SynthType::SID)
+                    juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
+                else if(type == SynthType::Ayumi)
+                {
+                    // Two banks: Factory (read-only presets) and User (imports).
+                    // Keeping imports out of Factory means Factory's MIDI Program
+                    // Change numbers never shift.
+                    const juce::File root(getSynthDataFolder(SynthType::Ayumi));
+                    root.createDirectory();
+                    root.getChildFile("Factory").createDirectory();
+                    root.getChildFile("User").createDirectory();
+                }
+            }
+
+            fprintf(stderr, "[Boot] async: suspendProcessing(false)\n");
+            suspendProcessing(false);
+            m_isBooting.store(false);
+
+            // Skip the callback during shutdown: it would run after `this` is gone.
+            if(m_shuttingDown.load())
+                return;
+
+            // Notify the message thread that boot is complete.
+            juce::MessageManager::callAsync([this, onComplete]()
+            {
+                applyStandaloneBufferSize();
+                updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+                if(onComplete)
+                    onComplete();
+            });
+        });
+    }
+
+    void HeadlessProcessor::applyStandaloneBufferSize()
+    {
+#if JucePlugin_Build_Standalone && JUCE_IOS
+        if(wrapperType != wrapperType_Standalone)
+            return;
+
+        const auto type = m_synthType;
+        juce::MessageManager::callAsync([type]()
+        {
+            auto* holder = juce::StandalonePluginHolder::getInstance();
+            if(!holder)
+                return;
+            auto& dm = holder->deviceManager;
+            auto* dev = dm.getCurrentAudioDevice();
+            if(!dev)
+                return;
+
+            auto setup = dm.getAudioDeviceSetup();
+            const int target = isJitCore(type) ? std::max(512, setup.bufferSize) : dev->getDefaultBufferSize();
+            if(setup.bufferSize == target)
+                return;
+
+            setup.bufferSize = target;
+            dm.setAudioDeviceSetup(setup, true);
+            fprintf(stderr, "[iOS] Standalone buffer size set to %d (actual %d)\n", target, dev->getCurrentBufferSizeSamples());
+        });
+#endif
     }
 
     // ── Patch name extraction ─────────────────────────────────────────────────
@@ -770,8 +1002,8 @@ namespace retromulator
 
         // If prepareToPlay has not been called yet (AU XPC: UI fires before the audio
         // engine starts), don't push into the DSP — the device is not ready to process
-        // MIDI and will crash. Arm the deferred-resend mechanism instead; processBpm
-        // will replay once the first audio block arrives.
+        // MIDI and will crash. Arm the deferred-resend mechanism instead; it replays
+        // once the first audio block arrives.
         if(getHostSamplerate() == 0.0f)
         {
             // Standalone: prepareToPlay hasn't been called yet.  Schedule a
@@ -985,6 +1217,45 @@ namespace retromulator
         // The new patch is now the source of truth; drop stale slot edits.
         if(m_paramPool)
             m_paramPool->clearTouched();
+
+        // Akai S1000: preset switching is handled by the SFZero subsound system,
+        // not by sysex bank messages. Route to the correct selector.
+        if(m_synthType == SynthType::AkaiS1000)
+        {
+            if(m_akaiIsoMode)
+                return selectAkaiIsoPreset(index);
+            else
+                return selectSoundPreset(index);
+        }
+
+        if(m_synthType == SynthType::Emu88)
+        {
+            m_currentProgram = index;
+            if(index < static_cast<int>(m_programNames.size()))
+                m_patchName = m_programNames[static_cast<size_t>(index)];
+
+            // The part's own bank, not 0: a GS variation lives in the bank, so forcing 0
+            // here would drop the part back to its capital tone every time a tone is
+            // picked. A drum part ignores the bank and reads the program as a kit number,
+            // so only the program change is sent there; the tone list then names kits.
+            const uint8_t ch = m_paramPool ? m_paramPool->getPartChannel() : 0;
+            m_emu88PartPrograms[ch] = index;
+            if(!isEmu88PartRhythm(ch))
+            {
+                const synthLib::SMidiEvent bankMsb(synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 0,
+                    static_cast<uint8_t>(m_emu88PartBankMsb[ch] & 0x7f));
+                const synthLib::SMidiEvent bankLsb(synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 32,
+                    static_cast<uint8_t>(m_emu88PartBankLsb[ch] & 0x7f));
+                addMidiEvent(bankMsb);
+                addMidiEvent(bankLsb);
+            }
+            const synthLib::SMidiEvent pc(synthLib::MidiEventSource::Editor,
+                static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | ch), static_cast<uint8_t>(index & 0x7f), 0);
+            addMidiEvent(pc);
+            return true;
+        }
 
         m_currentProgram = index;
 
@@ -1233,6 +1504,1126 @@ namespace retromulator
         if(m_synthType != SynthType::SID)
             return nullptr;
         return dynamic_cast<sidLib::Device*>(m_device.get());
+    }
+
+    emu88Lib::HardwareDevice* HeadlessProcessor::getEmu88Device() const
+    {
+        if(m_synthType != SynthType::Emu88)
+            return nullptr;
+        return dynamic_cast<emu88Lib::HardwareDevice*>(m_device.get());
+    }
+
+    int HeadlessProcessor::getEmu88Model() const
+    {
+        const auto* dev = getEmu88Device();
+        return dev ? static_cast<int>(dev->model()) : -1;
+    }
+
+    int HeadlessProcessor::getEmu88Part() const
+    {
+        return m_paramPool ? m_paramPool->getPartChannel() : 0;
+    }
+
+    void HeadlessProcessor::setEmu88Part(const int part)
+    {
+        if(!m_paramPool || part < 0 || part > 15)
+            return;
+        m_paramPool->setPartChannel(static_cast<uint8_t>(part));
+        // The visible parameters belong to the new part now, so stale edits from the old
+        // one must not be resent on top of it.
+        m_paramPool->clearTouched();
+        // Drum parts list kits, melodic parts list tones.
+        loadEmu88ToneNames();
+    }
+
+    void HeadlessProcessor::resetEmu88Parts()
+    {
+        // A fresh board (or a GS/GM reset) puts every part back on program 0 and bank 0,
+        // so the cache that feeds the tone display has to follow it.
+        m_emu88PartPrograms.fill(0);
+        m_emu88PartBankMsb.fill(0);
+        m_emu88PartBankLsb.fill(0);
+        // A GS reset also puts the rhythm assignment back: part 10 drums, the rest melodic.
+        m_emu88PartRhythm.fill(0);
+        m_emu88PartRhythm[9] = 1;
+        if(m_synthType == SynthType::Emu88)
+            loadEmu88ToneNames();
+    }
+
+    namespace
+    {
+        // GS DT1 "Use For Rhythm Part" at 40 1x 15. The part blocks are not the channel
+        // order: block 0 is part 10, blocks 1-9 are parts 1-9, blocks 10-15 parts 11-16.
+        std::vector<uint8_t> buildEmu88RhythmSysex(const int part, const int value)
+        {
+            const auto block = static_cast<uint8_t>(part == 9 ? 0 : part < 9 ? part + 1 : part);
+            const uint8_t a1 = 0x40, a2 = static_cast<uint8_t>(0x10 | block), a3 = 0x15;
+            const auto v   = static_cast<uint8_t>(value & 0x7f);
+            const auto chk = static_cast<uint8_t>((128 - ((a1 + a2 + a3 + v) & 0x7f)) & 0x7f);
+            return {0xf0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, v, chk, 0xf7};
+        }
+    }
+
+    void HeadlessProcessor::sendEmu88PartPrograms()
+    {
+        if(m_synthType != SynthType::Emu88)
+            return;
+
+        // A part that was switched to drums (or away from the default part 10) goes back
+        // first: it decides whether the program that follows is read as a kit or a tone.
+        for(size_t ch = 0; ch < m_emu88PartRhythm.size(); ++ch)
+        {
+            const int r = m_emu88PartRhythm[ch];
+            if(r == (ch == 9 ? 1 : 0))
+                continue;
+            sendSysex(buildEmu88RhythmSysex(static_cast<int>(ch), r));
+        }
+
+        // Every part gets its program, including program 0. A part the song put on 0 is
+        // indistinguishable from an untouched one in the cache, and skipping it left the
+        // board on whatever the boot happened to load.
+        for(size_t ch = 0; ch < m_emu88PartPrograms.size(); ++ch)
+        {
+            const int prog = m_emu88PartPrograms[ch];
+            // A drum part reads the program as a kit number and ignores the bank.
+            if(!isEmu88PartRhythm(static_cast<int>(ch)))
+            {
+                // The part's own bank, not 0: a GS variation lives in the bank, so sending
+                // 0 here would drop every part back to its capital tone.
+                addMidiEvent({synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 0,
+                    static_cast<uint8_t>(m_emu88PartBankMsb[ch] & 0x7f)});
+                addMidiEvent({synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 32,
+                    static_cast<uint8_t>(m_emu88PartBankLsb[ch] & 0x7f)});
+            }
+            addMidiEvent({synthLib::MidiEventSource::Editor,
+                static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | ch),
+                static_cast<uint8_t>(prog & 0x7f), 0});
+        }
+    }
+
+    void HeadlessProcessor::setEmu88PartProgram(const int part, const int program)
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return;
+        if(m_emu88PartPrograms[static_cast<size_t>(part)] == program)
+            return;
+
+        m_emu88PartPrograms[static_cast<size_t>(part)] = program;
+
+        const auto ch = static_cast<uint8_t>(part);
+        // A drum part reads the program as a kit number and ignores the bank. The others
+        // keep the variation the part already has rather than being forced back to 0.
+        if(!isEmu88PartRhythm(part))
+        {
+            addMidiEvent({synthLib::MidiEventSource::Editor,
+                static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 0,
+                static_cast<uint8_t>(m_emu88PartBankMsb[static_cast<size_t>(part)] & 0x7f)});
+            addMidiEvent({synthLib::MidiEventSource::Editor,
+                static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 32,
+                static_cast<uint8_t>(m_emu88PartBankLsb[static_cast<size_t>(part)] & 0x7f)});
+        }
+        addMidiEvent({synthLib::MidiEventSource::Editor,
+            static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | ch),
+            static_cast<uint8_t>(program & 0x7f), 0});
+
+        // Editing the visible part must move the tone list and patch name with it.
+        if(part == getEmu88Part())
+        {
+            m_currentProgram = program;
+            if(program >= 0 && program < static_cast<int>(m_programNames.size()))
+                m_patchName = m_programNames[static_cast<size_t>(program)];
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        }
+    }
+
+    void HeadlessProcessor::onEmu88ProgramChange(const int part, const int program)
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return;
+        if(m_emu88PartPrograms[static_cast<size_t>(part)] == program)
+            return;
+
+        // The board already made this change, so only the cached view follows it: sending
+        // it back would fight a MIDI file that is driving the parts.
+        m_emu88PartPrograms[static_cast<size_t>(part)] = program;
+        m_emu88PartProgramDirty.store(true, std::memory_order_release);
+    }
+
+    bool HeadlessProcessor::isEmu88PartRhythm(const int part) const
+    {
+        if(part < 0 || part > 15)
+            return false;
+        return m_emu88PartRhythm[static_cast<size_t>(part)] != 0;
+    }
+
+    void HeadlessProcessor::setEmu88PartRhythm(const int part, const int value)
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return;
+        if(m_emu88PartRhythm[static_cast<size_t>(part)] == value)
+            return;
+
+        m_emu88PartRhythm[static_cast<size_t>(part)] = value;
+        sendSysex(buildEmu88RhythmSysex(part, value));
+
+        // The program means a kit now rather than a tone (or the other way round), so the
+        // board is told again what to make of the one this part holds.
+        addMidiEvent({synthLib::MidiEventSource::Editor,
+            static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | static_cast<uint8_t>(part)),
+            static_cast<uint8_t>(m_emu88PartPrograms[static_cast<size_t>(part)] & 0x7f), 0});
+
+        if(part == getEmu88Part())
+            loadEmu88ToneNames();
+    }
+
+    void HeadlessProcessor::onEmu88Sysex(const std::vector<uint8_t>& data)
+    {
+        if(m_synthType != SynthType::Emu88)
+            return;
+
+        // Roland DT1: F0 41 <dev> 42 12 <a1 a2 a3> <data...> <sum> F7. Only the one-byte
+        // form is read here, which is what carries Use For Rhythm Part.
+        if(data.size() < 11 || data[0] != 0xf0 || data[1] != 0x41 || data[3] != 0x42 || data[4] != 0x12)
+            return;
+
+        const uint8_t a1 = data[5], a2 = data[6], a3 = data[7];
+
+        // Part parameters live at 40 1x 00.., where x is the part block. The blocks are
+        // not the channel order: block 0 is part 10, blocks 1-9 are parts 1-9, and
+        // blocks 10-15 are parts 11-16.
+        if(a1 != 0x40 || (a2 & 0xf0) != 0x10 || a3 != 0x15)
+            return;
+
+        const int block = a2 & 0x0f;
+        const int part  = block == 0 ? 9 : block <= 9 ? block - 1 : block;
+        const int value = data[8] & 0x7f;
+        if(m_emu88PartRhythm[static_cast<size_t>(part)] == value)
+            return;
+        m_emu88PartRhythm[static_cast<size_t>(part)] = value;
+
+        // The tone list names kits or tones depending on this, so it is rebuilt on the
+        // message thread, which is the only one allowed to touch it.
+        if(part == getEmu88Part())
+            m_emu88ToneListDirty.store(true, std::memory_order_release);
+    }
+
+    void HeadlessProcessor::onEmu88BankSelect(const int part, const int cc, const int value)
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return;
+        auto& bank = (cc == 0) ? m_emu88PartBankMsb[static_cast<size_t>(part)]
+                               : m_emu88PartBankLsb[static_cast<size_t>(part)];
+        if(bank == value)
+            return;
+        bank = value;
+
+        // The tone the shown part plays has a different name on another variation, so the
+        // list follows it. This runs on the audio thread, so the rebuild is deferred.
+        if(part == getEmu88Part())
+            m_emu88ToneListDirty.store(true, std::memory_order_release);
+    }
+
+    int HeadlessProcessor::getEmu88PartBank(const int part, const int cc) const
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return 0;
+        return (cc == 0) ? m_emu88PartBankMsb[static_cast<size_t>(part)]
+                         : m_emu88PartBankLsb[static_cast<size_t>(part)];
+    }
+
+    void HeadlessProcessor::setEmu88PartBank(const int part, const int cc, const int value)
+    {
+        if(m_synthType != SynthType::Emu88 || part < 0 || part > 15)
+            return;
+        // A drum part reads the program as a kit number and ignores the bank.
+        if(isEmu88PartRhythm(part))
+            return;
+        // The editor's timer mirrors the bank back into the host parameters, and the host
+        // echoes that into setValue, which lands here again. Acting on the echo would
+        // re-send a program change every block, so only a real change is sent.
+        if(getEmu88PartBank(part, cc) == value)
+            return;
+
+        onEmu88BankSelect(part, cc, value);
+
+        const auto ch = static_cast<uint8_t>(part);
+        addMidiEvent({synthLib::MidiEventSource::Editor,
+            static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), static_cast<uint8_t>(cc == 0 ? 0 : 32),
+            static_cast<uint8_t>(value & 0x7f)});
+        // A bank select only takes effect on the next program change, so the part's
+        // program is re-sent to make the variation audible straight away.
+        addMidiEvent({synthLib::MidiEventSource::Editor,
+            static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | ch),
+            static_cast<uint8_t>(m_emu88PartPrograms[static_cast<size_t>(part)] & 0x7f), 0});
+
+        // The tone list names the tone each program plays, and this part just changed
+        // which one that is, so the row it sits on is named again.
+        if(part == getEmu88Part())
+            loadEmu88ToneNames();
+    }
+
+    void HeadlessProcessor::restoreEmu88Parts(const int part)
+    {
+        if(m_synthType != SynthType::Emu88)
+            return;
+
+        // A different board has different tone and kit tables, so the name cache that
+        // feeds the tone list and the parameter text is rebuilt before anything reads it.
+        cacheEmu88Names();
+
+        // The board has just booted and drops MIDI until it is up, so the programs go
+        // out on the boot-settled tick instead of right now.
+        m_pendingEmu88PartResend.store(true);
+        if(!m_pendingResend.load())
+        {
+            m_resendBlocksRemaining = 100;
+            m_pendingResend.store(true);
+        }
+
+        // Point the editor at the saved part; this reloads its tone list and picks up
+        // that part's program from the cache.
+        if(m_paramPool)
+            m_paramPool->setPartChannel(static_cast<uint8_t>(part));
+        loadEmu88ToneNames();
+    }
+
+    void HeadlessProcessor::sendSysex(const std::vector<uint8_t>& data)
+    {
+        if(data.empty())
+            return;
+        synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+        ev.sysex.assign(data.begin(), data.end());
+        addMidiEvent(ev);
+    }
+
+    // ── Demo sequence ─────────────────────────────────────────────────────────
+    //
+    // Auditions the loaded board without external MIDI: four melodic parts plus drums,
+    // each with its own program, so it shows off the multitimbral voice rather than one
+    // instrument. Sequenced on the audio thread with sample offsets.
+    //
+    // ch 0 piano, ch 1 strings, ch 2 bass, ch 3 brass, ch 9 drums.
+
+    namespace
+    {
+        // Channels the demo sets a program on, and so has to hand back afterwards.
+        constexpr uint8_t g_demoChannels[] = {0, 1, 2, 3, 9};
+
+        // Time-sorted so one index walks the whole sequence. Kept constant rather than
+        // built on first use: this is read from the audio thread.
+        constexpr struct { double seconds; uint8_t a, b, c; } g_demoSteps[] =
+        {
+            // Setup: bank select MSB/LSB then program, per part. Drums take no bank.
+            {0.00, 0xB0,  0,  0}, {0.00, 0xB0, 32,  0}, {0.00, 0xC0,  0, 0},  // piano
+            {0.00, 0xB1,  0,  0}, {0.00, 0xB1, 32,  0}, {0.00, 0xC1, 48, 0},  // strings
+            {0.00, 0xB2,  0,  0}, {0.00, 0xB2, 32,  0}, {0.00, 0xC2, 33, 0},  // bass
+            {0.00, 0xB3,  0,  0}, {0.00, 0xB3, 32,  0}, {0.00, 0xC3, 61, 0},  // brass
+            {0.00, 0xC9,  0,  0},                                             // drum kit
+
+            // Bar 1: chord on piano, root on bass, kick + hat.
+            {0.50, 0x90, 60, 100}, {0.50, 0x90, 64, 100}, {0.50, 0x90, 67, 100},
+            {0.50, 0x92, 36,  110},
+            {0.50, 0x99, 36, 120}, {0.52, 0x89, 36, 0},
+            {0.50, 0x99, 42,  80}, {0.52, 0x89, 42, 0},
+            {0.75, 0x99, 42,  70}, {0.77, 0x89, 42, 0},
+
+            // Strings enter under the chord.
+            {1.00, 0x91, 55,  70}, {1.00, 0x91, 60,  70},
+            {1.00, 0x99, 38, 110}, {1.02, 0x89, 38, 0},   // snare
+            {1.00, 0x99, 42,  80}, {1.02, 0x89, 42, 0},
+            {1.25, 0x99, 42,  70}, {1.27, 0x89, 42, 0},
+
+            {1.50, 0x80, 60, 0},   {1.50, 0x80, 64, 0},   {1.50, 0x80, 67, 0},
+            {1.50, 0x82, 36, 0},
+
+            // Bar 2: F major, brass stab on top.
+            {1.50, 0x90, 65, 100}, {1.50, 0x90, 69, 100}, {1.50, 0x90, 72, 100},
+            {1.50, 0x92, 41, 110},
+            {1.50, 0x93, 77,  95},
+            {1.50, 0x99, 36, 120}, {1.52, 0x89, 36, 0},
+            {1.50, 0x99, 42,  80}, {1.52, 0x89, 42, 0},
+            {1.75, 0x99, 42,  70}, {1.77, 0x89, 42, 0},
+
+            {1.90, 0x83, 77, 0},
+            {2.00, 0x91, 55, 0},   {2.00, 0x91, 60, 0},
+            {2.00, 0x91, 57,  70}, {2.00, 0x91, 65,  70},
+            {2.00, 0x99, 38, 110}, {2.02, 0x89, 38, 0},
+            {2.00, 0x99, 42,  80}, {2.02, 0x89, 42, 0},
+            {2.25, 0x99, 42,  70}, {2.27, 0x89, 42, 0},
+
+            // Bar 3: back to C, everything together, then release.
+            {2.50, 0x80, 65, 0},   {2.50, 0x80, 69, 0},   {2.50, 0x80, 72, 0},
+            {2.50, 0x82, 41, 0},
+            {2.50, 0x90, 60,  100},{2.50, 0x90, 64, 100}, {2.50, 0x90, 67, 100},
+            {2.50, 0x90, 72, 100},
+            {2.50, 0x92, 36, 110},
+            {2.50, 0x93, 79,  95},
+            {2.50, 0x99, 36, 120}, {2.52, 0x89, 36, 0},
+            {2.50, 0x99, 49, 100}, {2.52, 0x89, 49, 0},   // crash
+
+            {3.50, 0x83, 79, 0},
+            {3.50, 0x91, 57, 0},   {3.50, 0x91, 65, 0},
+            {4.00, 0x80, 60, 0},   {4.00, 0x80, 64, 0},   {4.00, 0x80, 67, 0},
+            {4.00, 0x80, 72, 0},   {4.00, 0x82, 36, 0},
+        };
+    }
+
+    void HeadlessProcessor::triggerDemoSequence()
+    {
+        // Snapshot here, on the message thread that owns the cache: the audio thread
+        // replays it when the demo ends, and this is the state the user expects back.
+        for(size_t i = 0; i < m_demoSeqRestore.size(); ++i)
+            m_demoSeqRestore[i] = m_emu88PartPrograms[g_demoChannels[i]];
+        m_demoSeqArmed.store(true);
+    }
+
+    void HeadlessProcessor::processDemoSequence(const uint32_t numSamples, const double sampleRate)
+    {
+        if(m_demoSeqArmed.exchange(false))
+        {
+            m_demoSeqRunning = true;
+            m_demoSeqSamples = 0;
+            m_demoSeqIndex   = 0;
+        }
+
+        if(!m_demoSeqRunning || sampleRate <= 0.0)
+            return;
+
+        constexpr size_t stepCount = std::size(g_demoSteps);
+
+        const auto blockEnd = m_demoSeqSamples + numSamples;
+        while(m_demoSeqIndex < stepCount)
+        {
+            const auto& s = g_demoSteps[m_demoSeqIndex];
+            const auto at = static_cast<uint64_t>(s.seconds * sampleRate + 0.5);
+            if(at >= blockEnd)
+                break;
+            ++m_demoSeqIndex;
+
+            synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+            ev.a = s.a;
+            ev.b = s.b;
+            ev.c = s.c;
+            ev.offset = static_cast<uint32_t>(at > m_demoSeqSamples ? at - m_demoSeqSamples : 0);
+            addMidiEvent(ev);
+        }
+
+        m_demoSeqSamples = blockEnd;
+
+        if(m_demoSeqIndex >= stepCount)
+        {
+            m_demoSeqRunning = false;
+            restoreDemoSequenceParts(numSamples ? numSamples - 1 : 0);
+        }
+    }
+
+    void HeadlessProcessor::restoreDemoSequenceParts(const uint32_t offset)
+    {
+        // The demo puts its own tones on the parts it plays, so each one goes back to
+        // the program the user had. Unlike sendEmu88PartPrograms this also restores a
+        // part cached at program 0, which the demo would otherwise leave on its tone.
+        for(size_t i = 0; i < m_demoSeqRestore.size(); ++i)
+        {
+            const uint8_t ch   = g_demoChannels[i];
+            const int     prog = m_demoSeqRestore[i];
+            // A drum part reads the program as a kit number and ignores the bank. The demo
+            // left its own bank behind, so the user's variation goes back with the tone.
+            if(!isEmu88PartRhythm(static_cast<int>(ch)))
+            {
+                addMidiEvent({synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 0,
+                    static_cast<uint8_t>(m_emu88PartBankMsb[ch] & 0x7f), offset});
+                addMidiEvent({synthLib::MidiEventSource::Editor,
+                    static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch), 32,
+                    static_cast<uint8_t>(m_emu88PartBankLsb[ch] & 0x7f), offset});
+            }
+            addMidiEvent({synthLib::MidiEventSource::Editor,
+                static_cast<uint8_t>(synthLib::M_PROGRAMCHANGE | ch),
+                static_cast<uint8_t>(prog & 0x7f), 0, offset});
+        }
+    }
+
+    // ── MIDI file playback ────────────────────────────────────────────────────
+
+    namespace
+    {
+        // Meter levels are fixed point so the whole row stays lock-free.
+        constexpr int    kMidiLevelOne         = 1000;
+        constexpr double kMidiLevelFallSeconds = 0.4;
+
+        // The board answers a GS reset for roughly a third of a second. Real files open
+        // with a GM System On or GS Reset in their first ticks, so playback starts ahead
+        // of tick 0 and lets that settle, or every early event is swallowed.
+        constexpr double kMidiPlayLeadInSeconds = 0.5;
+        // A song's last event is often a note-on, so the tail is kept rather than
+        // cutting the final chord off mid-release.
+        constexpr double kMidiRenderTailSeconds = 4.0;
+        // Time the board is run before a render starts, once after the reset and again
+        // after the song's own setup messages. Long enough for a GS reset to land.
+        constexpr double kMidiWarmUpSeconds = 0.5;
+        constexpr int    kMp3BitRateKbps        = 320;
+    }
+
+    // Recent songs are remembered by file name, and the files themselves live in the
+    // 88emu data folder, so the list still works after an iOS pick has gone out of scope.
+    namespace
+    {
+        constexpr int kMaxRecentMidiFiles = 10;
+
+        juce::File midiFolder()
+        {
+            return juce::File(juce::String(HeadlessProcessor::getSynthDataFolder(SynthType::Emu88))
+                              + "MIDI/");
+        }
+    }
+
+    std::vector<std::string> HeadlessProcessor::getRecentMidiFiles()
+    {
+        std::vector<std::string> result;
+        const auto file = juce::File(juce::String(getDataFolder()) + "settings.xml");
+        if(!file.existsAsFile())
+            return result;
+
+        const auto xml = juce::XmlDocument::parse(file);
+        if(!xml)
+            return result;
+
+        const auto list = xml->getStringAttribute("recentMidiFiles");
+        const auto folder = midiFolder();
+        for(const auto& name : juce::StringArray::fromTokens(list, "\n", ""))
+        {
+            // A name whose copy has been deleted is dropped rather than offered.
+            if(name.isNotEmpty() && folder.getChildFile(name).existsAsFile())
+                result.push_back(name.toStdString());
+            if(static_cast<int>(result.size()) >= kMaxRecentMidiFiles)
+                break;
+        }
+        return result;
+    }
+
+    void HeadlessProcessor::addRecentMidiFile(const std::string& fileName)
+    {
+        if(fileName.empty())
+            return;
+
+        juce::StringArray names;
+        names.add(juce::String(fileName));
+        for(const auto& existing : getRecentMidiFiles())
+            names.addIfNotAlreadyThere(juce::String(existing));
+        while(names.size() > kMaxRecentMidiFiles)
+            names.remove(names.size() - 1);
+
+        const auto file = juce::File(juce::String(getDataFolder()) + "settings.xml");
+        std::unique_ptr<juce::XmlElement> xml;
+        if(file.existsAsFile())
+            xml = juce::XmlDocument::parse(file);
+        if(!xml)
+            xml = std::make_unique<juce::XmlElement>("RetromulatorSettings");
+
+        xml->setAttribute("recentMidiFiles", names.joinIntoString("\n"));
+        xml->writeTo(file);
+    }
+
+    bool HeadlessProcessor::loadRecentMidiFile(const std::string& fileName)
+    {
+        const auto file = midiFolder().getChildFile(juce::String(fileName));
+        juce::MemoryBlock block;
+        if(!file.existsAsFile() || !file.loadFileAsData(block) || block.getSize() == 0)
+            return false;
+
+        const auto* raw = static_cast<const uint8_t*>(block.getData());
+        std::vector<uint8_t> data(raw, raw + block.getSize());
+        if(!loadMidiFile(std::move(data), fileName))
+            return false;
+
+        addRecentMidiFile(fileName);
+        return true;
+    }
+
+    float HeadlessProcessor::getMidiChannelLevel(const int channel) const
+    {
+        if(channel < 0 || channel >= static_cast<int>(m_midiChannelLevels.size()))
+            return 0.0f;
+        return static_cast<float>(m_midiChannelLevels[static_cast<size_t>(channel)]
+                                      .load(std::memory_order_relaxed)) / kMidiLevelOne;
+    }
+
+    bool HeadlessProcessor::loadMidiFile(std::vector<uint8_t>&& data, const std::string& fileName)
+    {
+        std::vector<sc88smf::Event> events;
+        std::string error;
+        if(!sc88smf::parse(data, fileName, events, error))
+            return false;
+
+        std::vector<MidiSongEvent> song;
+        song.reserve(events.size());
+        for(auto& e : events)
+            song.push_back({e.seconds, std::move(e.bytes), e.port});
+
+        {
+            // The audio thread walks the song list, so the swap waits for the block it
+            // may be in the middle of. Everything costly already happened above.
+            const juce::ScopedLock sl(getCallbackLock());
+            m_midiSongEvents.swap(song);
+            m_midiPlayState.store(MidiPlayState::Stopped);
+            m_midiPlayRequest.store(false);
+            m_midiStopRequest.store(false);
+            m_midiEventIndex = 0;
+            m_midiPlayPos    = 0.0;
+        }
+
+        m_midiFileData = std::move(data);
+        m_midiFileName = fileName;
+        return true;
+    }
+
+    void HeadlessProcessor::playMidiFile()
+    {
+        if(m_midiSongEvents.empty())
+            return;
+        m_midiPlayRequest.store(true);
+    }
+
+    void HeadlessProcessor::stopMidiFile()
+    {
+        m_midiStopRequest.store(true);
+    }
+
+    void HeadlessProcessor::processMidiFile(const uint32_t numSamples, const double sampleRate)
+    {
+        const auto state = m_midiPlayState.load();
+
+        if(m_midiStopRequest.exchange(false))
+        {
+            if(state != MidiPlayState::Stopped)
+            {
+                resetMidiModule(0);
+                m_midiPlayState.store(MidiPlayState::Stopped);
+            }
+            m_midiPlayRequest.store(false);
+            return;
+        }
+
+        if(m_midiPlayRequest.exchange(false))
+        {
+            // Also covers restarting mid-song: the board is handed back clean either way.
+            resetMidiModule(0);
+            m_midiPlayPos    = -kMidiPlayLeadInSeconds;
+            m_midiEventIndex = 0;
+            m_midiPlayState.store(MidiPlayState::LeadIn);
+        }
+
+        if(m_midiPlayState.load() == MidiPlayState::Stopped || sampleRate <= 0.0 || !numSamples)
+            return;
+
+        const double blockSeconds = static_cast<double>(numSamples) / sampleRate;
+        const double blockEnd     = m_midiPlayPos + blockSeconds;
+
+        while(m_midiEventIndex < m_midiSongEvents.size())
+        {
+            const auto& e = m_midiSongEvents[m_midiEventIndex];
+            if(e.seconds >= blockEnd)
+                break;
+            ++m_midiEventIndex;
+            if(e.bytes.empty())
+                continue;
+
+            // Events before the cursor belong to the lead-in window, not this block.
+            const double delta  = e.seconds - m_midiPlayPos;
+            const auto   offset = delta <= 0.0 ? 0u
+                                : static_cast<uint32_t>(std::min<double>(delta * sampleRate,
+                                                                         numSamples - 1));
+
+            synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+            ev.offset = offset;
+            ev.port   = e.port;
+            if(e.bytes.front() == 0xf0)
+            {
+                ev.sysex.assign(e.bytes.begin(), e.bytes.end());
+                if(ev.sysex.back() != 0xf7)
+                    ev.sysex.push_back(0xf7);
+                // A song may turn a part into a drum part, which changes what its program
+                // means, so the cached view follows the message the board is about to get.
+                onEmu88Sysex(ev.sysex);
+            }
+            else if(e.bytes.size() <= 3)
+            {
+                ev.a = e.bytes[0];
+                ev.b = e.bytes.size() > 1 ? e.bytes[1] : 0;
+                ev.c = e.bytes.size() > 2 ? e.bytes[2] : 0;
+                // A song owns every part's tone while it plays, so the cached programs
+                // follow it rather than drifting out of sync with the board.
+                if((ev.a & 0xf0) == synthLib::M_PROGRAMCHANGE)
+                    onEmu88ProgramChange(ev.a & 0x0f, ev.b);
+                else if((ev.a & 0xf0) == synthLib::M_CONTROLCHANGE && (ev.b == 0 || ev.b == 32))
+                    onEmu88BankSelect(ev.a & 0x0f, ev.b, ev.c);
+                // A note-on drives that channel's meter bar to its velocity.
+                else if((ev.a & 0xf0) == synthLib::M_NOTEON && ev.c)
+                {
+                    auto& level = m_midiChannelLevels[ev.a & 0x0f];
+                    const auto v = static_cast<uint16_t>((ev.c * kMidiLevelOne) / 127);
+                    if(v > level.load(std::memory_order_relaxed))
+                        level.store(v, std::memory_order_relaxed);
+                }
+            }
+            else
+                continue;
+            addMidiEvent(ev);
+        }
+
+        m_midiPlayPos = blockEnd;
+        if(m_midiPlayPos >= 0.0)
+            m_midiPlayState.store(MidiPlayState::Playing);
+
+        // Decay the meter here rather than on read: the fall rate then follows the
+        // block clock instead of however often the editor happens to repaint.
+        const auto fall = static_cast<uint16_t>(
+            std::max(1.0, kMidiLevelOne * blockSeconds / kMidiLevelFallSeconds));
+        for(auto& level : m_midiChannelLevels)
+        {
+            const auto v = level.load(std::memory_order_relaxed);
+            if(v)
+                level.store(v > fall ? static_cast<uint16_t>(v - fall) : uint16_t{0},
+                            std::memory_order_relaxed);
+        }
+
+        const bool finished = m_midiEventIndex >= m_midiSongEvents.size()
+            && (m_midiSongEvents.empty()
+                || m_midiPlayPos >= m_midiSongEvents.back().seconds + kMidiRenderTailSeconds);
+        if(finished)
+        {
+            // The song's own tail is what the board is left holding, and it may well be
+            // a fade to zero volume, so the end of a song resets like a stop does.
+            resetMidiModule(numSamples - 1);
+            m_midiPlayState.store(MidiPlayState::Stopped);
+        }
+    }
+
+    // ── Offline WAV render ────────────────────────────────────────────────────
+
+    bool HeadlessProcessor::startMidiRender(const juce::URL& destUrl, const RenderFormat format)
+    {
+        if(m_synthType != SynthType::Emu88 || m_midiSongEvents.empty() || destUrl.isEmpty())
+            return false;
+        if(m_renderActive.exchange(true))
+            return false;   // one at a time
+
+        stopMidiFile();
+        m_renderCancel.store(false);
+        m_renderProgress.store(0.0f);
+
+        if(m_renderThread && m_renderThread->joinable())
+            m_renderThread->join();
+        m_renderThread = std::make_unique<std::thread>([this, destUrl, format]
+        {
+            renderMidiToWav(destUrl, format);
+            m_renderActive.store(false);
+        });
+        return true;
+    }
+
+    void HeadlessProcessor::cancelMidiRender()
+    {
+        m_renderCancel.store(true);
+    }
+
+    void HeadlessProcessor::renderMidiToWav(const juce::URL& destUrl, const RenderFormat format)
+    {
+        constexpr double sampleRate = 48000.0;
+        constexpr int    bitDepth   = 24;
+        constexpr int    blockSize  = 512;
+
+        // Rendered here first. The chosen location may be a security-scoped iCloud or
+        // Files URL, which cannot be written to as a plain path.
+        const juce::File dest = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                    .getChildFile("retromulator_render.wav");
+        dest.deleteFile();
+
+        std::unique_ptr<juce::FileOutputStream> out(dest.createOutputStream());
+        if(!out)
+            return;
+
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wav.createWriterFor(out.get(), sampleRate, 2, bitDepth, {}, 0));
+        if(!writer)
+            return;
+        out.release();   // the writer owns the stream from here
+
+        // Live audio must not touch the board while this runs: there is one device and
+        // the render drives it at its own pace.
+        suspendProcessing(true);
+        // Preferred device rate 0, as the live path passes: the board picks its native
+        // rate and the resampler bridges to 48 kHz.
+        getPlugin().setHostSamplerate(static_cast<float>(sampleRate), 0.0f);
+        getPlugin().setBlockSize(blockSize);
+        // The board renders on its own thread, and the pump below outruns it. Offline
+        // mode makes processAudio wait for each frame instead of repeating the last one.
+        if(auto* dev = getEmu88Device())
+            dev->setOfflineRender(true);
+
+        // The song's own tail plus the lead-in it needs before tick 0.
+        const double songEnd = m_midiSongEvents.back().seconds;
+        const double total   = songEnd + kMidiRenderTailSeconds;
+
+        // Local cursors: the live playback members belong to the audio thread.
+        double pos        = -kMidiPlayLeadInSeconds;
+        size_t eventIndex = 0;
+        resetMidiModule(0);
+
+        juce::AudioBuffer<float> buffer(2, blockSize);
+        std::vector<synthLib::SMidiEvent> midiOut;
+
+        // Run the board on for a moment before the song starts. A GS reset takes the
+        // module a while to work through, and these files put their program changes on
+        // tick 0 together with the first notes, so without this the reset is still
+        // settling when they arrive and the notes sound on whatever patch was loaded
+        // before. Rendering into a scratch buffer keeps it out of the file.
+        const auto spin = [&](const double seconds)
+        {
+            const auto blocks = static_cast<int>(seconds * sampleRate / blockSize);
+            for(int i = 0; i < blocks && !m_renderCancel.load(); ++i)
+            {
+                buffer.clear();
+                float* outs[2] = {buffer.getWritePointer(0), buffer.getWritePointer(1)};
+                const synthLib::TAudioInputs  ins{};
+                const synthLib::TAudioOutputs outputs{outs[0], outs[1]};
+                getPlugin().process(ins, outputs, blockSize, 120.0f, 0.0f, false);
+                getPlugin().getMidiOut(midiOut);
+                midiOut.clear();
+            }
+        };
+        spin(kMidiWarmUpSeconds);
+
+        // Then the song's own setup: everything it puts on tick 0 that is not a note,
+        // so the programs, volumes and pans are in place before the first note-on. They
+        // are consumed here, so the pump below starts at the first event it left.
+        for(; eventIndex < m_midiSongEvents.size(); ++eventIndex)
+        {
+            const auto& e = m_midiSongEvents[eventIndex];
+            if(e.seconds > 0.0)
+                break;
+            if(e.bytes.empty())
+                continue;
+            const auto status = static_cast<uint8_t>(e.bytes.front() & 0xf0);
+            if(status == synthLib::M_NOTEON || status == synthLib::M_NOTEOFF)
+                break;
+
+            synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+            ev.port = e.port;
+            if(e.bytes.front() == 0xf0)
+            {
+                ev.sysex.assign(e.bytes.begin(), e.bytes.end());
+                if(ev.sysex.back() != 0xf7)
+                    ev.sysex.push_back(0xf7);
+            }
+            else if(e.bytes.size() <= 3)
+            {
+                ev.a = e.bytes[0];
+                ev.b = e.bytes.size() > 1 ? e.bytes[1] : 0;
+                ev.c = e.bytes.size() > 2 ? e.bytes[2] : 0;
+            }
+            else
+                continue;
+            getPlugin().addMidiEvent(ev);
+        }
+        spin(kMidiWarmUpSeconds);
+
+        while(pos < total && !m_renderCancel.load())
+        {
+            buffer.clear();
+
+            // Same event pump as live playback, so the file matches what was heard.
+            const double blockSeconds = blockSize / sampleRate;
+            const double blockEnd     = pos + blockSeconds;
+            while(eventIndex < m_midiSongEvents.size())
+            {
+                const auto& e = m_midiSongEvents[eventIndex];
+                if(e.seconds >= blockEnd)
+                    break;
+                ++eventIndex;
+                if(e.bytes.empty())
+                    continue;
+
+                const double delta  = e.seconds - pos;
+                const auto   offset = delta <= 0.0 ? 0u
+                    : static_cast<uint32_t>(std::min<double>(delta * sampleRate, blockSize - 1));
+
+                synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+                ev.offset = offset;
+                ev.port   = e.port;
+                if(e.bytes.front() == 0xf0)
+                {
+                    ev.sysex.assign(e.bytes.begin(), e.bytes.end());
+                    if(ev.sysex.back() != 0xf7)
+                        ev.sysex.push_back(0xf7);
+                }
+                else if(e.bytes.size() <= 3)
+                {
+                    ev.a = e.bytes[0];
+                    ev.b = e.bytes.size() > 1 ? e.bytes[1] : 0;
+                    ev.c = e.bytes.size() > 2 ? e.bytes[2] : 0;
+                }
+                else
+                    continue;
+                getPlugin().addMidiEvent(ev);
+            }
+            pos = blockEnd;
+
+            float* outs[2] = {buffer.getWritePointer(0), buffer.getWritePointer(1)};
+            const synthLib::TAudioInputs  ins{};
+            const synthLib::TAudioOutputs outputs{outs[0], outs[1]};
+            getPlugin().process(ins, outputs, blockSize, 120.0f, 0.0f, false);
+            getPlugin().getMidiOut(midiOut);
+            midiOut.clear();
+
+            writer->writeFromAudioSampleBuffer(buffer, 0, blockSize);
+
+            const double done = (pos + kMidiPlayLeadInSeconds)
+                              / (total + kMidiPlayLeadInSeconds);
+            m_renderProgress.store(static_cast<float>(juce::jlimit(0.0, 1.0, done)));
+        }
+
+        writer.reset();   // flushes the header
+
+        // MP3 is encoded from the finished WAV, so the emulation path is the same one
+        // for both formats and only the container differs.
+        juce::File source = dest;
+        if(!m_renderCancel.load() && format == RenderFormat::Mp3)
+        {
+            const auto mp3 = dest.getSiblingFile("retromulator_render.mp3");
+            mp3.deleteFile();
+            if(encodeWavToMp3(dest.getFullPathName().toStdString(),
+                              mp3.getFullPathName().toStdString(), kMp3BitRateKbps))
+            {
+                source = mp3;
+                dest.deleteFile();
+            }
+        }
+
+        if(m_renderCancel.load())
+        {
+            dest.deleteFile();
+        }
+        else
+        {
+            // Copy out to the picked location. The URL stream goes first: a chosen iOS
+            // location is security-scoped, and getLocalFile still hands back a path there
+            // that a plain copy cannot write to.
+            bool copied = false;
+            if(auto outStream = destUrl.createOutputStream())
+            {
+                juce::FileInputStream in(source);
+                if(in.openedOk())
+                {
+                    copied = outStream->writeFromInputStream(in, -1) > 0;
+                    outStream->flush();
+                }
+            }
+            if(!copied)
+            {
+                const auto destFile = destUrl.getLocalFile();
+                if(destFile.getFullPathName().isNotEmpty())
+                {
+                    destFile.deleteFile();
+                    copied = source.copyFileTo(destFile);
+                }
+            }
+            if(copied)
+                source.deleteFile();
+        }
+
+        resetMidiModule(0);
+        m_renderProgress.store(1.0f);
+
+        // Hand the board back to live audio at the rate it was using.
+        if(auto* dev = getEmu88Device())
+            dev->setOfflineRender(false);
+        getPlugin().setHostSamplerate(static_cast<float>(getSampleRate()), 0.0f);
+        getPlugin().setBlockSize(static_cast<uint32_t>(getBlockSize()));
+        suspendProcessing(false);
+    }
+
+    void HeadlessProcessor::resetMidiModule(const uint32_t offset)
+    {
+        // Nothing is sounding after this, so the meter must not freeze mid-height.
+        for(auto& level : m_midiChannelLevels)
+            level.store(0, std::memory_order_relaxed);
+
+        // A render must reach the board and nothing else: the routing matrix would also
+        // hand these to the controller and out the physical MIDI port.
+        const bool direct = m_renderActive.load();
+        const auto send = [this, direct](const synthLib::SMidiEvent& ev)
+        {
+            if(direct) getPlugin().addMidiEvent(ev);
+            else       addMidiEvent(ev);
+        };
+
+        for(uint8_t ch = 0; ch < 16; ++ch)
+        {
+            const auto cc = static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | ch);
+            send({synthLib::MidiEventSource::Editor, cc, synthLib::M_ALLNOTESOFF, 0, offset});
+            send({synthLib::MidiEventSource::Editor, cc, 120, 0, offset});  // all sound off
+            send({synthLib::MidiEventSource::Editor, cc, 121, 0, offset});  // reset controllers
+            send({synthLib::MidiEventSource::Editor, cc, 7, 100, offset});  // channel volume
+            send({synthLib::MidiEventSource::Editor, cc, 11, 127, offset}); // expression
+        }
+
+        static constexpr uint8_t gsReset[] =
+            {0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7};
+        synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+        ev.sysex.assign(std::begin(gsReset), std::end(gsReset));
+        ev.offset = offset;
+        send(ev);
+    }
+
+    void HeadlessProcessor::pollEmu88Params()
+    {
+        if(!m_paramPool || m_synthType != SynthType::Emu88)
+            return;
+
+        // An async boot names the board before the device exists, so the list is either
+        // empty or still the previous board's. Either way the model it was read from no
+        // longer matches the one now running, and the names are read again.
+        const int bootedModel = getEmu88Model();
+        if(bootedModel >= 0 && bootedModel != m_emu88NamesModel)
+            loadEmu88ToneNames();
+
+        // The part menu and the tone list are driven from the editor, so mirror them
+        // into their host parameters to keep automation lanes showing the real state.
+        m_paramPool->setNativeSlotValue(ParameterPool::kEmu88PartNative, getEmu88Part(), true, false);
+        m_paramPool->setNativeSlotValue(ParameterPool::kEmu88ProgramNative,
+                                        juce::jlimit(0, 127, m_currentProgram), true, false);
+        // The variation rows in the bank combo and an incoming CC0/CC32 both move these,
+        // so the lanes follow the part's real bank.
+        const int shownPart = getEmu88Part();
+        m_paramPool->setNativeSlotValue(ParameterPool::kEmu88BankMsbNative,
+            juce::jlimit(0, 127, m_emu88PartBankMsb[static_cast<size_t>(shownPart)]), true, false);
+        m_paramPool->setNativeSlotValue(ParameterPool::kEmu88BankLsbNative,
+            juce::jlimit(0, 127, m_emu88PartBankLsb[static_cast<size_t>(shownPart)]), true, false);
+        // The transport also moves from the C1/D1 keys and the bank combo, and it stops on
+        // its own at the end of a song, so the lane follows it rather than the other way
+        // round. Transient: it is not a sound edit and must not be saved or resent.
+        m_paramPool->setNativeSlotValue(ParameterPool::kEmu88TransportNative,
+                                        isMidiFilePlaying() ? 1 : 0, true, true);
+
+        // A song moved the shown part's variation, or made it a drum part, so what its
+        // programs are called changed and the editor reads the list again.
+        if(m_emu88ToneListDirty.exchange(false, std::memory_order_acquire))
+        {
+            loadEmu88ToneNames();
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        }
+
+        // A program change from a MIDI file or external gear moved the cache on the audio
+        // thread; mirror every part so the lanes and the tone list follow the board.
+        if(m_emu88PartProgramDirty.exchange(false, std::memory_order_acquire))
+        {
+            const int part = getEmu88Part();
+            const int prog = m_emu88PartPrograms[static_cast<size_t>(part)];
+            if(prog != m_currentProgram)
+            {
+                m_currentProgram = prog;
+                if(prog >= 0 && prog < static_cast<int>(m_programNames.size()))
+                    m_patchName = m_programNames[static_cast<size_t>(prog)];
+                updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+            }
+        }
+
+        for(size_t p = 0; p < m_emu88PartPrograms.size(); ++p)
+        {
+            m_paramPool->setNativeSlotValue(ParameterPool::kEmu88PartProgFirst + static_cast<int>(p),
+                                            juce::jlimit(0, 127, m_emu88PartPrograms[p]), true, false);
+        }
+    }
+
+    void HeadlessProcessor::cacheEmu88Names()
+    {
+        const int model = getEmu88Model();
+        // An async boot runs this while the DummyDevice is still installed, so the board
+        // it would name does not exist yet. The cache is marked stale and left for the
+        // retry in pollEmu88Params, which runs once the device is up.
+        if(model < 0)
+        {
+            m_emu88NamesModel = -1;
+            return;
+        }
+        m_emu88ToneNames.clear();
+        m_emu88KitNames.clear();
+        m_emu88NamesModel = model;
+        const auto m = static_cast<emu88Lib::DeviceModel>(model);
+        m_emu88ToneNames = emu88LoadCapitalTones(m);
+        m_emu88KitNames  = emu88LoadDrumKits(m);
+
+        // The host caches parameter text when it builds its tree, so the descriptions
+        // are rebuilt with this board's names rather than named on demand.
+        if(m_paramPool)
+            m_paramPool->refreshFor(SynthType::Emu88);
+    }
+
+    std::string HeadlessProcessor::getEmu88ProgramName(const int part, const int program) const
+    {
+        if(program < 0 || part < 0 || part > 15)
+            return {};
+        if(!isEmu88PartRhythm(part))
+        {
+            // On a variation the ROM's capital-tone name is the wrong one, so the tone
+            // table names the variation the part actually plays.
+            const int cc0 = m_emu88PartBankMsb[static_cast<size_t>(part)];
+            if(cc0 > 0)
+            {
+                const auto model = static_cast<emu88Lib::DeviceModel>(getEmu88Model());
+                const auto maps  = emu88Maps(model);
+                const int  cc32  = m_emu88PartBankLsb[static_cast<size_t>(part)];
+                const int  map   = cc32 > 0 ? cc32 : maps.empty() ? 0 : maps.back();
+                for(const auto& v : emu88Variations(model, map, program))
+                    if(v.cc0 == cc0)
+                        return v.name;
+            }
+        }
+
+        const auto& names = isEmu88PartRhythm(part) ? m_emu88KitNames : m_emu88ToneNames;
+        if(program >= static_cast<int>(names.size()))
+            return {};
+        return names[static_cast<size_t>(program)];
+    }
+
+    void HeadlessProcessor::loadEmu88ToneNames()
+    {
+        const int  model = getEmu88Model();
+        const bool drums = isEmu88PartRhythm(getEmu88Part());
+        if(model != m_emu88NamesModel || (m_emu88ToneNames.empty() && m_emu88KitNames.empty()))
+            cacheEmu88Names();
+        m_programNames = drums ? m_emu88KitNames : m_emu88ToneNames;
+        // A drum part whose kit table was not recognized still has 128 selectable
+        // programs; list them by number rather than hiding the part.
+        if(drums && m_programNames.empty())
+            m_programNames.assign(128, std::string{});
+        m_bankMessages.clear();
+        // Each part keeps its own tone, so show the one this part already has rather
+        // than resetting the view to 0 while the board still plays the old program.
+        const int part = getEmu88Part();
+        const int progCount = static_cast<int>(m_programNames.size());
+        m_currentProgram = juce::jlimit(0, std::max(0, progCount - 1), m_emu88PartPrograms[static_cast<size_t>(part)]);
+        m_patchName = (m_currentProgram < progCount)
+            ? m_programNames[static_cast<size_t>(m_currentProgram)] : std::string{};
+
+        // The list is one row per program change, so it names capital tones. The row the
+        // part is on names the tone it actually plays, which on a variation is not the
+        // capital one.
+        if(!drums && m_currentProgram < progCount)
+        {
+            const auto played = getEmu88ProgramName(part, m_currentProgram);
+            if(!played.empty())
+            {
+                m_programNames[static_cast<size_t>(m_currentProgram)] = played;
+                m_patchName = played;
+            }
+        }
+        if(m_programNames.empty() || (drums && m_programNames.front().empty()))
+            fprintf(stderr, "[88emu] %s directory not found in ROM for model %d\n", drums ? "drum kit" : "tone", model);
     }
 
     ayumiLib::Device* HeadlessProcessor::getAyumiDevice() const
@@ -1508,14 +2899,77 @@ namespace retromulator
 #endif
     }
 
-    // ── processBpm (deferred resend: pre-audio guard + JE-8086 boot delay) ──────
+    // ── Track program changes so cached per-part programs follow the board ──
 
-    void HeadlessProcessor::processBpm(float /*_bpm*/)
+    void HeadlessProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+    {
+        if(m_synthType == SynthType::Emu88)
+        {
+            // A MIDI file or external gear can set every part's tone, so the cached
+            // programs follow the board rather than drifting out of sync with it.
+            for(const auto meta : midi)
+            {
+                const auto m = meta.getMessage();
+                if(m.isProgramChange())
+                    onEmu88ProgramChange(m.getChannel() - 1, m.getProgramChangeNumber());
+                else if(m.isController() && (m.getControllerNumber() == 0 || m.getControllerNumber() == 32))
+                    onEmu88BankSelect(m.getChannel() - 1, m.getControllerNumber(), m.getControllerValue());
+                else if(m.isSysEx())
+                {
+                    const auto* d = m.getSysExData();
+                    // getSysExData omits the F0 and F7 the parser expects.
+                    std::vector<uint8_t> sx;
+                    sx.reserve(static_cast<size_t>(m.getSysExDataSize()) + 2);
+                    sx.push_back(0xf0);
+                    sx.insert(sx.end(), d, d + m.getSysExDataSize());
+                    sx.push_back(0xf7);
+                    onEmu88Sysex(sx);
+                }
+            }
+
+            // C1 and D1 start and stop the loaded song. They are consumed here so they
+            // never reach the board, which would sound a note under the transport.
+            if(hasMidiFile())
+            {
+                juce::MidiBuffer kept;
+                for(const auto meta : midi)
+                {
+                    const auto m = meta.getMessage();
+                    if(m.isNoteOnOrOff() && (m.getNoteNumber() == kMidiPlayNote ||
+                                             m.getNoteNumber() == kMidiStopNote))
+                    {
+                        if(m.isNoteOn())
+                        {
+                            if(m.getNoteNumber() == kMidiPlayNote) playMidiFile();
+                            else                                   stopMidiFile();
+                        }
+                        continue;
+                    }
+                    kept.addEvent(m, meta.samplePosition);
+                }
+                midi.swapWith(kept);
+            }
+
+            processDemoSequence(static_cast<uint32_t>(buffer.getNumSamples()), getSampleRate());
+            processMidiFile(static_cast<uint32_t>(buffer.getNumSamples()), getSampleRate());
+        }
+        // Runs for every core, and from the audio path rather than a host callback that
+        // only fires when a playhead offers a BPM.
+        processDeferredResend();
+
+        Processor::processBlock(buffer, midi);
+    }
+
+    // ── Deferred resend (pre-audio guard + boot delay) ─────────────────────────
+
+    void HeadlessProcessor::processDeferredResend()
     {
         // Resend the current bank message after the DSP is ready.
-        // Two cases arm m_pendingResend:
+        // Three cases arm m_pendingResend:
         //   1. AU XPC: prepareToPlay not yet called when UI fires sendBankMessage.
         //   2. JE-8086: firmware silently discards MIDI in the first ~0.14s of emulation.
+        //   3. 88emu: a board switch reboots the core, and the parts have to be replayed
+        //      once it is up.
         if(m_pendingResend.load())
         {
             if(--m_resendBlocksRemaining <= 0)
@@ -1524,6 +2978,10 @@ namespace retromulator
                 m_deviceBooted = true;  // boot delay done; no more auto-resends
                 if(m_currentProgram >= 0 && m_currentProgram < getProgramCount())
                     sendBankMessage(m_currentProgram);
+                // 88emu keeps a program per part, and the board only accepts them once
+                // it is up, so the replay waits for this tick rather than boot time.
+                if(m_pendingEmu88PartResend.exchange(false))
+                    sendEmu88PartPrograms();
                 // Re-apply host parameter edits the bank message just overwrote.
                 if(m_paramPool)
                     m_paramPool->resendTouched();
@@ -1549,8 +3007,13 @@ namespace retromulator
         if(m_synthType == SynthType::None)
             throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, "No synth selected");
 
+        // The restored board applies to this boot only: once it is consumed a later
+        // switch from the editor goes through SynthFactory's shared value as before.
+        const int model = m_restoredEmu88Model;
+        m_restoredEmu88Model = -1;
+
         // Let DeviceException propagate — caller (rebootDevice or getPlugin) handles it.
-        return SynthFactory::create(m_synthType, m_romPath);
+        return SynthFactory::create(m_synthType, m_romPath, model);
     }
 
     pluginLib::Controller* HeadlessProcessor::createController()
@@ -1587,6 +3050,18 @@ namespace retromulator
         if(len > 0)
             out.append(v.data(), static_cast<size_t>(len));
     }
+
+    // "E88P": 88emu per-part program block appended after the params block.
+    static constexpr int32_t kEmu88PartsMagic = 0x50383845;
+    // "E88B": 88emu per-part variation banks, appended after the per-part program block.
+    static constexpr int32_t kEmu88BanksMagic = 0x42383845;
+    // "E88R": 88emu per-part rhythm assignment, appended after the bank block.
+    static constexpr int32_t kEmu88RhythmMagic = 0x52383845;
+    // "E88M": the loaded MIDI song, appended after the per-part block.
+    static constexpr int32_t kEmu88MidiMagic = 0x4D383845;
+    // "E88D": the board. Written last, and read back from the tail before the device is
+    // created, so the boot picks the right one without parsing the blocks in between.
+    static constexpr int32_t kEmu88BoardMagic = 0x44383845;
 
     void HeadlessProcessor::getStateInformation(juce::MemoryBlock& destData)
     {
@@ -1663,6 +3138,66 @@ namespace retromulator
         appendInt32(destData, static_cast<int32_t>(slotBytes.size() / 2));
         if(!slotBytes.empty())
             destData.append(slotBytes.data(), slotBytes.size());
+
+        // 88emu per-part programs and the edited part:
+        // ['E88P':int32][count:int32][program:int32 * count][part:int32]
+        if(m_synthType == SynthType::Emu88)
+        {
+            appendInt32(destData, kEmu88PartsMagic);
+            appendInt32(destData, static_cast<int32_t>(m_emu88PartPrograms.size()));
+            for(const int prog : m_emu88PartPrograms)
+                appendInt32(destData, static_cast<int32_t>(prog));
+            appendInt32(destData, static_cast<int32_t>(getEmu88Part()));
+        }
+
+        // 88emu per-part variation banks, in their own block so a session written before
+        // they were saved still loads:
+        // ['E88B':int32][count:int32][msb:int32 * count][lsb:int32 * count]
+        if(m_synthType == SynthType::Emu88)
+        {
+            appendInt32(destData, kEmu88BanksMagic);
+            appendInt32(destData, static_cast<int32_t>(m_emu88PartBankMsb.size()));
+            for(const int msb : m_emu88PartBankMsb)
+                appendInt32(destData, static_cast<int32_t>(msb));
+            for(const int lsb : m_emu88PartBankLsb)
+                appendInt32(destData, static_cast<int32_t>(lsb));
+        }
+
+        // 88emu per-part rhythm assignment, so a part a song turned into a drum part
+        // comes back as one:
+        // ['E88R':int32][count:int32][rhythm:int32 * count]
+        if(m_synthType == SynthType::Emu88)
+        {
+            appendInt32(destData, kEmu88RhythmMagic);
+            appendInt32(destData, static_cast<int32_t>(m_emu88PartRhythm.size()));
+            for(const int r : m_emu88PartRhythm)
+                appendInt32(destData, static_cast<int32_t>(r));
+        }
+
+        // Loaded MIDI song, so it travels with the session:
+        // ['E88M':int32][nameLen:int32][name][dataLen:int32][data]
+        if(m_synthType == SynthType::Emu88 && !m_midiFileData.empty())
+        {
+            appendInt32(destData, kEmu88MidiMagic);
+            appendInt32(destData, static_cast<int32_t>(m_midiFileName.size()));
+            if(!m_midiFileName.empty())
+                destData.append(m_midiFileName.data(), m_midiFileName.size());
+            appendInt32(destData, static_cast<int32_t>(m_midiFileData.size()));
+            destData.append(m_midiFileData.data(), m_midiFileData.size());
+        }
+
+        // Board the session was using, taken from the live device rather than the shared
+        // value, so what is saved is what this instance actually booted.
+        // ['E88D':int32][model:int32]
+        if(m_synthType == SynthType::Emu88)
+        {
+            const int model = getEmu88Model();
+            if(model >= 0)
+            {
+                appendInt32(destData, kEmu88BoardMagic);
+                appendInt32(destData, static_cast<int32_t>(model));
+            }
+        }
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -1727,6 +3262,23 @@ namespace retromulator
         }
 
         const auto newType = static_cast<SynthType>(synthTypeInt);
+
+        // The board sits in the last eight bytes, and it has to be known before the device
+        // is created. Only the tail is examined: the blob also carries raw MIDI and sysex,
+        // and scanning those for the tag could match one of their bytes. It goes to this
+        // instance's own field, never SynthFactory's shared board, because an AU host
+        // restores several instances at once and they would overwrite each other's.
+        m_restoredEmu88Model = -1;
+        if(newType == SynthType::Emu88 && sizeInBytes >= 8)
+        {
+            int32_t magic = 0, model = -1;
+            std::memcpy(&magic, bytes + sizeInBytes - 8, 4);
+            std::memcpy(&model, bytes + sizeInBytes - 4, 4);
+            if(magic == kEmu88BoardMagic
+               && model >= 0 && model < static_cast<int32_t>(emu88Lib::deviceModelCount()))
+                m_restoredEmu88Model = model;
+        }
+
         setSynthType(newType, romPath);
 
         if(newType == SynthType::AkaiS1000)
@@ -1846,18 +3398,138 @@ namespace retromulator
             }
         }
 
-        // Restore host parameter slot edits (optional, appended after the Akai block)
+        // Restore host parameter slot edits (optional, appended after the Akai block).
+        // Read the header unconditionally so offset stays usable for the blocks after it.
         int32_t magic = 0, count = 0;
-        if(m_paramPool && readInt32(bytes, sizeInBytes, offset, magic) && magic == 0x534d5250
-           && readInt32(bytes, sizeInBytes, offset, count) && count > 0
+        const int paramsStart = offset;
+        if(readInt32(bytes, sizeInBytes, offset, magic) && magic == 0x534d5250
+           && readInt32(bytes, sizeInBytes, offset, count) && count >= 0
            && offset + count * 2 <= sizeInBytes)
         {
-            std::vector<std::pair<uint8_t, uint8_t>> values;
-            values.reserve(static_cast<size_t>(count));
-            for(int32_t i = 0; i < count; ++i)
-                values.emplace_back(bytes[offset + i * 2], bytes[offset + i * 2 + 1]);
+            if(m_paramPool && count > 0)
+            {
+                std::vector<std::pair<uint8_t, uint8_t>> values;
+                values.reserve(static_cast<size_t>(count));
+                for(int32_t i = 0; i < count; ++i)
+                    values.emplace_back(bytes[offset + i * 2], bytes[offset + i * 2 + 1]);
+                m_paramPool->restoreValues(values);
+            }
             offset += count * 2;
-            m_paramPool->restoreValues(values);
+        }
+        else
+        {
+            // Not a params block (older state): rewind so the next block still parses.
+            offset = paramsStart;
+        }
+
+        // Restore the 88emu per-part programs and the edited part (optional).
+        int restorePart = -1;
+        const int partsStart = offset;
+        int32_t partsMagic = 0, partsCount = 0;
+        if(newType == SynthType::Emu88
+           && readInt32(bytes, sizeInBytes, offset, partsMagic) && partsMagic == kEmu88PartsMagic
+           && readInt32(bytes, sizeInBytes, offset, partsCount) && partsCount > 0)
+        {
+            const int toRead = std::min(static_cast<int>(partsCount),
+                                        static_cast<int>(m_emu88PartPrograms.size()));
+            for(int i = 0; i < toRead; ++i)
+            {
+                int32_t prog = 0;
+                readInt32(bytes, sizeInBytes, offset, prog);
+                m_emu88PartPrograms[static_cast<size_t>(i)] = static_cast<int>(prog);
+            }
+            for(int i = toRead; i < static_cast<int>(partsCount); ++i)
+            {
+                int32_t dummy = 0;
+                readInt32(bytes, sizeInBytes, offset, dummy);
+            }
+
+            int32_t savedPart = 0;
+            if(readInt32(bytes, sizeInBytes, offset, savedPart) && savedPart >= 0 && savedPart < 16)
+                restorePart = static_cast<int>(savedPart);
+        }
+        else
+        {
+            offset = partsStart;
+        }
+
+        // Restore the per-part variation banks (optional: absent in older sessions).
+        // Read before the parts are restored, as that is what resends them to the board.
+        const int banksStart = offset;
+        int32_t banksMagic = 0, banksCount = 0;
+        if(newType == SynthType::Emu88
+           && readInt32(bytes, sizeInBytes, offset, banksMagic) && banksMagic == kEmu88BanksMagic
+           && readInt32(bytes, sizeInBytes, offset, banksCount) && banksCount > 0)
+        {
+            const auto readBanks = [&](std::array<int, 16>& dst)
+            {
+                const int toRead = std::min(static_cast<int>(banksCount), static_cast<int>(dst.size()));
+                for(int i = 0; i < toRead; ++i)
+                {
+                    int32_t v = 0;
+                    readInt32(bytes, sizeInBytes, offset, v);
+                    dst[static_cast<size_t>(i)] = juce::jlimit(0, 127, static_cast<int>(v));
+                }
+                for(int i = toRead; i < static_cast<int>(banksCount); ++i)
+                {
+                    int32_t dummy = 0;
+                    readInt32(bytes, sizeInBytes, offset, dummy);
+                }
+            };
+            readBanks(m_emu88PartBankMsb);
+            readBanks(m_emu88PartBankLsb);
+        }
+        else
+        {
+            offset = banksStart;
+        }
+
+        // Restore the per-part rhythm assignment (optional). Also read before the parts
+        // are restored: it decides whether a part's program is a kit or a tone.
+        const int rhythmStart = offset;
+        int32_t rhythmMagic = 0, rhythmCount = 0;
+        if(newType == SynthType::Emu88
+           && readInt32(bytes, sizeInBytes, offset, rhythmMagic) && rhythmMagic == kEmu88RhythmMagic
+           && readInt32(bytes, sizeInBytes, offset, rhythmCount) && rhythmCount > 0)
+        {
+            const int toRead = std::min(static_cast<int>(rhythmCount),
+                                        static_cast<int>(m_emu88PartRhythm.size()));
+            for(int i = 0; i < toRead; ++i)
+            {
+                int32_t v = 0;
+                readInt32(bytes, sizeInBytes, offset, v);
+                m_emu88PartRhythm[static_cast<size_t>(i)] = juce::jlimit(0, 127, static_cast<int>(v));
+            }
+            for(int i = toRead; i < static_cast<int>(rhythmCount); ++i)
+            {
+                int32_t dummy = 0;
+                readInt32(bytes, sizeInBytes, offset, dummy);
+            }
+        }
+        else
+        {
+            offset = rhythmStart;
+        }
+
+        if(restorePart >= 0)
+            restoreEmu88Parts(restorePart);
+
+        // Restore the loaded MIDI song (optional).
+        const int midiStart = offset;
+        int32_t midiMagic = 0;
+        std::string midiName;
+        std::vector<uint8_t> midiData;
+        if(newType == SynthType::Emu88
+           && readInt32(bytes, sizeInBytes, offset, midiMagic) && midiMagic == kEmu88MidiMagic
+           && readString(bytes, sizeInBytes, offset, midiName)
+           && readBytes(bytes, sizeInBytes, offset, midiData)
+           && !midiData.empty())
+        {
+            loadMidiFile(std::move(midiData), midiName);
+        }
+        else
+        {
+            offset = midiStart;
         }
     }
 }

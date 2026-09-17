@@ -8,17 +8,21 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <atomic>
 #include <memory>
+#include <thread>
+#include <functional>
 
 namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
 namespace opl3Lib { class Device; }
 namespace sidLib { class Device; }
 namespace ayumiLib { class Device; }
+namespace emu88Lib { class HardwareDevice; }
 
 namespace retromulator
 {
@@ -33,6 +37,13 @@ namespace retromulator
 
         // ── Synth hot-swap ──────────────────────────────────────────────────
         void setSynthType(SynthType type, const std::string& romPath = {});
+        // Async version: boots the device on a background thread, then calls
+        // onComplete on the message thread. GUI stays responsive during boot.
+        void setSynthTypeAsync(SynthType type, const std::string& romPath,
+                               std::function<void()> onComplete);
+
+        // Standalone only: 56k cores need a 512 sample buffer minimum, others use the device default.
+        void applyStandaloneBufferSize();
         SynthType getSynthType() const { return m_synthType; }
 
         // ── Preset loading ──────────────────────────────────────────────────
@@ -99,6 +110,99 @@ namespace retromulator
         // Returns the Ayumi device if the current synth type is Ayumi, else nullptr.
         ayumiLib::Device* getAyumiDevice() const;
 
+        // 88emu (SC-88 family) device, or nullptr if another core is loaded.
+        emu88Lib::HardwareDevice* getEmu88Device() const;
+        // Board currently booted, as emu88Lib::DeviceModel, or -1.
+        int getEmu88Model() const;
+
+        // The 88emu part the editor edits, 0-15 (part 10 of the panel is index 9, the
+        // drum part). Parameters and program changes address this part; the device stays
+        // multitimbral on all 16 channels regardless.
+        int  getEmu88Part() const;
+        void setEmu88Part(int part);
+        // Replay every part's saved program onto the freshly booted board and select
+        // the part that was being edited. Used when restoring plugin state.
+        void restoreEmu88Parts(int part);
+        // Put every part back on program 0, matching a GS/GM reset.
+        void resetEmu88Parts();
+        // Send each part's cached program to the board on its own channel.
+        void sendEmu88PartPrograms();
+        // Set one part's program and send it to the board. Used by the per-part program
+        // parameters, so automating a part does not depend on the Part selector.
+        void setEmu88PartProgram(int part, int program);
+        // Track a program change the board already received (MIDI file, external gear):
+        // updates the cached view only, never echoes back to the device.
+        void onEmu88ProgramChange(int part, int program);
+        // CC0 / CC32 on a part, so a restore can put the variation back, not just the tone.
+        void onEmu88BankSelect(int part, int cc, int value);
+        // Select a variation bank on a part and send it, followed by the part's program:
+        // a bank select only takes effect on the next program change.
+        void setEmu88PartBank(int part, int cc, int value);
+        // Cached CC0 (cc 0) or CC32 (cc 32) of a part.
+        int getEmu88PartBank(int part, int cc) const;
+        // True while the part is a drum part: part 10 by default, or any part a GS
+        // "Use For Rhythm Part" message has switched over.
+        bool isEmu88PartRhythm(int part) const;
+        // Switch a part between melodic and drums, sending the GS message that does it.
+        // value: 0 melodic, 1-2 a drum map.
+        void setEmu88PartRhythm(int part, int value);
+        // Track a GS sysex the board already received. Only the messages that move state
+        // the plugin caches are read; everything else passes through untouched.
+        void onEmu88Sysex(const std::vector<uint8_t>& data);
+        // Name of a program on a part, from the loaded ROM: kits for part 10, tones
+        // otherwise. Empty if the ROM set is missing or the index has no entry.
+        std::string getEmu88ProgramName(int part, int program) const;
+        // Queue a raw SysEx message for the device.
+        void sendSysex(const std::vector<uint8_t>& data);
+
+        // Play a short built-in multitimbral phrase so the loaded board can be auditioned
+        // without external MIDI. Sequenced on the audio thread with sample offsets.
+        void triggerDemoSequence();
+
+        // ── MIDI file playback ──────────────────────────────────────────────
+        // Transport notes, matching the on-screen keyboard's octave numbering where
+        // middle C (60) is C4, so these are C1 and D1.
+        static constexpr int kMidiPlayNote = 24;
+        static constexpr int kMidiStopNote = 26;
+
+        // Parse and keep a MIDI file. The bytes are held so the song survives in the
+        // plugin state; .mid files are small enough to travel with the session.
+        bool loadMidiFile(std::vector<uint8_t>&& data, const std::string& fileName);
+        bool hasMidiFile() const { return !m_midiSongEvents.empty(); }
+        std::string getMidiFileName() const { return m_midiFileName; }
+        // Imported songs are copied into the 88emu data folder and listed here, newest
+        // first. Copies, not the original paths: an iOS pick is security-scoped and may
+        // not be reachable on the next launch.
+        static std::vector<std::string> getRecentMidiFiles();
+        static void addRecentMidiFile(const std::string& fileName);
+        bool loadRecentMidiFile(const std::string& fileName);
+
+        // ── Offline render ──────────────────────────────────────────────────
+        // Renders the loaded song on a background thread, 48 kHz stereo: WAV at 24 bit
+        // or MP3 at 320 kbps. Live audio is suspended for the duration: there is one
+        // board, and it cannot be at two transport positions at once.
+        // destUrl is what the save dialog returned. The render writes to a file the app
+        // owns and copies out at the end: a chosen iOS location is security-scoped and
+        // cannot be written to directly.
+        enum class RenderFormat : uint8_t { Wav, Mp3 };
+        bool startMidiRender(const juce::URL& destUrl, RenderFormat format);
+        void cancelMidiRender();
+        bool isMidiRendering() const { return m_renderActive.load(); }
+        // 0..1, for the editor's progress display.
+        float getMidiRenderProgress() const { return m_renderProgress.load(); }
+        // Both are safe from any thread; the audio thread picks the request up.
+        void playMidiFile();
+        void stopMidiFile();
+        bool isMidiFilePlaying() const { return m_midiPlayState.load() != MidiPlayState::Stopped; }
+        // 0..1 activity for one channel, for the editor's meter. The audio thread owns
+        // the decay, so reading this is free and the fall rate is independent of how
+        // often the editor repaints.
+        float getMidiChannelLevel(int channel) const;
+
+        // Message thread, periodic: mirrors the edited part and program into their
+        // host parameters so automation lanes show the real state.
+        void pollEmu88Params();
+
         // Ayumi chip variant: 0 = YM2149, 1 = AY-3-8910. No-op if not Ayumi.
         int  getAyumiEngine() const;
         void setAyumiEngine(int isAY);
@@ -141,6 +245,10 @@ namespace retromulator
 
         // ── Data folder helpers ─────────────────────────────────────────────
         static std::string getDataFolder();
+
+        // Creates a data subfolder. A 0-byte plain file at that path (left by a zip
+        // directory entry written as a file) is removed first, since it blocks the folder.
+        static bool ensureDataDirectory(const juce::File& dir);
         static std::string getSynthDataFolder(SynthType type);
         static std::string getLastLoadFolder(SynthType type);
         static void        setLastLoadFolder(SynthType type, const std::string& folder);
@@ -165,8 +273,11 @@ namespace retromulator
         // Wraps each synth-specific ROM loader — keeps GPL headers out of the editor.
         static bool isRomValid(SynthType type);
 
+        // Fill m_programNames with the booted board's capital tones read from its ROM.
+        void loadEmu88ToneNames();
+
         // Registers an additional directory for all ROM loaders to search.
-        static void addRomSearchPath(const std::string& path);
+        static void addRomSearchPath(const std::string& path, bool recursive = false);
 
         const std::vector<std::string>& getProgramNames() const { return m_programNames; }
 
@@ -190,9 +301,20 @@ namespace retromulator
         // State persistence (DAW save/load)
         void getStateInformation(juce::MemoryBlock& destData) override;
         void setStateInformation(const void* data, int sizeInBytes) override;
+        // Logic's AU host calls these as well as the pair above, and the base class
+        // answers them from the device's own state. This processor keeps all of its
+        // state in the block above, so the per-program pair would hand the device a
+        // foreign payload on top of the board that was just booted. No-ops.
+        void getCurrentProgramStateInformation(juce::MemoryBlock&) override {}
+        void setCurrentProgramStateInformation(const void*, int) override {}
 
-        // Called each audio block — used to resend bank message after DSP boot delay
-        void processBpm(float _bpm) override;
+        // The boot-settled replay (bank message, 88emu part programs, touched params).
+        // Driven from processBlock, not processBpm: the host only calls processBpm when it
+        // supplies a playhead with a BPM, and the standalone app has no playhead at all,
+        // so anything deferred to it never ran there.
+        void processDeferredResend();
+        // Watches program changes so the cached per-part programs follow the board.
+        void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
 
         int getSavedEditorWidth()  const { return m_savedEditorWidth; }
         int getSavedEditorHeight() const { return m_savedEditorHeight; }
@@ -217,6 +339,11 @@ namespace retromulator
         int  m_savedEditorHeight = 0;
         bool m_editorSizeDirty   = false; // true after setStateInformation restores a size
 
+        // Board this instance's session asked for, -1 when it did not name one. Held per
+        // instance so a restore never writes SynthFactory's shared board: an AU host
+        // restores several instances at once and they would overwrite each other's.
+        int m_restoredEmu88Model = -1;
+
         void loadEditorSizeFromSettings();
         void saveEditorSizeToSettings(int w, int h);
 
@@ -235,6 +362,83 @@ namespace retromulator
         int m_currentProgram = 0;
         int m_bankStride     = 1; // messages per logical program (>1 for JE-8086)
 
+        // 88emu is multitimbral: each part keeps its own tone, so switching parts must
+        // restore that part's program rather than reset the view to 0.
+        std::array<int, 16> m_emu88PartPrograms{};
+        // Bank select per part, as last seen on the wire. A GS variation tone is a bank,
+        // not a program, so restoring the program alone brings back the capital tone.
+        std::array<int, 16> m_emu88PartBankMsb{};
+        std::array<int, 16> m_emu88PartBankLsb{};
+        // GS "Use For Rhythm Part" (DT1 at 40 1x 15) per part: 0 melodic, 1-2 a drum map.
+        // Part 10 boots as a drum part, the rest melodic, and a song may move that around,
+        // so the tone list follows this rather than assuming channel 10.
+        // Index 9 is part 10, which boots as the drum part on every GS board.
+        std::array<int, 16> m_emu88PartRhythm{0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0};
+
+        // Demo sequence. Armed from the message thread, consumed by the audio thread.
+        // The programs the borrowed parts had when it was armed, one per demo channel,
+        // snapshotted so the audio thread never reads the message thread's cache.
+        // One entry per channel in g_demoChannels, in the same order.
+        std::array<int, 5> m_demoSeqRestore{};
+        std::atomic<bool> m_demoSeqArmed{false};
+        bool     m_demoSeqRunning = false;
+        uint64_t m_demoSeqSamples = 0;   // samples elapsed since the sequence started
+        size_t   m_demoSeqIndex   = 0;
+        void processDemoSequence(uint32_t numSamples, double sampleRate);
+        // Hands the parts the demo borrowed back to their cached programs.
+        void restoreDemoSequenceParts(uint32_t offset);
+
+        // ── MIDI file playback ──────────────────────────────────────────────
+        // The file's own bytes, kept for the plugin state, and the parsed events the
+        // audio thread plays. Both are written on the message thread only while
+        // playback is stopped, so the audio thread can read them without a lock.
+        std::vector<uint8_t> m_midiFileData;
+        std::string          m_midiFileName;
+        struct MidiSongEvent
+        {
+            double seconds;
+            std::vector<uint8_t> bytes;
+            uint8_t port;
+        };
+        std::vector<MidiSongEvent> m_midiSongEvents;
+
+        enum class MidiPlayState : uint8_t { Stopped, LeadIn, Playing };
+        std::atomic<MidiPlayState> m_midiPlayState{MidiPlayState::Stopped};
+        std::atomic<bool> m_midiPlayRequest{false};
+        std::atomic<bool> m_midiStopRequest{false};
+        // Negative while the lead-in runs, so a song's opening reset has time to settle
+        // before its first event. See resetMidiModule.
+        double m_midiPlayPos   = 0.0;
+        size_t m_midiEventIndex = 0;
+        void processMidiFile(uint32_t numSamples, double sampleRate);
+        // Per-channel note activity for the editor's meter, 0..1 in fixed point so the
+        // whole row is lock-free. Written by the audio thread only.
+        std::array<std::atomic<uint16_t>, 16> m_midiChannelLevels{};
+
+        // Offline render, on its own thread with live audio suspended.
+        std::unique_ptr<std::thread> m_renderThread;
+        std::atomic<bool>  m_renderActive{false};
+        std::atomic<bool>  m_renderCancel{false};
+        std::atomic<float> m_renderProgress{0.0f};
+        void renderMidiToWav(const juce::URL& destUrl, RenderFormat format);
+        // JUCE has no MP3 encoder (MP3AudioFormat::createWriterFor is a stub), so the
+        // rendered WAV is converted by libmp3lame, compiled in. See Mp3Encoder.h.
+        // All-notes-off, controller reset, audible volume and a GS reset on every
+        // channel. A song's tail can leave the board muted, so note-offs alone are not
+        // enough to hand it back playable.
+        void resetMidiModule(uint32_t offset);
+
+        // Both name lists of the loaded board, cached because the host asks for parameter
+        // text far too often to re-read the ROM each time. Rebuilt on boot and ROM switch.
+        std::vector<std::string> m_emu88ToneNames;
+        std::vector<std::string> m_emu88KitNames;
+        // Board the two lists above were read from, or -1 when nothing is cached. An
+        // async boot names the board before its device exists, so the cache is keyed by
+        // model rather than by "not empty": a switch must not leave the old board's
+        // names in place.
+        int m_emu88NamesModel = -1;
+        void cacheEmu88Names();
+
         // Send stride messages starting at index*stride to the device.
         void sendBankMessage(int index);
 
@@ -251,10 +455,24 @@ namespace retromulator
         static std::string copySysexToFolder(const std::string& sourcePath, SynthType targetType);
 
         // Set when a bank message needs to be re-sent once the DSP has warmed up.
-        // Consumed by processBpm (called each audio block) after setSynthType.
+        // Consumed by processDeferredResend (called each audio block) after setSynthType.
         // m_deviceBooted: once true, the boot-delay resend is never re-armed.
+        std::atomic<bool> m_isBooting{false};
+        std::atomic<bool> m_shuttingDown{false};
+        std::unique_ptr<std::thread> m_bootThread;
+        void joinBootThread();
         std::atomic<bool> m_pendingResend{false};
         int m_resendBlocksRemaining = 0;
         bool m_deviceBooted = false;
+
+        // 88emu: replay the per-part programs once the freshly booted board accepts MIDI.
+        std::atomic<bool> m_pendingEmu88PartResend{false};
+        // Set on the audio thread when incoming MIDI changed a part's program; the UI
+        // timer picks it up and refreshes the parameters.
+        std::atomic<bool> m_emu88PartProgramDirty{false};
+        // The audio thread changed what the shown part's programs are called: it became a
+        // drum part (or stopped being one), or its variation moved, so the tone list is
+        // rebuilt on the message thread, which is the only one allowed to touch it.
+        std::atomic<bool> m_emu88ToneListDirty{false};
     };
 }
