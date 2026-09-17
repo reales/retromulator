@@ -103,10 +103,8 @@ uint32_t synthLib::Resampler::processResample(const TAudioOutputs& _output, cons
 
 		if (inBufferUsed < inputLen)
 		{
-//			LOG("inBufferUsed " << inBufferUsed << " inputLen " << inputLen);
-			const auto remaining = inputLen - inBufferUsed;
-
-			m_tempOutput[i].erase(m_tempOutput[i].begin() + remaining, m_tempOutput[i].end());
+			// Speex left the tail unconsumed; drop the consumed prefix and carry the rest.
+			m_tempOutput[i].erase(m_tempOutput[i].begin(), m_tempOutput[i].begin() + inBufferUsed);
 		}
 		else
 		{
