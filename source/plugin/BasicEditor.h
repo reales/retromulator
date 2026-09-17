@@ -30,6 +30,9 @@ namespace retromulator
         static constexpr int kExportBankId     = 9997;
         static constexpr int kConvertToVirusB  = 9994;
         static constexpr int kConvertToVirusA  = 9993;
+        // 88emu boards occupy 9100+, one per model: the bank combo picks the board
+        // because the SC family has no bank files to list.
+        static constexpr int kEmu88BoardFirst  = 9100;
 
         juce::String m_lastSysexPath;
         juce::String m_lastBankFolder;

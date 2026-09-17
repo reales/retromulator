@@ -1,5 +1,8 @@
 #include "BasicEditor.h"
+#include "SynthFactory.h"
 #include "synthLib/midiToSysex.h"
+#include "ronaldo/88emu/88lib/deviceModel.h"
+#include "ronaldo/88emu/88lib/romloader.h"
 #include <climits>
 #include <fstream>
 
@@ -168,6 +171,30 @@ namespace retromulator
                 onConvertVirusBank('A');
                 return;
             }
+            // Switching board means a full reboot: the models differ in CPU, chipset and
+            // ROM set, so it is not a live parameter.
+            if(id >= kEmu88BoardFirst)
+            {
+                const int model = id - kEmu88BoardFirst;
+                if(model == m_proc.getEmu88Model())
+                    return;
+
+                SynthFactory::setEmu88Model(model);
+
+                juce::Component::SafePointer<BasicEditor> safe(this);
+                m_proc.setSynthTypeAsync(SynthType::Emu88, {}, [safe]
+                {
+                    if(!safe) return;
+                    if(safe->m_proc.isFirmwareMissing())
+                    {
+                        safe->onFirmwareMissing(SynthType::Emu88);
+                        return;
+                    }
+                    safe->updateStatus();
+                });
+                return;
+            }
+
             if(id <= 0) return;
 
             const int idx = id - 1;
@@ -280,6 +307,30 @@ namespace retromulator
                 m_bankCombo.clear(juce::dontSendNotification);
                 m_bankCombo.setText("by Joshua Price", juce::dontSendNotification);
             }
+            return;
+        }
+
+        // The SC family has no bank files: the combo picks which board boots, and only
+        // the boards whose ROM set is complete are offered.
+        if(type == SynthType::Emu88)
+        {
+            std::vector<int> boards;
+            for(uint32_t i = 0; i < emu88Lib::deviceModelCount(); ++i)
+                if(emu88Lib::RomLoader::isDeviceAvailable(static_cast<emu88Lib::DeviceModel>(i)))
+                    boards.push_back(static_cast<int>(i));
+
+            if(m_bankCombo.getNumItems() != static_cast<int>(boards.size()))
+            {
+                m_bankCombo.clear(juce::dontSendNotification);
+                for(const int b : boards)
+                    m_bankCombo.addItem(
+                        emu88Lib::getDeviceProfile(static_cast<emu88Lib::DeviceModel>(b)).displayName,
+                        kEmu88BoardFirst + b);
+            }
+
+            const int model = m_proc.getEmu88Model();
+            m_bankCombo.setSelectedId(model >= 0 ? kEmu88BoardFirst + model : 0,
+                                      juce::dontSendNotification);
             return;
         }
 
