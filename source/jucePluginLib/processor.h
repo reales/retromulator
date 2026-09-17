@@ -177,7 +177,12 @@ namespace pluginLib
 		bool acceptsMidi() const override;
 		bool producesMidi() const override;
 		bool isMidiEffect() const override;
+
+	protected:
+		// Subclasses that watch the incoming MIDI stream override this and call back up.
 		void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override;
+
+	private:
 		void processBlockBypassed(juce::AudioBuffer<float>& _buffer, juce::MidiBuffer& _midiMessages) override;
 
 #if !SYNTHLIB_DEMO_MODE

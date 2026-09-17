@@ -12,7 +12,9 @@ namespace pluginLib
 	{
 	public:
 		using ParamIndex = uint32_t;
-		using ControlType = uint16_t;
+		// 32 bit: besides CC/NRPN this also carries core-native indices such as the
+		// 88emu 24 bit Roland GS addresses.
+		using ControlType = uint32_t;
 		using MessageType = synthLib::MidiStatusByte;
 
 		static constexpr synthLib::MidiStatusByte NrpnType = MessageType::M_SYSTEMRESET;
@@ -30,9 +32,9 @@ namespace pluginLib
 
 		std::vector<ControlType> getControlTypes(MessageType _midiStatusByte, ParamIndex _paramIndex) const;
 
-		static constexpr uint16_t nrpn(const uint8_t _nrpnMsb, const uint8_t _nrpnLsb)
+		static constexpr ControlType nrpn(const uint8_t _nrpnMsb, const uint8_t _nrpnLsb)
 		{
-			return static_cast<uint16_t>(static_cast<uint16_t>(_nrpnMsb & 0x7f) << 7) | static_cast<uint16_t>(_nrpnLsb & 0x7f);
+			return static_cast<ControlType>(static_cast<ControlType>(_nrpnMsb & 0x7f) << 7) | static_cast<ControlType>(_nrpnLsb & 0x7f);
 		}
 
 	private:

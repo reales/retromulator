@@ -8,6 +8,11 @@
 
 namespace pluginLib
 {
+	namespace
+	{
+		constexpr uint32_t InvalidNrpn = 0xffffff;
+	}
+
 	ParameterDescriptions::ParameterDescriptions(const std::string& _jsonString)
 	{
 		m_errors = loadJson(_jsonString);
@@ -798,7 +803,7 @@ namespace pluginLib
 
 		uint8_t cc = 0xff;
 		uint8_t pp = 0xff;
-		uint16_t nrpn = 0xffff;
+		uint32_t nrpn = InvalidNrpn;
 
 		if(!ccStr.empty())
 		{
@@ -822,10 +827,12 @@ namespace pluginLib
 
 		if(!nrpnStr.empty())
 		{
-			nrpn = static_cast<uint16_t>(::strtol(nrpnStr.c_str(), nullptr, 16));
-			if(nrpn < 0 || nrpn > 0x3fff)
+			// Above $3fff the value is not a transmittable NRPN but a core-native
+			// index, such as an 88emu 24 bit Roland GS address.
+			nrpn = static_cast<uint32_t>(::strtoul(nrpnStr.c_str(), nullptr, 16));
+			if(nrpn >= InvalidNrpn)
 			{
-				_errors << "NRPN parameter needs to be in range $0-$3fff, param " << paramName << '\n';
+				_errors << "NRPN parameter needs to be in range $0-$fffffe, param " << paramName << '\n';
 				return;
 			}
 		}
@@ -850,7 +857,7 @@ namespace pluginLib
 		if(pp != 0xff)
 			m_controllerMap.add(synthLib::M_POLYPRESSURE, pp, paramIndex);
 
-		if(nrpn != 0xffff)
+		if(nrpn != InvalidNrpn)
 			m_controllerMap.add(ControllerMap::NrpnType, nrpn, paramIndex);
 	}
 }
