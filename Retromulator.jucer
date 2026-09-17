@@ -19,13 +19,13 @@
                extraCompilerFlags="-Wno-deprecated-declarations -include AppConfig.h"
                extraLinkerFlags="">
       <CONFIGURATIONS>
-        <CONFIGURATION name="Debug" isDebug="1" targetName="Retromulator" osxCompatibility="default"
+        <CONFIGURATION name="Debug" isDebug="1" targetName="Retromulator" osxCompatibility="12.0 SDK"
                        headerPath="../../source&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
                        binaryPath="Bin/MacOSX/Debug" enablePluginBinaryCopyStep="1"
                        vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
                        vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
                        auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"/>
-        <CONFIGURATION name="Release" isDebug="0" targetName="Retromulator" osxCompatibility="default"
+        <CONFIGURATION name="Release" isDebug="0" targetName="Retromulator" osxCompatibility="12.0 SDK"
                        headerPath="../../source&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
                        binaryPath="Bin/MacOSX/Release" stripLocalSymbols="1" linkTimeOptimisation="1"
                        enablePluginBinaryCopyStep="1" vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
