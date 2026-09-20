@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.6.0"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.7.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -399,6 +399,43 @@
     </GROUP>
     <GROUP id="openWurliLib" name="openWurliLib">
       <FILE id="ow001" name="device.cpp" compile="1" resource="0" file="source/openWurliLib/device.cpp"/>
+    </GROUP>
+    <GROUP id="trackerLib" name="trackerLib">
+      <FILE id="tm001" name="device.cpp" compile="1" resource="0" file="source/trackerLib/device.cpp"/>
+      <FILE id="tm002" name="device.h" compile="0" resource="0" file="source/trackerLib/device.h"/>
+      <FILE id="tm003" name="trackerEngine.cpp" compile="1" resource="0" file="source/trackerLib/trackerEngine.cpp"/>
+      <FILE id="tm004" name="trackerEngine.h" compile="0" resource="0" file="source/trackerLib/trackerEngine.h"/>
+      <GROUP id="trackerFt2" name="ft2">
+        <FILE id="tm005" name="ft2_replayer.c" compile="1" resource="0" file="source/trackerLib/ft2/ft2_replayer.c"/>
+        <FILE id="tm006" name="ft2_audio.c" compile="1" resource="0" file="source/trackerLib/ft2/ft2_audio.c"/>
+        <FILE id="tm007" name="ft2_tables.c" compile="1" resource="0" file="source/trackerLib/ft2/ft2_tables.c"/>
+        <FILE id="tm008" name="ft2_structs.c" compile="1" resource="0" file="source/trackerLib/ft2/ft2_structs.c"/>
+        <FILE id="tm009" name="ft2_stubs.c" compile="1" resource="0" file="source/trackerLib/ft2/ft2_stubs.c"/>
+        <FILE id="tm010" name="tm_ft2.c" compile="1" resource="0" file="source/trackerLib/ft2/tm_ft2.c"/>
+        <FILE id="tm011" name="ft2_mix.c" compile="1" resource="0" file="source/trackerLib/ft2/mixer/ft2_mix.c"/>
+        <FILE id="tm012" name="ft2_mix_interpolation.c" compile="1" resource="0" file="source/trackerLib/ft2/mixer/ft2_mix_interpolation.c"/>
+        <FILE id="tm013" name="ft2_silence_mix.c" compile="1" resource="0" file="source/trackerLib/ft2/mixer/ft2_silence_mix.c"/>
+        <FILE id="tm014" name="ft2_load_xm.c" compile="1" resource="0" file="source/trackerLib/ft2/modloaders/ft2_load_xm.c"/>
+        <FILE id="tm015" name="ft2_load_mod.c" compile="1" resource="0" file="source/trackerLib/ft2/modloaders/ft2_load_mod.c"/>
+      </GROUP>
+      <GROUP id="trackerSchism" name="schism">
+        <FILE id="tm016" name="csndfile.c" compile="1" resource="0" file="source/trackerLib/schism/player/csndfile.c"/>
+        <FILE id="tm017" name="effects.c" compile="1" resource="0" file="source/trackerLib/schism/player/effects.c"/>
+        <FILE id="tm018" name="filters.c" compile="1" resource="0" file="source/trackerLib/schism/player/filters.c"/>
+        <FILE id="tm019" name="fmpatches.c" compile="1" resource="0" file="source/trackerLib/schism/player/fmpatches.c"/>
+        <FILE id="tm020" name="mixer.c" compile="1" resource="0" file="source/trackerLib/schism/player/mixer.c"/>
+        <FILE id="tm021" name="mixutil.c" compile="1" resource="0" file="source/trackerLib/schism/player/mixutil.c"/>
+        <FILE id="tm022" name="snd_fm.c" compile="1" resource="0" file="source/trackerLib/schism/player/snd_fm.c"/>
+        <FILE id="tm023" name="sndmix.c" compile="1" resource="0" file="source/trackerLib/schism/player/sndmix.c"/>
+        <FILE id="tm024" name="tables.c" compile="1" resource="0" file="source/trackerLib/schism/player/tables.c"/>
+        <FILE id="tm025" name="s3m.c" compile="1" resource="0" file="source/trackerLib/schism/fmt/s3m.c"/>
+        <FILE id="tm028" name="it.c" compile="1" resource="0" file="source/trackerLib/schism/fmt/it.c"/>
+        <FILE id="tm029" name="iti.c" compile="1" resource="0" file="source/trackerLib/schism/fmt/iti.c"/>
+        <FILE id="tm030" name="its.c" compile="1" resource="0" file="source/trackerLib/schism/fmt/its.c"/>
+        <FILE id="tm031" name="compression.c" compile="1" resource="0" file="source/trackerLib/schism/fmt/compression.c"/>
+        <FILE id="tm026" name="tm_stubs.c" compile="1" resource="0" file="source/trackerLib/schism/tm_stubs.c"/>
+        <FILE id="tm027" name="tm_schism.c" compile="1" resource="0" file="source/trackerLib/schism/tm_schism.c"/>
+      </GROUP>
     </GROUP>
     <GROUP id="opl3Lib" name="opl3Lib">
       <FILE id="op001" name="opl3.c" compile="1" resource="0" file="source/opl3Lib/opl3.c"/>

@@ -40,7 +40,15 @@ namespace
         }
 
         juce::JUCEApplicationBase::createInstance = &juce_CreateApplication;
+
+       #if JUCE_WINDOWS
+        // JUCE only defines the argc/argv overload off Windows; there its own
+        // WinMain calls this no-arg one, which reads the real command line itself.
+        juce::ignoreUnused(argc, argv);
+        return juce::JUCEApplicationBase::main();
+       #else
         return juce::JUCEApplicationBase::main(argc, const_cast<const char**>(argv));
+       #endif
     }
 }
 

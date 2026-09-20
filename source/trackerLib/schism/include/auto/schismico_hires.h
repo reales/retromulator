@@ -1,0 +1,1 @@
+extern const char *_schism_icon_xpm_hires[];

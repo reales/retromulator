@@ -23,6 +23,7 @@ namespace opl3Lib { class Device; }
 namespace sidLib { class Device; }
 namespace ayumiLib { class Device; }
 namespace emu88Lib { class HardwareDevice; }
+namespace trackerLib { class Device; }
 
 namespace retromulator
 {
@@ -198,6 +199,8 @@ namespace retromulator
         // the decay, so reading this is free and the fall rate is independent of how
         // often the editor repaints.
         float getMidiChannelLevel(int channel) const;
+        // 16 MIDI channels, or one bar per module channel for the tracker (1..16).
+        int getMidiMeterBars() const;
 
         // Message thread, periodic: mirrors the edited part and program into their
         // host parameters so automation lanes show the real state.
@@ -297,6 +300,46 @@ namespace retromulator
         juce::AudioProcessorEditor* createEditor() override;
 
         const juce::String getName() const override { return "Retromulator"; }
+
+        // ── Trackermeister (tracker module player) ─────────────────────────
+        // The device owns the transport: note 12 plays, 14 stops, 13 and 15 step a
+        // playlist, and 24 upward start the song at order (note - 24). These mirror that
+        // for the editor.
+        trackerLib::Device* getTrackerDevice() const;
+        bool loadTrackerModule(std::vector<uint8_t>&& data, const std::string& fileName);
+        bool hasTrackerModule() const;
+        std::string getTrackerModuleName() const { return m_trackerFileName; }
+        // Modules are read from where they are; only the loaded one travels, in the plugin state.
+        bool loadTrackerModuleFile(const std::string& filePath, bool addToRecent = true);
+        // Playlist: full paths, kept in the plugin state. More than one entry is playlist
+        // mode, where a song stops at its end and the next one starts, wrapping around.
+        // Folders are scanned for modules and .m3u/.m3u8 files are expanded. Nothing
+        // starts playing; false if no entry could be loaded.
+        bool openTrackerPaths(const std::vector<std::string>& paths);
+        const std::vector<std::string>& getTrackerPlaylist() const { return m_trackerPlaylist; }
+        int  getTrackerPlaylistIndex() const { return m_trackerPlaylistIndex; }
+        bool isTrackerPlaylistMode() const { return m_trackerPlaylist.size() > 1; }
+        // Loads that entry and plays it. Entries that do not load are skipped forward.
+        bool playTrackerPlaylistIndex(int index);
+        bool stepTrackerPlaylist(int delta);
+        bool exportTrackerPlaylist(const juce::File& m3uFile) const;
+        static bool isTrackerPlaylistFile(const juce::File& file);
+        // Full paths, newest first.
+        static std::vector<std::string> getRecentTrackerModules();
+        static void addRecentTrackerModule(const std::string& filePath);
+        void playTracker();
+        void stopTracker();
+        // A host playhead tempo or incoming MIDI clock. The standalone app only has the latter.
+        bool hasTrackerHostTempo() const;
+        bool isTrackerPlaying() const;
+        // Scales the song so its initial BPM lands on the host tempo.
+        bool getTrackerTempoSync() const { return m_trackerTempoSync; }
+        void setTrackerTempoSync(bool enabled);
+        // Same thread, progress and cancel as the MIDI render. 512 tap sinc, song end stops it.
+        bool startTrackerRender(const juce::URL& destUrl, RenderFormat format);
+        // Every playlist entry into that folder, named "01 song.wav" in playlist order.
+        bool startTrackerPlaylistRender(const juce::File& folder, RenderFormat format);
+        void processBpm(float bpm) override;
 
         // State persistence (DAW save/load)
         void getStateInformation(juce::MemoryBlock& destData) override;
@@ -421,6 +464,28 @@ namespace retromulator
         std::atomic<bool>  m_renderCancel{false};
         std::atomic<float> m_renderProgress{0.0f};
         void renderMidiToWav(const juce::URL& destUrl, RenderFormat format);
+        void renderTrackerToWav(const juce::URL& destUrl, RenderFormat format);
+        void renderTrackerPlaylist(const juce::File& folder, RenderFormat format);
+        // One song of a render. The caller brackets it with begin/endTrackerRender.
+        void renderTrackerSong(const juce::URL& destUrl, RenderFormat format, float progressStart, float progressSpan);
+        bool beginTrackerRender();
+        void endTrackerRender();
+        bool m_trackerRenderSync = false;
+        // Encodes if asked, then copies the finished render out to the picked location.
+        void deliverRender(const juce::File& wavFile, const juce::URL& destUrl, RenderFormat format);
+
+        std::vector<uint8_t> m_trackerFileData;
+        std::string          m_trackerFileName;
+        bool                 m_trackerTempoSync = false;
+        void reloadTrackerModule();
+
+        std::vector<std::string> m_trackerPlaylist;
+        int                      m_trackerPlaylistIndex = 0;
+        void setTrackerPlaylist(std::vector<std::string>&& paths, int index);
+        bool loadTrackerPlaylistEntry(int index, int direction);
+        // Message thread: moves on when the device reports a finished song.
+        struct TrackerPlaylistTimer;
+        std::unique_ptr<TrackerPlaylistTimer> m_trackerPlaylistTimer;
         // JUCE has no MP3 encoder (MP3AudioFormat::createWriterFor is a stub), so the
         // rendered WAV is converted by libmp3lame, compiled in. See Mp3Encoder.h.
         // All-notes-off, controller reset, audible volume and a GS reset on every

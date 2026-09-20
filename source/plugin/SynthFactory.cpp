@@ -25,6 +25,7 @@
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
 #include "opl3Lib/device.h"
+#include "trackerLib/device.h"
 #include "sidLib/device.h"
 #include "ayumiLib/device.h"
 
@@ -222,6 +223,12 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new sidLib::Device(p);
+            }
+
+            case SynthType::Trackermeister:
+            {
+                synthLib::DeviceCreateParams p;
+                return new trackerLib::Device(p);
             }
 
             case SynthType::Ayumi:

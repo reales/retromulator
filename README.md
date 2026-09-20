@@ -18,13 +18,14 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
 | Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate |
 | Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII | H8/500 and SH-2 cycle-accurate |
+| Tracker modules (XM / MOD / S3M / IT) | Fasttracker 2 and Schism Tracker replayers |
 | Waldorf microQ | Motorola DSP 56300 cycle-accurate |
 | Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate |
 | Wurlitzer 200A (OpenWurli) | Physical modeling synthesis |
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, and AY-3-8910 cores are ROM-free.
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, AY-3-8910, and Tracker cores are ROM-free.
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
@@ -35,6 +36,8 @@ The **Yamaha OPL3** emulates the YMF262 FM synthesis chip (18 channels, 4-operat
 The **Commodore 64 SID** emulates the MOS 6581 / 8580 chip using the reSID engine with 3-voice polyphony, oldest-voice stealing, and a full 50 Hz macro playback engine (wavetable, pulsetable, filtertable, speedtable). It loads GoatTracker `.sng` banks and `.ins` standalone instruments, with live MIDI control via CC 1 (vibrato depth), CC 22 (pitch bend range, 1–48 semitones), CC 64 (sustain pedal), CC 71 (resonance), CC 74 (cutoff), and CC 75 (pulse width).
 
 The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
+
+The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer, and S3M and IT through the Schism Tracker player with Nuked OPL3 for Adlib instruments. The module owns the transport, driven by MIDI notes: play, stop, and step through a playlist. Folders and .m3u playlists are expanded, the song tempo can follow the host, and a module or a whole playlist renders offline to WAV or MP3 320 with 512 tap sinc interpolation.
 
 The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
 
@@ -53,6 +56,8 @@ The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libra
 - **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
 - **Dag Lem** — [reSID](https://en.wikipedia.org/wiki/ReSID), cycle-accurate MOS 6581 / 8580 SID emulation, GPL v2
 - **Lasse Öörni / Cadaver** — [GoatTracker](https://sourceforge.net/projects/goattracker2/) `.sng` / `.ins` format reference, GPL v2
+- **Olav Sorensen** — [Fasttracker 2 clone](https://github.com/8bitbubsy/ft2-clone), XM / MOD replayer, BSD 3-Clause
+- **Schism Tracker contributors** — [Schism Tracker](https://github.com/schismtracker/schismtracker), S3M / IT player, GPL v2
 - **Peter Sovietov** — [Ayumi](https://github.com/true-grue/ayumi), AY-3-8910 / YM2149 emulation, MIT license
 - **Timothy Lamb** — [Ym2149Synth](https://github.com/trash80/Ym2149Synth), voice engine and soft envelope firmware, GPL v3
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
@@ -64,4 +69,4 @@ JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 
 ## License
 
-The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** — see [LICENSE.txt](LICENSE.txt). The SFZero module is licensed under the **MIT License** — see [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE). The Nuked OPL3 engine is licensed under the **GNU Lesser General Public License v2.1**. The reSID engine is licensed under the **GNU General Public License v2.0**. The Ayumi engine is licensed under the **MIT License** — see [source/ayumiLib/AYUMI_LICENSE.txt](source/ayumiLib/AYUMI_LICENSE.txt). The LAME MP3 encoder is licensed under the **GNU Lesser General Public License v2** — see [source/lameLib/COPYING](source/lameLib/COPYING).
+The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** — see [LICENSE.txt](LICENSE.txt). The SFZero module is licensed under the **MIT License** — see [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE). The Nuked OPL3 engine is licensed under the **GNU Lesser General Public License v2.1**. The reSID engine is licensed under the **GNU General Public License v2.0**. The Ayumi engine is licensed under the **MIT License** — see [source/ayumiLib/AYUMI_LICENSE.txt](source/ayumiLib/AYUMI_LICENSE.txt). The Fasttracker 2 replayer is licensed under the **BSD 3-Clause License** — see [source/trackerLib/ft2/LICENSE](source/trackerLib/ft2/LICENSE). The Schism Tracker player is licensed under the **GNU General Public License v2.0** — see [source/trackerLib/schism/COPYING](source/trackerLib/schism/COPYING). The LAME MP3 encoder is licensed under the **GNU Lesser General Public License v2** — see [source/lameLib/COPYING](source/lameLib/COPYING).
