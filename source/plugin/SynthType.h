@@ -10,7 +10,7 @@ namespace retromulator
         MicroQ   = 2,   // Waldorf MicroQ / Q
         XT       = 3,   // Waldorf XT / Microwave XT
         NordN2X  = 4,   // Nord Lead A1X / A2X (N2X)
-        JE8086   = 5,   // Roland JD-800 / JD-990 (Ronaldo)
+        JE8086   = 5,   // Roland JP-8000 / JP-8080 (Ronaldo)
         DX7      = 6,   // Yamaha DX7 (VDX7)
         AkaiS1000 = 7,  // Akai S1000 (SFZero sample player)
         OpenWurli = 8,  // Wurlitzer 200A (OpenWurli physical model)
