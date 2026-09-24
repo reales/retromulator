@@ -70,6 +70,8 @@ typedef struct
 	const int16_t *leftEdgeTaps16;
 
 	const float *fSincLUT;
+	float *tmMixL, *tmMixR; // Trackermeister: where this voice mixes to
+	void *tmSinc; // tmSinc_t of the mixing thread
 	float fVolume, fCurrVolumeL, fCurrVolumeR, fVolumeLDelta, fVolumeRDelta, fTargetVolumeL, fTargetVolumeR;
 } voice_t;
 

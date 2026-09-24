@@ -191,7 +191,8 @@
       "isBipolar": false,
       "page": 0,
       "index": 3,
-      "class": "MultiOrSingle"
+      "class": "MultiOrSingle",
+      "default": 127
     },
     {
       "name": "slot_004",

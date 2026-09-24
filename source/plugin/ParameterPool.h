@@ -110,6 +110,11 @@ namespace retromulator
         static constexpr int kEmu88PartProgFirst    = 0x500000;
         static constexpr int kEmu88PartProgLast     = 0x50000f;
 
+        // Part block 40 1x yy (Tone Modify: cutoff, resonance, envelope, vibrato). The JSON
+        // stores x = 0; the edited part fills it in. Only the SC-8850 answers CC 71-78.
+        static constexpr int kEmu88PartGsFirst      = 0x401000;
+        static constexpr int kEmu88PartGsLast       = 0x4010ff;
+
         static constexpr int kEmu88GsAddressFirst   = 0x400000;
 
         // Message thread. Sets the slot bound to a native index without sending it to the device.
@@ -134,6 +139,10 @@ namespace retromulator
         std::vector<std::pair<uint8_t, uint8_t>> getTouchedValues() const;
         void restoreValues(const std::vector<std::pair<uint8_t, uint8_t>>& values);
 
+        // Point the slots at the patch just sent, so the host shows its values instead of
+        // defaults. Touched slots keep their edits. Nothing goes back to the device.
+        void syncFromPatch(const synthLib::SysexBufferList& messages);
+
         static const char* coreFileName(SynthType type);
 
     private:
@@ -147,6 +156,16 @@ namespace retromulator
             bool virusSysex = false;
             // Parameters address one part of a multitimbral device rather than the whole synth.
             bool perPart = false;
+
+            // Slot positions in the core's single dump ("dumpmap" in the JSON)
+            struct DumpTerm { uint8_t slot; uint16_t byte; uint8_t mask, shiftR, shiftL; };
+            struct DumpLayout
+            {
+                uint32_t size = 0;
+                std::vector<std::pair<uint32_t, uint8_t>> header;
+                std::vector<DumpTerm> terms;
+            };
+            std::vector<DumpLayout> dumps;
         };
 
         const CoreMap& mapFor(SynthType type);

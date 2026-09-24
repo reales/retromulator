@@ -737,7 +737,8 @@
       "isBipolar": false,
       "page": 0,
       "index": 3,
-      "class": "MultiOrSingle"
+      "class": "MultiOrSingle",
+      "default": 127
     },
     {
       "name": "slot_004",
@@ -2543,163 +2544,203 @@
     },
     {
       "param": "slot_008",
-      "cc": "8"
+      "cc": "8",
+      "nrpn": "17"
     },
     {
       "param": "slot_009",
-      "cc": "70"
+      "cc": "70",
+      "nrpn": "16"
     },
     {
       "param": "slot_010",
-      "cc": "25"
+      "cc": "25",
+      "nrpn": "1b"
     },
     {
       "param": "slot_011",
-      "cc": "26"
+      "cc": "26",
+      "nrpn": "1c"
     },
     {
       "param": "slot_012",
-      "cc": "27"
+      "cc": "27",
+      "nrpn": "1d"
     },
     {
       "param": "slot_013",
-      "cc": "4"
+      "cc": "4",
+      "nrpn": "1f"
     },
     {
       "param": "slot_014",
-      "cc": "76"
+      "cc": "76",
+      "nrpn": "20"
     },
     {
       "param": "slot_015",
-      "cc": "21"
+      "cc": "21",
+      "nrpn": "23"
     },
     {
       "param": "slot_016",
-      "cc": "77"
+      "cc": "77",
+      "nrpn": "24"
     },
     {
       "param": "slot_017",
-      "cc": "78"
+      "cc": "78",
+      "nrpn": "25"
     },
     {
       "param": "slot_018",
-      "cc": "79"
+      "cc": "79",
+      "nrpn": "26"
     },
     {
       "param": "slot_019",
-      "cc": "74"
+      "cc": "74",
+      "nrpn": "29"
     },
     {
       "param": "slot_020",
-      "cc": "71"
+      "cc": "71",
+      "nrpn": "2a"
     },
     {
       "param": "slot_021",
-      "cc": "30"
+      "cc": "30",
+      "nrpn": "2b"
     },
     {
       "param": "slot_022",
-      "cc": "19"
+      "cc": "19",
+      "nrpn": "2c"
     },
     {
       "param": "slot_023",
-      "cc": "81"
+      "cc": "81",
+      "nrpn": "2e"
     },
     {
       "param": "slot_024",
-      "cc": "82"
+      "cc": "82",
+      "nrpn": "2f"
     },
     {
       "param": "slot_025",
-      "cc": "83"
+      "cc": "83",
+      "nrpn": "30"
     },
     {
       "param": "slot_026",
-      "cc": "28"
+      "cc": "28",
+      "nrpn": "31"
     },
     {
       "param": "slot_027",
-      "cc": "29"
+      "cc": "29",
+      "nrpn": "32"
     },
     {
       "param": "slot_028",
-      "cc": "23"
+      "cc": "23",
+      "nrpn": "2d"
     },
     {
       "param": "slot_029",
-      "cc": "73"
+      "cc": "73",
+      "nrpn": "36"
     },
     {
       "param": "slot_030",
-      "cc": "75"
+      "cc": "75",
+      "nrpn": "37"
     },
     {
       "param": "slot_031",
-      "cc": "31"
+      "cc": "31",
+      "nrpn": "38"
     },
     {
       "param": "slot_032",
-      "cc": "72"
+      "cc": "72",
+      "nrpn": "39"
     },
     {
       "param": "slot_033",
-      "cc": "16"
+      "cc": "16",
+      "nrpn": "11"
     },
     {
       "param": "slot_034",
-      "cc": "20"
+      "cc": "20",
+      "nrpn": "12"
     },
     {
       "param": "slot_035",
-      "cc": "18"
+      "cc": "18",
+      "nrpn": "19"
     },
     {
       "param": "slot_036",
-      "cc": "17"
+      "cc": "17",
+      "nrpn": "13"
     },
     {
       "param": "slot_037",
-      "cc": "22"
+      "cc": "22",
+      "nrpn": "1a"
     },
     {
       "param": "slot_038",
-      "cc": "7"
+      "cc": "7",
+      "nrpn": "33"
     },
     {
       "param": "slot_039",
-      "cc": "80"
+      "cc": "80",
+      "nrpn": "34"
     },
     {
       "param": "slot_040",
-      "cc": "92"
+      "cc": "92",
+      "nrpn": "3b"
     },
     {
       "param": "slot_041",
-      "cc": "95"
+      "cc": "95",
+      "nrpn": "3c"
     },
     {
       "param": "slot_042",
-      "cc": "5"
+      "cc": "5",
+      "nrpn": "46"
     },
     {
       "param": "slot_043",
-      "cc": "24"
+      "cc": "24",
+      "nrpn": "35"
     },
     {
       "param": "slot_044",
-      "cc": "93"
+      "cc": "93",
+      "nrpn": "3e"
     },
     {
       "param": "slot_045",
-      "cc": "12"
+      "cc": "12",
+      "nrpn": "40"
     },
     {
       "param": "slot_046",
-      "cc": "13"
+      "cc": "13",
+      "nrpn": "41"
     },
     {
       "param": "slot_047",
-      "cc": "94"
+      "cc": "94",
+      "nrpn": "42"
     }
   ]
 }

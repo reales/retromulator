@@ -3,8 +3,10 @@
 #include "HeadlessProcessor.h"
 #include "jucePluginLib/processor.h"
 #include "nord/n2x/n2xLib/n2xmiditypes.h"
+#include "ronaldo/je8086/jeLib/state.h"
 #include "synthLib/midiTypes.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -32,6 +34,12 @@ namespace retromulator
             default:
                 return false;
             }
+        }
+
+        // Pedal switches (CC 64-69): on is 64 and up, so a 0/1 slot must not send 1.
+        bool isSwitchSlot(const SlotParameter::Binding& b)
+        {
+            return b.desc && b.desc->isBool && b.cc >= 64 && b.cc <= 69;
         }
     }
 
@@ -180,6 +188,7 @@ namespace retromulator
         case SynthType::SID:       return "sid";
         case SynthType::Ayumi:     return "ayumi";
         case SynthType::Emu88:     return "emu88";
+        case SynthType::Trackermeister: return "tracker";
         default:                   return "generic";
         }
     }
@@ -313,6 +322,24 @@ namespace retromulator
             if(!natives.empty())
                 b.native = static_cast<int>(natives.front());
         }
+
+        if(const auto* dumps = juce::JSON::parse(juce::String(json))["dumpmap"].getDynamicObject())
+        {
+            for(const auto& packet : dumps->getProperties())
+            {
+                CoreMap::DumpLayout layout;
+                layout.size = static_cast<uint32_t>(static_cast<int>(packet.value["size"]));
+                if(const auto* header = packet.value["header"].getArray())
+                    for(const auto& h : *header)
+                        layout.header.emplace_back(static_cast<uint32_t>(static_cast<int>(h[0])), static_cast<uint8_t>(static_cast<int>(h[1])));
+                if(const auto* terms = packet.value["params"].getArray())
+                    for(const auto& t : *terms)
+                        layout.terms.push_back({static_cast<uint8_t>(static_cast<int>(t[0])), static_cast<uint16_t>(static_cast<int>(t[1])),
+                                                static_cast<uint8_t>(static_cast<int>(t[2])), static_cast<uint8_t>(static_cast<int>(t[3])),
+                                                static_cast<uint8_t>(static_cast<int>(t[4]))});
+                map->dumps.push_back(std::move(layout));
+            }
+        }
         return map;
     }
 
@@ -367,7 +394,9 @@ namespace retromulator
 
         const bool fromOutside = ev.source == synthLib::MidiEventSource::Host
                               || ev.source == synthLib::MidiEventSource::Physical;
-        m_slots[static_cast<size_t>(slot)]->setFromMidi(ev.c, fromOutside);
+        auto* s = m_slots[static_cast<size_t>(slot)];
+        const bool isSwitch = status == synthLib::M_CONTROLCHANGE && isSwitchSlot(s->binding());
+        s->setFromMidi(isSwitch ? (ev.c >= 64 ? 1 : 0) : ev.c, fromOutside);
         return true;
     }
 
@@ -405,6 +434,13 @@ namespace retromulator
             {
                 sendEmu88Native(b.native, value);
                 return;
+            }
+            else if(map && map->type == SynthType::JE8086)
+            {
+                // DT1 into the temp performance's Upper patch: plain CCs need the firmware's
+                // Tx/Rx Edit switch and a matching part channel. Upper only, MIDI in is 31.25k.
+                ev.sysex = jeLib::State::createParameterChange(jeLib::PerformanceData::PatchUpper,
+                                                               static_cast<jeLib::Patch>(b.native), value);
             }
             else
                 return;
@@ -444,11 +480,12 @@ namespace retromulator
         }
         else
         {
-            // The part channel is 0 for every mono-timbral core, so this is the old behaviour
-            // there; on 88emu it addresses the part the editor is showing.
-            ev.a = static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | getPartChannel());
+            // Only 88emu addresses the part the editor is showing; the part channel outlives
+            // a core switch, so the other cores must not read it.
+            const auto channel = map && map->perPart ? getPartChannel() : 0;
+            ev.a = static_cast<uint8_t>(synthLib::M_CONTROLCHANGE | channel);
             ev.b = static_cast<uint8_t>(b.cc);
-            ev.c = value;
+            ev.c = isSwitchSlot(b) && value ? uint8_t(127) : value;
         }
 
         m_processor.addMidiEvent(ev);
@@ -483,14 +520,23 @@ namespace retromulator
         {
             // Roland DT1: address is three 7-bit bytes, checksum makes the sum of
             // address+data a multiple of 128.
-            const auto a1 = static_cast<uint8_t>((native >> 16) & 0x7f);
-            const auto a2 = static_cast<uint8_t>((native >>  8) & 0x7f);
-            const auto a3 = static_cast<uint8_t>( native        & 0x7f);
-            const auto sum = static_cast<uint8_t>((a1 + a2 + a3 + value) & 0x7f);
+            auto address = native;
+            auto data = value;
+            if(native >= kEmu88PartGsFirst && native <= kEmu88PartGsLast)
+            {
+                // GS block order: part 10 is block 0, parts 1-9 are 1-9. Tone Modify takes -50..+50.
+                const int part = getPartChannel();
+                address |= (part == 9 ? 0 : part < 9 ? part + 1 : part) << 8;
+                data = static_cast<uint8_t>(juce::jlimit(0x0e, 0x72, static_cast<int>(value)));
+            }
+            const auto a1 = static_cast<uint8_t>((address >> 16) & 0x7f);
+            const auto a2 = static_cast<uint8_t>((address >>  8) & 0x7f);
+            const auto a3 = static_cast<uint8_t>( address        & 0x7f);
+            const auto sum = static_cast<uint8_t>((a1 + a2 + a3 + data) & 0x7f);
             const auto chk = static_cast<uint8_t>((128 - sum) & 0x7f);
 
             synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
-            ev.sysex = {0xf0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, value, chk, 0xf7};
+            ev.sysex = {0xf0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, data, chk, 0xf7};
             ev.a = 0xf0;
             m_processor.addMidiEvent(ev);
             return;
@@ -628,6 +674,125 @@ namespace retromulator
                                  static_cast<uint8_t>(juce::jlimit(0, 127, s->getMidiValue())));
         }
         return out;
+    }
+
+    namespace
+    {
+        using SlotValues = std::array<int, ParameterPool::NumSlots>;
+
+        // DX7 packed voice (VMEM, 128 bytes) to VCED parameter numbers, which the dx7
+        // slots use as their native index.
+        void unpackDx7Voice(const uint8_t* v, std::array<int, 155>& vced)
+        {
+            for(int op = 0; op < 6; ++op)   // both store OP6 first
+            {
+                const uint8_t* s = v + op * 17;
+                int* d = vced.data() + op * 21;
+                for(int i = 0; i < 11; ++i)
+                    d[i] = s[i];            // EG rates/levels, break point, depths
+                d[11] = s[11] & 3;          d[12] = (s[11] >> 2) & 3;
+                d[13] = s[12] & 7;          d[20] = (s[12] >> 3) & 15;
+                d[14] = s[13] & 3;          d[15] = (s[13] >> 2) & 7;
+                d[16] = s[14];
+                d[17] = s[15] & 1;          d[18] = (s[15] >> 1) & 31;
+                d[19] = s[16];
+            }
+            for(int i = 0; i < 8; ++i)
+                vced[126 + i] = v[102 + i];
+            vced[134] = v[110] & 31;
+            vced[135] = v[111] & 7;         vced[136] = (v[111] >> 3) & 1;
+            for(int i = 0; i < 4; ++i)
+                vced[137 + i] = v[112 + i];
+            vced[141] = v[116] & 1;         vced[142] = (v[116] >> 1) & 7;
+            vced[143] = (v[116] >> 4) & 7;
+            vced[144] = v[117];
+        }
+    }
+
+    void ParameterPool::syncFromPatch(const synthLib::SysexBufferList& messages)
+    {
+        const auto* map = m_current.load(std::memory_order_acquire);
+        if(!map || !map->descriptions)
+            return;
+
+        SlotValues values;
+        values.fill(-1);
+
+        const auto setNative = [&](const int native, const int value)
+        {
+            for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
+                if(map->bindings[i].desc && map->bindings[i].native == native)
+                    values[i] = value;
+        };
+
+        for(const auto& m : messages)
+        {
+            if(map->type == SynthType::DX7)
+            {
+                // a bank entry is one packed voice; a single voice dump carries VCED as is
+                std::array<int, 155> vced{};
+                if(m.size() == 128)
+                    unpackDx7Voice(m.data(), vced);
+                else if(m.size() == 163 && m[0] == 0xf0 && m[1] == 0x43 && m[3] == 0x00)
+                    for(size_t i = 0; i < vced.size(); ++i)
+                        vced[i] = m[6 + i];
+                else
+                    continue;
+                for(size_t i = 0; i < vced.size(); ++i)
+                    setNative(static_cast<int>(i), vced[i]);
+                continue;
+            }
+
+            if(map->type == SynthType::JE8086)
+            {
+                // Roland DT1. Patch data starts at a user patch (02 bb pp oo) or at the
+                // Upper patch of a performance (01/03 xx 40 oo); the offset is the native.
+                if(m.size() < 12 || m[0] != 0xf0 || m[1] != 0x41 || m[5] != 0x12)
+                    continue;
+                int offset;
+                if(m[6] == 0x02)
+                    offset = ((m[8] & 1) << 7) | m[9];
+                else if((m[6] == 0x01 || m[6] == 0x03) && m[8] == 0x40)
+                    offset = m[9];
+                else
+                    continue;
+                for(size_t i = 10; i + 2 < m.size(); ++i)
+                    setNative(offset + static_cast<int>(i - 10), m[i]);
+                continue;
+            }
+
+            // Cores with an upstream single dump layout. Firmware versions add or drop bytes
+            // at the end (names, padding), so the header decides and only shared bytes are read.
+            for(const auto& layout : map->dumps)
+            {
+                if(m.size() + 64 < layout.size || layout.size + 64 < m.size())
+                    continue;
+                if(!std::all_of(layout.header.begin(), layout.header.end(),
+                                [&](const auto& h) { return h.first < m.size() && m[h.first] == h.second; }))
+                    continue;
+                const auto limit = std::min<size_t>(layout.size, m.size()) - 1;
+                for(const auto& t : layout.terms)
+                {
+                    if(t.byte >= limit || t.slot >= NumSlots)
+                        continue;
+                    auto& v = values[t.slot];
+                    v = (v < 0 ? 0 : v) | (((m[t.byte] << t.shiftL) >> t.shiftR) & t.mask);
+                }
+                break;
+            }
+        }
+
+        m_mirroring.store(true, std::memory_order_release);
+        for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
+        {
+            auto* s = m_slots[i];
+            if(values[i] < 0 || s->isTouched() || !s->binding().desc)
+                continue;
+            if(s->getMidiValue() != values[i])
+                s->setFromMidi(values[i], true);
+            s->clearTouched();
+        }
+        m_mirroring.store(false, std::memory_order_release);
     }
 
     void ParameterPool::restoreValues(const std::vector<std::pair<uint8_t, uint8_t>>& values)

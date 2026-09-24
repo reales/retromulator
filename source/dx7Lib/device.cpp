@@ -119,7 +119,7 @@ void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synth
 		const int generated = fillBuffer(m_internalBuffer, toGenerate);
 
 		// MIDI volume filtering and expression
-		const float mv = std::min(1.0f, m_dx7.midiVolTab[m_dx7.midiVolume] + m_midiExpression + 1e-18f);
+		const float mv = m_dx7.midiVolTab[m_dx7.midiVolume] * m_midiExpression + 1e-18f;
 
 		const int toCopy = std::min(generated, toGenerate);
 		for(int i = 0; i < toCopy && outPos < _samples; i++, outPos++)

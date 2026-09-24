@@ -140,7 +140,9 @@ namespace baseLib::filesystem
 
                 try
                 {
-	                _files.push_back(file.u8string());
+	                // C++20 makes u8string() return std::u8string, so copy the bytes over.
+	                const auto u8 = file.u8string();
+	                _files.emplace_back(reinterpret_cast<const char*>(u8.data()), u8.size());
                 }
                 catch(std::exception& e)
                 {

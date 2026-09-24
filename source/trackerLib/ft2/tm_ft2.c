@@ -28,6 +28,7 @@ extern int16_t (*loaderSysReq)(int16_t, const char *, const char *, void (*)(voi
 
 // ft2_audio.c
 extern bool tmSetupAudioBuffers(uint32_t maxFreq);
+extern bool tmSetupSincRender(void);
 extern void tmSetTempoScale(double scale);
 extern void tmResetSongEnd(bool stopAtEnd);
 extern bool tmSongHasEnded(void);
@@ -253,6 +254,9 @@ void tmFt2SetSinc512(bool enabled)
 {
 	if (!tmInitDone)
 		return;
+
+	if (enabled && !tmSetupSincRender())
+		enabled = false;
 
 	const uint8_t type = enabled ? INTERPOLATION_SINC256 : INTERPOLATION_SINC16;
 	config.interpolation = type;

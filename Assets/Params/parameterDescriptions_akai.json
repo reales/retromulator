@@ -191,7 +191,8 @@
       "isBipolar": false,
       "page": 0,
       "index": 3,
-      "class": "MultiOrSingle"
+      "class": "MultiOrSingle",
+      "default": 127
     },
     {
       "name": "slot_004",
@@ -209,13 +210,13 @@
     },
     {
       "name": "slot_005",
-      "displayName": "Portamento",
+      "displayName": "",
       "min": 0,
-      "max": 1,
-      "toText": "off_on",
-      "isPublic": true,
-      "isDiscrete": true,
-      "isBool": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
+      "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 5,
@@ -223,11 +224,11 @@
     },
     {
       "name": "slot_006",
-      "displayName": "Breath",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -237,11 +238,11 @@
     },
     {
       "name": "slot_007",
-      "displayName": "Foot",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -1950,18 +1951,6 @@
     {
       "param": "slot_004",
       "cc": "64"
-    },
-    {
-      "param": "slot_005",
-      "cc": "65"
-    },
-    {
-      "param": "slot_006",
-      "cc": "2"
-    },
-    {
-      "param": "slot_007",
-      "cc": "4"
     },
     {
       "param": "slot_008",

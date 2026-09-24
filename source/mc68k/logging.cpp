@@ -16,19 +16,8 @@
 
 namespace mc68k
 {
-	namespace
-	{
-		LogFunc g_logFunc = nullptr;
-	}
-
-	void setLogFunc(LogFunc _func)
-	{
-		g_logFunc = _func;
-	}
-
 	void logToConsole( const std::string& _s )
 	{
-		if(g_logFunc) { g_logFunc(_s); return; }
 		output_string( (_s + "\n").c_str() );
 	}
 }

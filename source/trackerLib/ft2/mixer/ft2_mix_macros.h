@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include "../ft2_audio.h"
+#include "../../tmSinc.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -25,15 +26,15 @@
 
 #define GET_MIXER_VARS \
 	const uint64_t delta = v->delta; \
-	fMixBufferL = audio.fMixBufferL + bufferPos; \
-	fMixBufferR = audio.fMixBufferR + bufferPos; \
+	fMixBufferL = v->tmMixL + bufferPos; \
+	fMixBufferR = v->tmMixR + bufferPos; \
 	position = v->position; \
 	positionFrac = v->positionFrac;
 
 #define GET_MIXER_VARS_RAMP \
 	const uint64_t delta = v->delta; \
-	fMixBufferL = audio.fMixBufferL + bufferPos; \
-	fMixBufferR = audio.fMixBufferR + bufferPos; \
+	fMixBufferL = v->tmMixL + bufferPos; \
+	fMixBufferR = v->tmMixR + bufferPos; \
 	fVolumeLDelta = v->fVolumeLDelta; \
 	fVolumeRDelta = v->fVolumeRDelta; \
 	position = v->position; \
@@ -263,45 +264,33 @@
 /*               256-TAP WINDOWED-SINC INTERPOLATION (runtime)             */
 /* ----------------------------------------------------------------------- */
 
-#define WINDOWED_SINC256_INTERPOLATION(s, f, scale) \
+#define WINDOWED_SINC256_INTERPOLATION(s, f, scale, bits) \
 { \
-	double fractional_part = (double)(uint32_t)(f) * (1.0 / 4294967296.0); \
-	if (fractional_part == 0.0) fractional_part = 1.0e-25; \
-	double speed = (double)v->delta * (1.0 / 4294967296.0); \
-	speed = fabs(speed); \
-	if (speed == 0.0) speed = 1.0e-25; \
-	double c_cutoff = 1.0 / speed; \
-	if (c_cutoff > 1.0) c_cutoff = 1.0; \
-	double acc = 0.0; \
-	for (int32_t k = -MAX_LEFT_TAPS; k <= MAX_RIGHT_TAPS; k++) \
-	{ \
-		const double x = (double)k - fractional_part; \
-		const double window = 0.5 + 0.5*cos(x * (M_PI / 256.0)); \
-		const double sinc = sin(c_cutoff*M_PI*x) / (M_PI*x); \
-		acc += (double)s[k] * sinc * window; \
-	} \
-	fSample = (float)(acc * (1.0 / scale)); \
+	tmSinc_t *ts = (tmSinc_t *)v->tmSinc; \
+	const double cutoff = tmSincCutoff((double)v->delta * (1.0 / 4294967296.0)); \
+	tmSincWeights(ts, -MAX_LEFT_TAPS, MAX_RIGHT_TAPS, (double)(uint32_t)(f) * (1.0 / 4294967296.0), cutoff); \
+	fSample = (float)(tmSincDot##bits(&(s)[-MAX_LEFT_TAPS], ts->w, MAX_TAPS) * (1.0 / scale)); \
 }
 
 #define RENDER_8BIT_SMP_S256INTRP \
-	WINDOWED_SINC256_INTERPOLATION(smpPtr, positionFrac, 128) \
+	WINDOWED_SINC256_INTERPOLATION(smpPtr, positionFrac, 128, 8) \
 	*fMixBufferL++ += fSample * fVolumeL; \
 	*fMixBufferR++ += fSample * fVolumeR;
 
 #define RENDER_16BIT_SMP_S256INTRP \
-	WINDOWED_SINC256_INTERPOLATION(smpPtr, positionFrac, 32768) \
+	WINDOWED_SINC256_INTERPOLATION(smpPtr, positionFrac, 32768, 16) \
 	*fMixBufferL++ += fSample * fVolumeL; \
 	*fMixBufferR++ += fSample * fVolumeR;
 
 #define RENDER_8BIT_SMP_S256INTRP_TAP_FIX  \
 	smpTapPtr = (smpPtr <= leftEdgePtr) ? (int8_t *)&v->leftEdgeTaps8[(int32_t)(smpPtr-loopStartPtr)] : (int8_t *)smpPtr; \
-	WINDOWED_SINC256_INTERPOLATION(smpTapPtr, positionFrac, 128) \
+	WINDOWED_SINC256_INTERPOLATION(smpTapPtr, positionFrac, 128, 8) \
 	*fMixBufferL++ += fSample * fVolumeL; \
 	*fMixBufferR++ += fSample * fVolumeR;
 
 #define RENDER_16BIT_SMP_S256INTRP_TAP_FIX \
 	smpTapPtr = (smpPtr <= leftEdgePtr) ? (int16_t *)&v->leftEdgeTaps16[(int32_t)(smpPtr-loopStartPtr)] : (int16_t *)smpPtr; \
-	WINDOWED_SINC256_INTERPOLATION(smpTapPtr, positionFrac, 32768) \
+	WINDOWED_SINC256_INTERPOLATION(smpTapPtr, positionFrac, 32768, 16) \
 	*fMixBufferL++ += fSample * fVolumeL; \
 	*fMixBufferR++ += fSample * fVolumeR;
 

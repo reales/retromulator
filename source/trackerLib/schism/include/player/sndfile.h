@@ -621,6 +621,7 @@ typedef struct song_voice {
 	uint32_t row_voleffect, row_volparam;
 	uint32_t row_effect, row_param;
 	uint32_t active_macro, last_instrument;
+	void *tm_sinc; // Trackermeister: tmSinc_t of the mixing thread
 } song_voice_t;
 
 typedef struct song_channel {
@@ -776,6 +777,7 @@ typedef struct song {
 	uint32_t tempo_factor; // ditto
 	double tm_tempo_scale; // Trackermeister: host tempo / song tempo
 	double tm_tick_frac;
+	void *tm_mix_workers; // per-thread state of the parallel sinc mix
 	int32_t repeat_count; // 0 = first playback, etc. (note: set to -1 to stop instead of looping)
 
 	uint8_t row_highlight_major;
@@ -969,6 +971,7 @@ void csf_forget_history(song_t *csf); // Send the edit log down the memory hole.
 void adlib_patch_apply(song_sample_t *smp, int32_t patchnum);
 
 /* calculate VU meters */
+void csf_tm_free_mix_workers(song_t *csf);
 void csf_calculate_vu_meters(song_t *csf, float vus[MAX_CHANNELS]);
 
 void csf_update_playing_instrument(song_t *csf, int i_changed);

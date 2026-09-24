@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.7.0"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.7.3"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -15,22 +15,24 @@
               cppLanguageStandard="20">
   <EXPORTFORMATS>
     <XCODE_MAC targetFolder="Builds/MacOSX-GPL" objCExtraSuffix="Retromulator_xc"
-               postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1&#10;OUTSIDE_SPEEX=1&#10;FLOATING_POINT=1&#10;RANDOM_PREFIX=synthLib_speex&#10;JUCE_USE_CUSTOM_PLUGIN_STANDALONE_ENTRYPOINT=1"
+               postbuildCommand="" iosDevelopmentTeamID="96UBP6BN94" extraDefs="JUCE_REPORT_APP_USAGE=0&#10;JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_MODAL_LOOPS_PERMITTED=1&#10;ASMJIT_STATIC=1&#10;JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1&#10;OUTSIDE_SPEEX=1&#10;FLOATING_POINT=1&#10;RANDOM_PREFIX=synthLib_speex&#10;JUCE_USE_CUSTOM_PLUGIN_STANDALONE_ENTRYPOINT=1&#10;JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1"
                extraCompilerFlags="-Wno-deprecated-declarations -include AppConfig.h"
-               extraLinkerFlags="">
+               extraLinkerFlags="" customPList="&lt;plist version=&quot;1.0&quot;&gt;&lt;dict&gt;&lt;key&gt;CFBundleDocumentTypes&lt;/key&gt;&lt;array&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Tracker Module&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Default&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;xm&lt;/string&gt;&lt;string&gt;mod&lt;/string&gt;&lt;string&gt;s3m&lt;/string&gt;&lt;string&gt;it&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Playlist&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;m3u&lt;/string&gt;&lt;string&gt;m3u8&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;MIDI File&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;mid&lt;/string&gt;&lt;string&gt;midi&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Folder&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;LSItemContentTypes&lt;/key&gt;&lt;array&gt;&lt;string&gt;public.folder&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;/array&gt;&lt;/dict&gt;&lt;/plist&gt;">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" targetName="Retromulator" osxCompatibility="12.0 SDK"
                        headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
                        binaryPath="Bin/MacOSX/Debug" enablePluginBinaryCopyStep="1"
                        vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
                        vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
-                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"/>
+                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"
+                       macOSDeploymentTarget="12.0"/>
         <CONFIGURATION name="Release" isDebug="0" targetName="Retromulator" osxCompatibility="12.0 SDK"
                        headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
                        binaryPath="Bin/MacOSX/Release" stripLocalSymbols="1" linkTimeOptimisation="1"
                        enablePluginBinaryCopyStep="1" vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
                        vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
-                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"/>
+                       auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"
+                       macOSDeploymentTarget="12.0"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
         <MODULEPATH id="juce_audio_basics" path="../Modules"/>
@@ -66,6 +68,7 @@
       <FILE id="pj0011" name="parameterDescriptions_wurli.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_wurli.json"/>
       <FILE id="pj0012" name="parameterDescriptions_xt.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_xt.json"/>
           <FILE id="pj0013" name="parameterDescriptions_emu88.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_emu88.json"/>
+      <FILE id="pj0014" name="parameterDescriptions_tracker.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_tracker.json"/>
       </GROUP>
     <GROUP id="plugin" name="plugin">
       <FILE id="f0001" name="HeadlessProcessor.h" compile="0" resource="0"
@@ -90,6 +93,8 @@
             <FILE id="cli001" name="RenderCli.h" compile="0" resource="0" file="source/plugin/RenderCli.h"/>
             <FILE id="cli002" name="RenderCli.cpp" compile="1" resource="0" file="source/plugin/RenderCli.cpp"/>
             <FILE id="cli003" name="StandaloneMain.cpp" compile="1" resource="0" file="source/plugin/StandaloneMain.cpp"/>
+            <FILE id="cli004" name="StandaloneApp.cpp" compile="1" resource="0" file="source/plugin/StandaloneApp.cpp"/>
+            <FILE id="plo001" name="PlaylistOrder.h" compile="0" resource="0" file="source/plugin/PlaylistOrder.h"/>
       </GROUP>
     <GROUP id="jucePluginLib" name="jucePluginLib">
       <FILE id="jp001" name="bypassBuffer.cpp" compile="1" resource="0" file="source/jucePluginLib/bypassBuffer.cpp"/>
@@ -233,6 +238,7 @@
             file="source/virusLib/microcontroller.cpp"/>
       <FILE id="vl015" name="microcontrollerTypes.cpp" compile="1" resource="0"
             file="source/virusLib/microcontrollerTypes.cpp"/>
+      <FILE id="vl015b" name="presetConverter.cpp" compile="1" resource="0" file="source/virusLib/presetConverter.cpp"/>
       <FILE id="vl016" name="midiFileToRomData.cpp" compile="1" resource="0"
             file="source/virusLib/midiFileToRomData.cpp"/>
       <FILE id="vl017" name="romfile.cpp" compile="1" resource="0" file="source/virusLib/romfile.cpp"/>

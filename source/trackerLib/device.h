@@ -25,6 +25,7 @@ namespace trackerLib
 		static constexpr int kFirstPosNote  = 24;	// note 24 + n starts at order n
 		static constexpr int kMeterColumns  = 16;
 		static constexpr int kMaxChannels   = 64;
+		static constexpr float kSilenceSeconds = 5.0f;
 
 		explicit Device(const synthLib::DeviceCreateParams& _params);
 		~Device() override;
@@ -73,7 +74,8 @@ namespace trackerLib
 		void setOfflineRender(bool _enabled);
 		bool hasEnded() const { return m_ended.load(); }
 
-		// Playlist: a live song stops at its end too, and says so once.
+		// Playlist: a live song stops at its end too, and says so once. So does a song that
+		// has been silent for kSilenceSeconds after making sound, when it would stop at its end.
 		void setStopAtEnd(bool _enabled)	{ m_stopAtEnd = _enabled; }
 		bool consumeSongFinished()			{ return m_songFinished.exchange(false); }
 		// Previous / next notes since the last call: -1, +1 or 0.
@@ -103,6 +105,7 @@ namespace trackerLib
 		void applyTempo();
 		void onMidiClock(uint32_t _offset);
 		void updateMeters(size_t _samples);
+		bool isSilentTooLong(size_t _frames);
 		void setupBassMix();
 		void processBassMix(float* _interleaved, size_t _frames);
 
@@ -113,6 +116,8 @@ namespace trackerLib
 		bool m_atTop = true;		// stopped: the position reads as the song start
 		bool m_offline = false;
 		double m_tempoScale = 1.0;
+		bool m_heardSound = false;
+		size_t m_silentFrames = 0;
 
 		std::vector<Command> m_commands;	// audio thread only
 		std::vector<float> m_buffer;
@@ -130,6 +135,7 @@ namespace trackerLib
 		std::atomic<bool> m_playing{false};
 		std::atomic<bool> m_ended{false};
 		std::atomic<bool> m_stopAtEnd{false};
+		std::atomic<float> m_gain{1.0f};	// CC 7
 		std::atomic<bool> m_songFinished{false};
 		std::atomic<int> m_playlistStep{0};
 		std::atomic<bool> m_tempoSync{false};

@@ -8,7 +8,7 @@
 
 #include "dspassert.h"
 
-#include "semaphore.h"
+#include "dspsemaphore.h"
 
 namespace dsp56k
 {

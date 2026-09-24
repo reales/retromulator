@@ -1,10 +1,13 @@
 #pragma once
 
-#ifdef __cplusplus
-#  include <cstdint>
-#else
-#  include <stdint.h>
+// This file shadows the system <endian.h> on the include path.
+#if defined(__linux__) && defined(__GNUC__)
+#	include_next <endian.h>
 #endif
+
+#ifdef __cplusplus
+
+#include <cstdint>
 
 #if defined(_MSC_VER)   // MSVC
 #	include <intrin.h>
@@ -15,10 +18,9 @@
 #	define BSWAP16(x) __builtin_bswap16(x)
 #else
 #	define BSWAP32(x) (((x) >> 24) | (((x) >> 8) & 0x0000FF00) | (((x) << 8) & 0x00FF0000) | ((x) << 24))
-#	define BSWAP16(x) ((uint16_t)((uint16_t)(x) >> 8) | (uint16_t)((uint16_t)(x) << 8))
+#	define BSWAP16(x) uint16_t((uint16_t(x) >> 8) | (uint16_t(x) << 8))
 #endif
 
-#ifdef __cplusplus
 namespace mc68k
 {
 	enum class HostEndian : uint8_t
@@ -51,4 +53,5 @@ namespace mc68k
 		return _nativeEndianVal;
 	}
 }
+
 #endif // __cplusplus

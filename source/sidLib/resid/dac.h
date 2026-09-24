@@ -62,9 +62,9 @@ template<int bits> class DAC
 public:
   // FIXME: This constructor is a temporary workaround for filter.cc,
   // which currently depends on dynamic initialization.
-  DAC<bits>() {}
+  DAC() {}
 
-  constexpr DAC<bits>(double _2R_div_R, bool term)
+  constexpr DAC(double _2R_div_R, bool term)
   {
     double vbit[bits];
 

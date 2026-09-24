@@ -102,6 +102,7 @@ private:
 
 	// Parameters (MIDI CC mapped)
 	float m_volume = 1.0f;
+	float m_expression = 1.0f;
 	float m_tremoloDepth = 0.5f;
 	float m_speakerCharacter = 0.0f;
 	bool m_mlpEnabled = true;

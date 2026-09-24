@@ -131,6 +131,7 @@ void csf_free(song_t *csf)
 {
 	if (csf) {
 		csf_destroy(csf);
+		csf_tm_free_mix_workers(csf);
 		free(csf);
 	}
 }

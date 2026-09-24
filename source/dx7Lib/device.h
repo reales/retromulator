@@ -73,7 +73,7 @@ private:
 
 	// Volume
 	float m_volume = 1.0f;
-	float m_midiExpression = 0.0f;
+	float m_midiExpression = 1.0f;
 
 	// MIDI velocity curve
 	uint8_t m_midiVelocity[128] = {0};

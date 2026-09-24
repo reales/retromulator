@@ -9,7 +9,7 @@
 #include "opcodetypes.h"
 #include "timers.h"
 #include "types.h"
-#include "dsp56kBase/staticArray.h"
+#include <array>
 
 namespace dsp56k
 {
@@ -150,7 +150,7 @@ namespace dsp56k
 		// _____________________________________________________________________________
 		// members
 		//
-		StaticArray<TWord,XIO_Reserved_High_Last - XIO_Reserved_High_First + 1>	m_mem;
+		std::array<TWord, XIO_Reserved_High_Last - XIO_Reserved_High_First + 1>	m_mem;
 
 		// _____________________________________________________________________________
 		// implementation
@@ -202,7 +202,7 @@ namespace dsp56k
 		// _____________________________________________________________________________
 		// members
 		//
-		StaticArray<TWord,XIO_Reserved_High_Last - XIO_Reserved_High_First + 1>	m_mem;
+		std::array<TWord, XIO_Reserved_High_Last - XIO_Reserved_High_First + 1>	m_mem;
 
 		// _____________________________________________________________________________
 		// implementation
@@ -256,7 +256,7 @@ namespace dsp56k
 
 		uint32_t exec() noexcept { return MaxDelayCycles; }
 
-		void reset() override {}
+		void reset() override;
 
 		Esai& getEsai() { return m_esai; }
 

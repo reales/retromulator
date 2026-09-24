@@ -347,7 +347,7 @@ void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synth
 
 	for (size_t i = 0; i < _samples; i++)
 	{
-		const double volume = static_cast<double>(m_volume);
+		const double volume = static_cast<double>(m_volume * m_expression);
 		m_speaker.setCharacter(static_cast<double>(m_speakerCharacter));
 
 		// Volume pot (audio taper: vol²)
@@ -404,8 +404,10 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			setTremoloDepth(static_cast<float>(_ev.c) / 127.0f);
 			break;
 		case 7: // Volume
-		case 11: // Expression
 			setVolume(static_cast<float>(_ev.c) / 127.0f);
+			break;
+		case 11: // Expression, scales the volume
+			m_expression = static_cast<float>(_ev.c) / 127.0f;
 			break;
 		case 64: // Sustain pedal
 			m_sustainPedal = (_ev.c >= 64);
@@ -424,7 +426,7 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			}
 			break;
 		case 70: // Sound Controller 1 → pickup (MLP) on/off
-			setMlpEnabled(_ev.c >= 64);
+			setMlpEnabled(_ev.c == 1 || _ev.c >= 64);	// 0/1 from the switch parameter
 			break;
 		case 71: // Sound Controller 2 → speaker character
 			setSpeakerCharacter(static_cast<float>(_ev.c) / 127.0f);

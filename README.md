@@ -16,7 +16,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
 | Commodore 64 SID 6581 / 8580 | reSID cycle-accurate |
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
-| Roland JP-8000 (JE-8086) | Motorola DSP 56300 cycle-accurate |
+| Roland JP-8000 (JE-8086) | H8S CPU and 4x ESP ASIC cycle-accurate |
 | Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII | H8/500 and SH-2 cycle-accurate |
 | Tracker modules (XM / MOD / S3M / IT) | Fasttracker 2 and Schism Tracker replayers |
 | Waldorf microQ | Motorola DSP 56300 cycle-accurate |
@@ -37,9 +37,11 @@ The **Commodore 64 SID** emulates the MOS 6581 / 8580 chip using the reSID engin
 
 The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
 
-The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer, and S3M and IT through the Schism Tracker player with Nuked OPL3 for Adlib instruments. The module owns the transport, driven by MIDI notes: play, stop, and step through a playlist. Folders and .m3u playlists are expanded, the song tempo can follow the host, and a module or a whole playlist renders offline to WAV or MP3 320 with 512 tap sinc interpolation.
+The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer, and S3M and IT through the Schism Tracker player with Nuked OPL3 for Adlib instruments. The module owns the transport, driven by MIDI notes: play, stop, and step through a playlist, which can be shuffled or stop at its end. A song ends after five seconds of silence. Folders and .m3u playlists are expanded, the song tempo can follow the host, and a module or a whole playlist renders offline to WAV or MP3 320 with 512 tap sinc interpolation.
 
-The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
+The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file, or a playlist of them, can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
+
+The standalone app opens modules, .m3u playlists and .mid files handed over by the OS (double click, Open With, or a drop on the dock icon) and switches to the matching core.
 
 ## How it differs from Gearmulator
 

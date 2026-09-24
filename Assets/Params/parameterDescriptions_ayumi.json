@@ -131,10 +131,6 @@
       "126",
       "127"
     ],
-    "off_on": [
-      "Off",
-      "On"
-    ],
     "vl_int_7": [
       "0",
       "1",
@@ -144,24 +140,6 @@
       "5",
       "6",
       "7"
-    ],
-    "vl_int_15": [
-      "0",
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-      "6",
-      "7",
-      "8",
-      "9",
-      "10",
-      "11",
-      "12",
-      "13",
-      "14",
-      "15"
     ]
   },
   "parameterdescriptions": [
@@ -223,13 +201,13 @@
     },
     {
       "name": "slot_004",
-      "displayName": "Sustain",
+      "displayName": "",
       "min": 0,
-      "max": 1,
-      "toText": "off_on",
-      "isPublic": true,
-      "isDiscrete": true,
-      "isBool": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
+      "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 4,
@@ -237,13 +215,13 @@
     },
     {
       "name": "slot_005",
-      "displayName": "Portamento",
+      "displayName": "",
       "min": 0,
-      "max": 1,
-      "toText": "off_on",
-      "isPublic": true,
-      "isDiscrete": true,
-      "isBool": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
+      "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 5,
@@ -337,10 +315,10 @@
       "name": "slot_012",
       "displayName": "Volume Env Shape",
       "min": 0,
-      "max": 15,
-      "toText": "vl_int_15",
+      "max": 127,
+      "toText": "vl_int_127",
       "isPublic": true,
-      "isDiscrete": true,
+      "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
       "page": 0,
@@ -365,10 +343,10 @@
       "name": "slot_014",
       "displayName": "Pitch Env Shape",
       "min": 0,
-      "max": 15,
-      "toText": "vl_int_15",
+      "max": 127,
+      "toText": "vl_int_127",
       "isPublic": true,
-      "isDiscrete": true,
+      "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
       "page": 0,
@@ -1959,14 +1937,6 @@
     }
   ],
   "controllerMap": [
-    {
-      "param": "slot_004",
-      "cc": "64"
-    },
-    {
-      "param": "slot_005",
-      "cc": "65"
-    },
     {
       "param": "slot_008",
       "cc": "1"

@@ -471,6 +471,14 @@ namespace akaiLib
                 }
                 return true;
             }
+            // JUCE only tells voices already playing; idle ones would start the next note
+            // with a stale mod/volume/pan/expression. Voices keep these per voice.
+            if(_ev.b == 1 || _ev.b == 7 || _ev.b == 10 || _ev.b == 11)
+            {
+                for(int i = 0; i < m_synth->getNumVoices(); ++i)
+                    m_synth->getVoice(i)->controllerMoved(_ev.b, _ev.c);
+                return true;
+            }
             m_synth->handleController(channel, _ev.b, _ev.c);
             return true;
 

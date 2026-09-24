@@ -6,8 +6,6 @@
 
 namespace mc68k
 {
-	typedef void (*LogFunc)(const std::string&);
-	void setLogFunc(LogFunc _func);
 	void logToConsole( const std::string& _s );
 }
 

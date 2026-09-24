@@ -17,6 +17,8 @@
 #include "ft2_audioselector.h"
 #include "mixer/ft2_mix.h"
 #include "mixer/ft2_silence_mix.h"
+#include "../tmSinc.h"
+#include "../tmParallel.h"
 
 // hide POSIX warnings
 #ifdef _MSC_VER
@@ -35,6 +37,8 @@ static voice_t voice[MAX_CHANNELS * 2];
 static double tmTempoScale = 1.0;
 static uint32_t tmMaxTickSamples;
 static float *tmVoiceBufL, *tmVoiceBufR;
+static float *tmChanBufL, *tmChanBufR; // one buffer per channel for the parallel mix
+static void *tmSincState[TM_PARALLEL_MAX_WORKERS];
 static float tmVoicePeak[MAX_CHANNELS];
 
 // globalized
@@ -481,58 +485,129 @@ static void sendSamples32BitFloatStereo(void *stream, uint32_t sampleBlockLength
 	}
 }
 
-static void doChannelMixing(int32_t bufferPosition, int32_t samplesToMix)
+// Trackermeister: a channel is its voice plus the volume ramp fadeout-voice
+static void tmMixChannel(int32_t i, float *fDstL, float *fDstR, void *sinc, int32_t bufferPosition, int32_t samplesToMix)
 {
-	voice_t *v = voice; // normal voices
-	voice_t *r = &voice[MAX_CHANNELS]; // volume ramp fadeout-voices
+	voice_t *v = &voice[i]; // normal voice
+	voice_t *r = &voice[MAX_CHANNELS+i]; // volume ramp fadeout-voice
 
 	const int32_t mixOffsetBias = 3 * NUM_INTERPOLATORS * 2; // 3 = loop types (off/fwd/pingpong), 2 = bit depths (8-bit/16-bit)
 
-	// Trackermeister: each voice is mixed on its own first, so the meter reads its audio
-	float *fMainL = audio.fMixBufferL, *fMainR = audio.fMixBufferR;
-	const bool meter = (tmVoiceBufL != NULL && tmVoiceBufR != NULL);
+	v->tmMixL = r->tmMixL = fDstL;
+	v->tmMixR = r->tmMixR = fDstR;
+	v->tmSinc = r->tmSinc = sinc;
 
-	for (int32_t i = 0; i < song.numChannels; i++, v++, r++)
+	if (v->active)
 	{
-		if (!v->active && !r->active)
+		const bool volRampFlag = (v->volumeRampLength > 0);
+		if (!volRampFlag && v->fCurrVolumeL == 0.0f && v->fCurrVolumeR == 0.0f)
+			silenceMixRoutine(v, samplesToMix);
+		else
+			mixFuncTab[((int32_t)volRampFlag * mixOffsetBias) + v->mixFuncOffset](v, bufferPosition, samplesToMix);
+	}
+
+	if (r->active)
+		mixFuncTab[mixOffsetBias + r->mixFuncOffset](r, bufferPosition, samplesToMix);
+}
+
+// adds a channel's own buffer to the main mix, the meter reads its audio on the way
+static void tmSumChannel(int32_t i, float *fL, float *fR, int32_t bufferPosition, int32_t samplesToMix)
+{
+	float fPeak = tmVoicePeak[i];
+	float *fMainL = audio.fMixBufferL + bufferPosition, *fMainR = audio.fMixBufferR + bufferPosition;
+	fL += bufferPosition;
+	fR += bufferPosition;
+
+	for (int32_t j = 0; j < samplesToMix; j++)
+	{
+		const float fAbs = fabsf(fL[j]) + fabsf(fR[j]); // a centred voice reads full scale
+		if (fAbs > fPeak) fPeak = fAbs;
+		fMainL[j] += fL[j];
+		fMainR[j] += fR[j];
+		fL[j] = fR[j] = 0.0f;
+	}
+	tmVoicePeak[i] = fPeak;
+}
+
+static void *tmGetSinc(int32_t worker)
+{
+	if (tmSincState[worker] == NULL)
+		tmSincState[worker] = tmSincCreate();
+	return tmSincState[worker];
+}
+
+typedef struct tmMixJob_t
+{
+	int32_t bufferPosition, samplesToMix, channels[MAX_CHANNELS];
+} tmMixJob_t;
+
+static void tmMixJob(int32_t index, int32_t worker, void *ctx)
+{
+	const tmMixJob_t *job = (const tmMixJob_t *)ctx;
+	const int32_t i = job->channels[index];
+	void *sinc = tmGetSinc(worker);
+	if (sinc != NULL)
+		tmMixChannel(i, tmChanBufL + (size_t)i * tmMaxTickSamples, tmChanBufR + (size_t)i * tmMaxTickSamples, sinc, job->bufferPosition, job->samplesToMix);
+}
+
+bool tmSetupSincRender(void)
+{
+	if (tmChanBufL == NULL)
+		tmChanBufL = (float *)calloc((size_t)MAX_CHANNELS * tmMaxTickSamples, sizeof (float));
+	if (tmChanBufR == NULL)
+		tmChanBufR = (float *)calloc((size_t)MAX_CHANNELS * tmMaxTickSamples, sizeof (float));
+	return tmChanBufL != NULL && tmChanBufR != NULL && tmGetSinc(0) != NULL;
+}
+
+static void doChannelMixing(int32_t bufferPosition, int32_t samplesToMix)
+{
+	const bool sinc256 = (audio.interpolationType == INTERPOLATION_SINC256);
+
+	// offline render: the channels are mixed in parallel, then summed in order
+	if (sinc256 && tmChanBufL != NULL && tmChanBufR != NULL)
+	{
+		tmMixJob_t job;
+		int32_t count = 0;
+
+		job.bufferPosition = bufferPosition;
+		job.samplesToMix = samplesToMix;
+		for (int32_t i = 0; i < song.numChannels; i++)
+		{
+			if (voice[i].active || voice[MAX_CHANNELS+i].active)
+				job.channels[count++] = i;
+		}
+
+		tmParallelFor(count, tmMixJob, &job);
+
+		for (int32_t j = 0; j < count; j++)
+		{
+			const int32_t i = job.channels[j];
+			tmSumChannel(i, tmChanBufL + (size_t)i * tmMaxTickSamples, tmChanBufR + (size_t)i * tmMaxTickSamples, bufferPosition, samplesToMix);
+		}
+		return;
+	}
+
+	// each voice is mixed on its own first, so the meter reads its audio
+	const bool meter = (tmVoiceBufL != NULL && tmVoiceBufR != NULL);
+	void *sinc = sinc256 ? tmGetSinc(0) : NULL;
+	if (sinc256 && sinc == NULL)
+		return;
+
+	for (int32_t i = 0; i < song.numChannels; i++)
+	{
+		if (!voice[i].active && !voice[MAX_CHANNELS+i].active)
 			continue;
 
 		if (meter)
 		{
-			audio.fMixBufferL = tmVoiceBufL;
-			audio.fMixBufferR = tmVoiceBufR;
+			tmMixChannel(i, tmVoiceBufL, tmVoiceBufR, sinc, bufferPosition, samplesToMix);
+			tmSumChannel(i, tmVoiceBufL, tmVoiceBufR, bufferPosition, samplesToMix);
 		}
-
-		if (v->active)
+		else
 		{
-			const bool volRampFlag = (v->volumeRampLength > 0);
-			if (!volRampFlag && v->fCurrVolumeL == 0.0f && v->fCurrVolumeR == 0.0f)
-				silenceMixRoutine(v, samplesToMix);
-			else
-				mixFuncTab[((int32_t)volRampFlag * mixOffsetBias) + v->mixFuncOffset](v, bufferPosition, samplesToMix);
-		}
-
-		if (r->active) // volume ramp fadeout-voice
-			mixFuncTab[mixOffsetBias + r->mixFuncOffset](r, bufferPosition, samplesToMix);
-
-		if (meter)
-		{
-			float fPeak = tmVoicePeak[i];
-			float *fL = tmVoiceBufL + bufferPosition, *fR = tmVoiceBufR + bufferPosition;
-			for (int32_t j = 0; j < samplesToMix; j++)
-			{
-				const float fAbs = fabsf(fL[j]) + fabsf(fR[j]); // a centred voice reads full scale
-				if (fAbs > fPeak) fPeak = fAbs;
-				fMainL[bufferPosition + j] += fL[j];
-				fMainR[bufferPosition + j] += fR[j];
-				fL[j] = fR[j] = 0.0f;
-			}
-			tmVoicePeak[i] = fPeak;
+			tmMixChannel(i, audio.fMixBufferL, audio.fMixBufferR, sinc, bufferPosition, samplesToMix);
 		}
 	}
-
-	audio.fMixBufferL = fMainL;
-	audio.fMixBufferR = fMainR;
 }
 
 // used for song-to-WAV renderer

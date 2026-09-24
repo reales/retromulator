@@ -1,8 +1,18 @@
 #include "trackerEngine.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
 
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+#include <emmintrin.h>
+#endif
+
+#include "tmParallel.h"
 #include "ft2/tm_ft2.h"
 #include "schism/tm_schism.h"
 
@@ -11,6 +21,155 @@ namespace trackerLib
 	namespace
 	{
 		std::atomic<bool> g_ft2Taken{false};
+
+		void cpuRelax()
+		{
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+			_mm_pause();
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+			__asm__ volatile("yield");
+#else
+			std::this_thread::yield();
+#endif
+		}
+
+		// Mixes the voices of one tick in parallel. Only used by the offline render,
+		// threads start on the first job and live as long as any engine does.
+		class Pool
+		{
+		public:
+			~Pool()
+			{
+				{
+					std::lock_guard lock(m_mutex);
+					m_quit = true;
+					++m_generation;
+				}
+				m_wake.notify_all();
+				for(auto& t : m_threads)
+					t.join();
+			}
+
+			void run(const int32_t _count, const tmParallelFn _fn, void* _ctx)
+			{
+				std::unique_lock run(m_runMutex, std::try_to_lock);
+
+				if(_count < 2 || !run.owns_lock() || !start())
+				{
+					for(int32_t i = 0; i < _count; ++i)
+						_fn(i, 0, _ctx);
+					return;
+				}
+
+				Job job{_fn, _ctx, _count};
+				{
+					std::lock_guard lock(m_mutex);
+					m_job = &job;
+					++m_generation;
+				}
+				m_wake.notify_all();
+
+				work(job, 0);
+
+				std::unique_lock lock(m_mutex);
+				m_job = nullptr;
+				m_done.wait(lock, [this] { return m_inJob == 0; });
+			}
+
+		private:
+			struct Job
+			{
+				tmParallelFn fn;
+				void* ctx;
+				int32_t count;
+				std::atomic<int32_t> next{0};
+			};
+
+			static void work(Job& _job, const int32_t _worker)
+			{
+				for(;;)
+				{
+					const auto i = _job.next.fetch_add(1);
+					if(i >= _job.count)
+						return;
+					_job.fn(i, _worker, _job.ctx);
+				}
+			}
+
+			bool start()
+			{
+				if(!m_started)
+				{
+					m_started = true;
+					const auto total = std::clamp<int32_t>(static_cast<int32_t>(std::thread::hardware_concurrency()), 1, TM_PARALLEL_MAX_WORKERS);
+					for(int32_t w = 1; w < total; ++w)
+						m_threads.emplace_back([this, w] { workerMain(w); });
+				}
+				return !m_threads.empty();
+			}
+
+			void workerMain(const int32_t _worker)
+			{
+				uint64_t seen = 0;
+
+				for(;;)
+				{
+					// ticks follow each other closely during a render: spin before sleeping
+					const auto spinEnd = std::chrono::steady_clock::now() + std::chrono::microseconds(200);
+					while(m_generation.load(std::memory_order_relaxed) == seen && std::chrono::steady_clock::now() < spinEnd)
+					{
+						for(int i = 0; i < 32; ++i)
+							cpuRelax();
+					}
+
+					Job* job;
+					{
+						std::unique_lock lock(m_mutex);
+						m_wake.wait(lock, [&] { return m_generation.load() != seen; });
+						seen = m_generation.load();
+						if(m_quit)
+							return;
+						job = m_job;
+						if(job)
+							++m_inJob;
+					}
+
+					if(!job)
+						continue;
+
+					work(*job, _worker);
+
+					std::lock_guard lock(m_mutex);
+					if(--m_inJob == 0)
+						m_done.notify_one();
+				}
+			}
+
+			std::mutex m_runMutex;	// one job at a time
+			std::mutex m_mutex;
+			std::condition_variable m_wake, m_done;
+			std::vector<std::thread> m_threads;
+			std::atomic<uint64_t> m_generation{0};
+			Job* m_job = nullptr;
+			int32_t m_inJob = 0;
+			bool m_started = false;
+			bool m_quit = false;
+		};
+
+		std::mutex g_poolMutex;
+		std::weak_ptr<Pool> g_pool;
+
+		std::shared_ptr<Pool> acquirePool()
+		{
+			std::lock_guard lock(g_poolMutex);
+			auto pool = g_pool.lock();
+			if(!pool)
+			{
+				pool = std::make_shared<Pool>();
+				g_pool = pool;
+			}
+			return pool;
+		}
 
 		class Ft2Engine final : public Engine
 		{
@@ -41,6 +200,7 @@ namespace trackerLib
 			bool isAmigaPanned() const override		{ return m_mod; }
 
 		private:
+			std::shared_ptr<Pool> m_pool = acquirePool();
 			bool m_mod;
 		};
 
@@ -68,6 +228,7 @@ namespace trackerLib
 			std::string getTitle() const override	{ return tmSchismGetTitle(m_song); }
 
 		private:
+			std::shared_ptr<Pool> m_pool = acquirePool();
 			tm_schism_t* m_song;
 		};
 
@@ -117,4 +278,22 @@ namespace trackerLib
 
 		return std::make_unique<Ft2Engine>(mod);
 	}
+}
+
+extern "C" void tmParallelFor(const int32_t _count, const tmParallelFn _fn, void* _ctx)
+{
+	std::shared_ptr<trackerLib::Pool> pool;
+	{
+		std::lock_guard lock(trackerLib::g_poolMutex);
+		pool = trackerLib::g_pool.lock();
+	}
+
+	if(pool)
+	{
+		pool->run(_count, _fn, _ctx);
+		return;
+	}
+
+	for(int32_t i = 0; i < _count; ++i)
+		_fn(i, 0, _ctx);
 }

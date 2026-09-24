@@ -1,5 +1,5 @@
 {
-  "name": "wurli",
+  "name": "tracker",
   "valuelists": {
     "vl_int_127": [
       "0",
@@ -130,31 +130,16 @@
       "125",
       "126",
       "127"
-    ],
-    "off_on": [
-      "Off",
-      "On"
-    ],
-    "vl_pickup": {
-      "0": "Off",
-      "1": "On"
-    },
-    "vl_velocity_curve": {
-      "0": "Linear",
-      "1": "Soft",
-      "2": "Medium",
-      "3": "Hard",
-      "4": "Fixed"
-    }
+    ]
   },
   "parameterdescriptions": [
     {
       "name": "slot_000",
-      "displayName": "",
+      "displayName": "Volume",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": false,
+      "isPublic": true,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -192,28 +177,27 @@
     },
     {
       "name": "slot_003",
-      "displayName": "Expression",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 3,
-      "class": "MultiOrSingle",
-      "default": 127
+      "class": "MultiOrSingle"
     },
     {
       "name": "slot_004",
-      "displayName": "Sustain",
+      "displayName": "",
       "min": 0,
-      "max": 1,
-      "toText": "off_on",
-      "isPublic": true,
-      "isDiscrete": true,
-      "isBool": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
+      "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 4,
@@ -263,13 +247,13 @@
     },
     {
       "name": "slot_008",
-      "displayName": "Pickup",
+      "displayName": "",
       "min": 0,
-      "max": 1,
-      "toText": "vl_pickup",
-      "isPublic": true,
-      "isDiscrete": true,
-      "isBool": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
+      "isBool": false,
       "isBipolar": false,
       "page": 0,
       "index": 8,
@@ -277,11 +261,11 @@
     },
     {
       "name": "slot_009",
-      "displayName": "Speaker Character",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -291,11 +275,11 @@
     },
     {
       "name": "slot_010",
-      "displayName": "Tremolo Depth",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -305,11 +289,11 @@
     },
     {
       "name": "slot_011",
-      "displayName": "Volume",
+      "displayName": "",
       "min": 0,
       "max": 127,
       "toText": "vl_int_127",
-      "isPublic": true,
+      "isPublic": false,
       "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
@@ -319,12 +303,12 @@
     },
     {
       "name": "slot_012",
-      "displayName": "Velocity Curve",
+      "displayName": "",
       "min": 0,
-      "max": 4,
-      "toText": "vl_velocity_curve",
-      "isPublic": true,
-      "isDiscrete": true,
+      "max": 127,
+      "toText": "vl_int_127",
+      "isPublic": false,
+      "isDiscrete": false,
       "isBool": false,
       "isBipolar": false,
       "page": 0,
@@ -1944,32 +1928,8 @@
   ],
   "controllerMap": [
     {
-      "param": "slot_003",
-      "cc": "11"
-    },
-    {
-      "param": "slot_004",
-      "cc": "64"
-    },
-    {
-      "param": "slot_008",
-      "cc": "70"
-    },
-    {
-      "param": "slot_009",
-      "cc": "71"
-    },
-    {
-      "param": "slot_010",
-      "cc": "1"
-    },
-    {
-      "param": "slot_011",
+      "param": "slot_000",
       "cc": "7"
-    },
-    {
-      "param": "slot_012",
-      "cc": "75"
     }
   ]
 }

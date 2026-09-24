@@ -267,6 +267,7 @@ namespace dsp56k
 
 		explicit Esai(IPeripherals& _periph, EMemArea _area, Dma* _dma = nullptr);
 
+		void reset();
 		void setDSP(DSP* _dsp);
 
 		void execTX() override;
@@ -340,8 +341,20 @@ namespace dsp56k
 			return m_tsmb;
 		}
 
+		TWord readRSMA() const
+		{
+			return m_rsma;
+		}
+
+		TWord readRSMB() const
+		{
+			return m_rsmb;
+		}
+
 		void writeTSMA(TWord _tsma);
 		void writeTSMB(TWord _tsmb);
+		void writeRSMA(TWord _rsma);
+		void writeRSMB(TWord _rsmb);
 
 		static void setSymbols(Disassembler& _disasm, EMemArea _area);
 
@@ -413,6 +426,9 @@ namespace dsp56k
 		bool inputEnabled(uint32_t _index) const	{ return m_rcr.test(static_cast<RcrBits>(_index)); }
 		bool outputEnabled(uint32_t _index) const	{ return m_tcr.test(static_cast<TcrBits>(_index)); }
 
+		bool isTxSlotActive(uint32_t _slot) const	{ return _slot < 16 ? (m_tsma & (1 << _slot)) != 0 : (m_tsmb & (1 << (_slot - 16))) != 0; }
+		bool isRxSlotActive(uint32_t _slot) const	{ return _slot < 16 ? (m_rsma & (1 << _slot)) != 0 : (m_rsmb & (1 << (_slot - 16))) != 0; }
+
 		void injectInterrupt(TWord _interrupt) const;
 		void readSlotFromFrame();
 		void writeSlotToFrame();
@@ -445,6 +461,8 @@ namespace dsp56k
 
 		TWord m_tsma = 0xffff;
 		TWord m_tsmb = 0xffff;
+		TWord m_rsma = 0xffff;
+		TWord m_rsmb = 0xffff;
 
 		TWord m_vbaRead = 0;
 	};

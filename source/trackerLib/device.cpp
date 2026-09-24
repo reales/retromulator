@@ -12,6 +12,7 @@ namespace trackerLib
 		constexpr float kMeterFallSeconds = 0.3f;
 		constexpr double kBassMixHz = 150.0;
 		constexpr double kPi = 3.14159265358979323846;
+		constexpr float kSilenceLevel = 1.0e-4f;	// -80 dB
 	}
 
 	Device::Device(const synthLib::DeviceCreateParams& _params) : synthLib::Device(_params)
@@ -126,6 +127,12 @@ namespace trackerLib
 			return true;
 		}
 
+		if(_ev.sysex.empty() && (_ev.a & 0xf0) == synthLib::M_CONTROLCHANGE && _ev.b == 7)
+		{
+			m_gain = static_cast<float>(_ev.c) / 127.0f;
+			return true;
+		}
+
 		if(!_ev.sysex.empty() || (_ev.a & 0xf0) != 0x90 || _ev.c == 0)
 			return true;
 
@@ -164,6 +171,8 @@ namespace trackerLib
 		m_atTop = false;
 		m_ended = false;
 		m_playing = true;
+		m_heardSound = false;
+		m_silentFrames = 0;
 	}
 
 	float Device::getSyncBpm() const
@@ -275,13 +284,14 @@ namespace trackerLib
 				m_engine->render(m_buffer.data(), static_cast<uint32_t>(count));
 				if(m_bassMix)
 					processBassMix(m_buffer.data(), count);
+				const float gain = m_gain.load();
 				for(size_t i = 0; i < count; ++i)
 				{
-					outL[pos + i] = m_buffer[i * 2];
-					outR[pos + i] = m_buffer[i * 2 + 1];
+					outL[pos + i] = m_buffer[i * 2] * gain;
+					outR[pos + i] = m_buffer[i * 2 + 1] * gain;
 				}
 
-				if(m_engine->hasEnded())
+				if(m_engine->hasEnded() || isSilentTooLong(count))
 				{
 					m_playing = false;
 					m_ended = true;
@@ -306,6 +316,31 @@ namespace trackerLib
 		m_row = m_atTop ? 0 : m_engine->getRow();
 
 		updateMeters(_samples);
+	}
+
+	// A song that goes quiet for good, a long empty last pattern or a silent loop, ends
+	// like one that reached its end. Only once it has made a sound: some start silent.
+	bool Device::isSilentTooLong(const size_t _frames)
+	{
+		if(!m_offline && !m_stopAtEnd.load())
+			return false;
+
+		float peak = 0.0f;
+		for(size_t i = 0; i < _frames * 2; ++i)
+			peak = std::max(peak, std::abs(m_buffer[i]));
+
+		if(peak >= kSilenceLevel)
+		{
+			m_heardSound = true;
+			m_silentFrames = 0;
+			return false;
+		}
+
+		if(!m_heardSound)
+			return false;
+
+		m_silentFrames += _frames;
+		return static_cast<float>(m_silentFrames) >= kSilenceSeconds * m_sampleRate;
 	}
 
 	void Device::setupBassMix()

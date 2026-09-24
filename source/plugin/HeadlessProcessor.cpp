@@ -182,6 +182,28 @@ namespace retromulator
         xml->writeTo(file);
     }
 
+    static bool readSettingsBool(const char* attribute, const bool fallback)
+    {
+        const auto file = getSettingsFile();
+        if(file.existsAsFile())
+            if(const auto xml = juce::XmlDocument::parse(file))
+                return xml->getBoolAttribute(attribute, fallback);
+        return fallback;
+    }
+
+    static void writeSettingsBool(const char* attribute, const bool value)
+    {
+        const auto file = getSettingsFile();
+        std::unique_ptr<juce::XmlElement> xml;
+        if(file.existsAsFile())
+            xml = juce::XmlDocument::parse(file);
+        if(!xml)
+            xml = std::make_unique<juce::XmlElement>("RetromulatorSettings");
+
+        xml->setAttribute(attribute, value);
+        xml->writeTo(file);
+    }
+
     // ── GPL boundary helpers ─────────────────────────────────────────────────
     // These three functions exist solely to keep GPL-specific headers (per-synth
     // ROM loaders, synthLib::DeviceError) out of source/custom/RetroEditor.cpp.
@@ -508,25 +530,56 @@ namespace retromulator
     // ── Constructor ───────────────────────────────────────────────────────────
 
     // Defined ahead of the constructor: the unique_ptr member needs the complete type.
-    struct HeadlessProcessor::TrackerPlaylistTimer final : juce::Timer
+    struct HeadlessProcessor::PlaylistTimer final : juce::Timer
     {
-        explicit TrackerPlaylistTimer(HeadlessProcessor& p) : proc(p) {}
-        ~TrackerPlaylistTimer() override { stopTimer(); }
+        explicit PlaylistTimer(HeadlessProcessor& p) : proc(p) {}
+        ~PlaylistTimer() override { stopTimer(); }
 
-        void timerCallback() override
-        {
-            auto* dev = proc.getTrackerDevice();
-            if(!dev || proc.m_renderActive.load() || !proc.isTrackerPlaylistMode())
-                return;
-            // C#0 and D#0 arrive on the audio thread; loading a module belongs here.
-            if(const int step = dev->consumePlaylistStep())
-                proc.stepTrackerPlaylist(step);
-            else if(dev->consumeSongFinished())
-                proc.stepTrackerPlaylist(+1);
-        }
+        void timerCallback() override { proc.onPlaylistTimer(); }
 
         HeadlessProcessor& proc;
     };
+
+    // The transport notes and a song's end arrive on the audio thread; loading the next
+    // entry belongs here.
+    void HeadlessProcessor::onPlaylistTimer()
+    {
+        if(m_renderActive.load())
+            return;
+
+        if(auto* dev = getTrackerDevice(); dev && isTrackerPlaylistMode())
+        {
+            if(const int step = dev->consumePlaylistStep())
+                stepTrackerPlaylist(step);
+            else if(dev->consumeSongFinished())
+            {
+                if(!(m_trackerStopAtEnd && m_trackerOrder.isLast(m_trackerPlaylistIndex)))
+                    stepTrackerPlaylist(+1);
+            }
+        }
+        else if(m_synthType == SynthType::Emu88 && isMidiPlaylistMode())
+        {
+            if(const int step = m_midiPlaylistStep.exchange(0))
+                stepMidiPlaylist(step);
+            else if(m_midiSongFinished.exchange(false))
+            {
+                if(!(m_midiStopAtEnd && m_midiOrder.isLast(m_midiPlaylistIndex)))
+                    stepMidiPlaylist(+1);
+            }
+        }
+    }
+
+    void HeadlessProcessor::updatePlaylistTimer()
+    {
+        if(isTrackerPlaylistMode() || isMidiPlaylistMode())
+        {
+            if(!m_playlistTimer)
+                m_playlistTimer = std::make_unique<PlaylistTimer>(*this);
+            m_playlistTimer->startTimerHz(20);
+        }
+        else if(m_playlistTimer)
+            m_playlistTimer->stopTimer();
+    }
 
     HeadlessProcessor::HeadlessProcessor()
         : pluginLib::Processor(
@@ -574,11 +627,15 @@ namespace retromulator
         m_plugin.reset(new synthLib::Plugin(m_device.get(), {}));
 
         loadEditorSizeFromSettings();
+        m_trackerStopAtEnd = readSettingsBool("trackerStopAtEnd", false);
+        m_trackerShuffle   = readSettingsBool("trackerShuffle", false);
+        m_midiStopAtEnd    = readSettingsBool("midiStopAtEnd", false);
+        m_midiShuffle      = readSettingsBool("midiShuffle", false);
     }
 
     HeadlessProcessor::~HeadlessProcessor()
     {
-        m_trackerPlaylistTimer.reset();
+        m_playlistTimer.reset();
 
         // Must join before any member is destroyed: ~thread on a joinable
         // thread calls std::terminate.
@@ -1029,6 +1086,13 @@ namespace retromulator
         // Use pre-extracted name from m_programNames (populated in loadPreset)
         if(index >= 0 && index < static_cast<int>(m_programNames.size()))
             m_patchName = m_programNames[static_cast<size_t>(index)];
+
+        if(m_paramPool)
+        {
+            const auto end = std::min(rawStart + std::max(1, m_bankStride), static_cast<int>(m_bankMessages.size()));
+            m_paramPool->syncFromPatch(synthLib::SysexBufferList(m_bankMessages.begin() + rawStart,
+                                                                 m_bankMessages.begin() + end));
+        }
 
         // If prepareToPlay has not been called yet (AU XPC: UI fires before the audio
         // engine starts), don't push into the DSP — the device is not ready to process
@@ -2080,6 +2144,7 @@ namespace retromulator
         if(!loadMidiFile(std::move(data), fileName))
             return false;
 
+        clearMidiPlaylist();
         addRecentMidiFile(fileName);
         return true;
     }
@@ -2130,6 +2195,210 @@ namespace retromulator
         m_midiFileData = std::move(data);
         m_midiFileName = fileName;
         return true;
+    }
+
+    // ── Playlist files, shared by the tracker and the MIDI player ────────────
+
+    bool HeadlessProcessor::isPlaylistFile(const juce::File& file)
+    {
+        return file.hasFileExtension("m3u;m3u8");
+    }
+
+    namespace
+    {
+        using PlaylistFilter = bool (*)(const juce::File&);
+
+        bool isTrackerModuleFile(const juce::File& file)
+        {
+            return trackerLib::isModuleExtension(
+                file.getFileExtension().trimCharactersAtStart(".").toLowerCase().toStdString());
+        }
+
+        bool isMidiSongFile(const juce::File& file)
+        {
+            return file.hasFileExtension("mid;midi");
+        }
+
+        // Entries are relative to the playlist's own folder unless they are absolute.
+        void readM3u(const juce::File& m3u, std::vector<std::string>& out, const PlaylistFilter wanted)
+        {
+            juce::StringArray lines;
+            lines.addLines(m3u.loadFileAsString());
+            for(const auto& raw : lines)
+            {
+                const auto line = raw.trim();
+                if(line.isEmpty() || line.startsWithChar('#'))
+                    continue;
+                const auto file = juce::File::isAbsolutePath(line)
+                    ? juce::File(line)
+                    : m3u.getParentDirectory().getChildFile(line.replaceCharacter('\\', '/'));
+                if(file.existsAsFile() && wanted(file))
+                    out.push_back(file.getFullPathName().toStdString());
+            }
+        }
+
+        // Files, folders (scanned recursively) and .m3u playlists, flattened to full paths.
+        std::vector<std::string> collectPlaylistPaths(const std::vector<std::string>& paths, const PlaylistFilter wanted)
+        {
+            std::vector<std::string> list;
+
+            for(const auto& path : paths)
+            {
+                const juce::File file{juce::String(path)};
+
+                if(file.isDirectory())
+                {
+                    juce::Array<juce::File> found;
+                    file.findChildFiles(found, juce::File::findFiles, true);
+                    found.sort();
+                    for(const auto& f : found)
+                        if(wanted(f))
+                            list.push_back(f.getFullPathName().toStdString());
+                }
+                else if(HeadlessProcessor::isPlaylistFile(file))
+                    readM3u(file, list, wanted);
+                else if(file.existsAsFile() && wanted(file))
+                    list.push_back(path);
+            }
+            return list;
+        }
+
+        // Entries under the playlist's folder are written relative, so the folder can move.
+        bool writeM3u(const std::vector<std::string>& paths, const juce::File& m3uFile)
+        {
+            if(paths.empty())
+                return false;
+
+            const auto folder = m3uFile.getParentDirectory();
+            juce::String text("#EXTM3U\n");
+            for(const auto& path : paths)
+            {
+                const juce::File file{juce::String(path)};
+                text << (file.isAChildOf(folder) ? file.getRelativePathFrom(folder).replaceCharacter('\\', '/')
+                                                 : file.getFullPathName()) << "\n";
+            }
+            return m3uFile.replaceWithText(text, false, false, "\n");
+        }
+    }
+
+    // ── MIDI playlist ─────────────────────────────────────────────────────────
+
+    bool HeadlessProcessor::openMidiPaths(const std::vector<std::string>& paths, const bool append)
+    {
+        auto list = collectPlaylistPaths(paths, isMidiSongFile);
+        if(list.empty() || m_synthType != SynthType::Emu88 || m_renderActive.load())
+            return false;
+
+        if(append)
+        {
+            auto combined = m_midiPlaylist;
+            // A song imported on its own becomes the first entry, from its copy in the MIDI folder.
+            if(combined.empty() && hasMidiFile())
+            {
+                const auto copy = midiFolder().getChildFile(juce::String(m_midiFileName));
+                if(copy.existsAsFile())
+                    combined.push_back(copy.getFullPathName().toStdString());
+            }
+            const bool hadEntries = !combined.empty();
+            const int index = m_midiPlaylistIndex;
+            combined.insert(combined.end(), list.begin(), list.end());
+            if(hadEntries)
+            {
+                setMidiPlaylist(std::move(combined), index);
+                return true;
+            }
+            list = std::move(combined);
+        }
+
+        const auto previous = m_midiPlaylist;
+        const int previousIndex = m_midiPlaylistIndex;
+
+        setMidiPlaylist(std::move(list), -1);
+        if(loadMidiPlaylistPosition(0, +1))
+            return true;
+
+        // nothing in there loads: what was there stays
+        setMidiPlaylist(std::vector<std::string>(previous), previousIndex);
+        return false;
+    }
+
+    void HeadlessProcessor::clearMidiPlaylist()
+    {
+        setMidiPlaylist({}, 0);
+    }
+
+    void HeadlessProcessor::setMidiPlaylist(std::vector<std::string>&& paths, const int index)
+    {
+        m_midiPlaylist = std::move(paths);
+        const int count = static_cast<int>(m_midiPlaylist.size());
+        m_midiPlaylistIndex = count == 0 || index < 0 ? 0 : juce::jlimit(0, count - 1, index);
+        m_midiOrder.reset(count, index < 0 ? -1 : m_midiPlaylistIndex, m_midiShuffle);
+        if(index < 0)
+            m_midiPlaylistIndex = m_midiOrder.indexAt(0);
+        m_midiPlaylistActive.store(isMidiPlaylistMode());
+        m_midiSongFinished.store(false);
+        m_midiPlaylistStep.store(0);
+        updatePlaylistTimer();
+    }
+
+    bool HeadlessProcessor::loadMidiPlaylistPosition(const int position, const int direction)
+    {
+        const int count = static_cast<int>(m_midiPlaylist.size());
+        if(count == 0)
+            return false;
+
+        const int step = direction < 0 ? -1 : 1;
+
+        for(int tries = 0; tries < count; ++tries)
+        {
+            const int i = m_midiOrder.indexAt(position + tries * step);
+            const juce::File file{juce::String(m_midiPlaylist[static_cast<size_t>(i)])};
+            juce::MemoryBlock block;
+            if(!file.existsAsFile() || !file.loadFileAsData(block) || block.getSize() == 0)
+                continue;
+
+            const auto* raw = static_cast<const uint8_t*>(block.getData());
+            if(!loadMidiFile(std::vector<uint8_t>(raw, raw + block.getSize()), file.getFileName().toStdString()))
+                continue;
+            m_midiPlaylistIndex = i;
+            return true;
+        }
+        return false;
+    }
+
+    bool HeadlessProcessor::playMidiPlaylistIndex(const int index)
+    {
+        if(!loadMidiPlaylistPosition(m_midiOrder.positionOf(index), +1))
+            return false;
+        playMidiFile();
+        return true;
+    }
+
+    bool HeadlessProcessor::stepMidiPlaylist(const int delta)
+    {
+        if(!isMidiPlaylistMode()
+           || !loadMidiPlaylistPosition(m_midiOrder.positionOf(m_midiPlaylistIndex) + delta, delta))
+            return false;
+        playMidiFile();
+        return true;
+    }
+
+    bool HeadlessProcessor::exportMidiPlaylist(const juce::File& m3uFile) const
+    {
+        return writeM3u(m_midiPlaylist, m3uFile);
+    }
+
+    void HeadlessProcessor::setMidiShuffle(const bool enabled)
+    {
+        m_midiShuffle = enabled;
+        writeSettingsBool("midiShuffle", enabled);
+        m_midiOrder.reset(static_cast<int>(m_midiPlaylist.size()), m_midiPlaylistIndex, enabled);
+    }
+
+    void HeadlessProcessor::setMidiStopAtEnd(const bool enabled)
+    {
+        m_midiStopAtEnd = enabled;
+        writeSettingsBool("midiStopAtEnd", enabled);
     }
 
     void HeadlessProcessor::playMidiFile()
@@ -2251,6 +2520,7 @@ namespace retromulator
             // a fade to zero volume, so the end of a song resets like a stop does.
             resetMidiModule(numSamples - 1);
             m_midiPlayState.store(MidiPlayState::Stopped);
+            m_midiSongFinished.store(true);
         }
     }
 
@@ -2277,16 +2547,119 @@ namespace retromulator
         return true;
     }
 
+    bool HeadlessProcessor::startMidiPlaylistRender(const juce::File& folder, const RenderFormat format)
+    {
+        if(m_synthType != SynthType::Emu88 || !isMidiPlaylistMode() || !folder.isDirectory())
+            return false;
+        if(m_renderActive.exchange(true))
+            return false;   // one at a time
+
+        stopMidiFile();
+        m_renderCancel.store(false);
+        m_renderProgress.store(0.0f);
+
+        if(m_renderThread && m_renderThread->joinable())
+            m_renderThread->join();
+        m_renderThread = std::make_unique<std::thread>([this, folder, format]
+        {
+            renderMidiPlaylist(folder, format);
+            m_renderActive.store(false);
+        });
+        return true;
+    }
+
     void HeadlessProcessor::cancelMidiRender()
     {
         m_renderCancel.store(true);
     }
 
+    namespace
+    {
+        constexpr double kMidiRenderRate  = 48000.0;
+        constexpr int    kMidiRenderBlock = 512;
+    }
+
+    void HeadlessProcessor::beginMidiRender()
+    {
+        // Live audio must not touch the board while this runs: there is one device and
+        // the render drives it at its own pace.
+        suspendProcessing(true);
+        // Preferred device rate 0, as the live path passes: the board picks its native
+        // rate and the resampler bridges to 48 kHz.
+        getPlugin().setHostSamplerate(static_cast<float>(kMidiRenderRate), 0.0f);
+        getPlugin().setBlockSize(kMidiRenderBlock);
+        // The board renders on its own thread, and the pump below outruns it. Offline
+        // mode makes processAudio wait for each frame instead of repeating the last one.
+        if(auto* dev = getEmu88Device())
+            dev->setOfflineRender(true);
+    }
+
+    void HeadlessProcessor::endMidiRender()
+    {
+        resetMidiModule(0);
+        m_renderProgress.store(1.0f);
+
+        // Hand the board back to live audio at the rate it was using.
+        if(auto* dev = getEmu88Device())
+            dev->setOfflineRender(false);
+        getPlugin().setHostSamplerate(static_cast<float>(getSampleRate()), 0.0f);
+        getPlugin().setBlockSize(static_cast<uint32_t>(getBlockSize()));
+        suspendProcessing(false);
+    }
+
     void HeadlessProcessor::renderMidiToWav(const juce::URL& destUrl, const RenderFormat format)
     {
-        constexpr double sampleRate = 48000.0;
+        beginMidiRender();
+        renderMidiSong(m_midiSongEvents, destUrl, format, 0.0f, 1.0f);
+        endMidiRender();
+    }
+
+    void HeadlessProcessor::renderMidiPlaylist(const juce::File& folder, const RenderFormat format)
+    {
+        beginMidiRender();
+
+        const auto playlist = m_midiPlaylist;
+        const auto count = playlist.size();
+        const int digits = count > 99 ? 3 : 2;
+        const juce::String extension = format == RenderFormat::Mp3 ? ".mp3" : ".wav";
+
+        for(size_t i = 0; i < count && !m_renderCancel.load(); ++i)
+        {
+            const juce::File file{juce::String(playlist[i])};
+            juce::MemoryBlock block;
+            if(!file.existsAsFile() || !file.loadFileAsData(block) || block.getSize() == 0)
+                continue;
+
+            const auto* raw = static_cast<const uint8_t*>(block.getData());
+            std::vector<sc88smf::Event> parsed;
+            std::string error;
+            if(!sc88smf::parse(std::vector<uint8_t>(raw, raw + block.getSize()),
+                               file.getFileName().toStdString(), parsed, error))
+                continue;
+
+            std::vector<MidiSongEvent> song;
+            song.reserve(parsed.size());
+            for(auto& e : parsed)
+                song.push_back({e.seconds, std::move(e.bytes), e.port});
+
+            const auto name = juce::String(static_cast<int>(i) + 1).paddedLeft('0', digits) + " "
+                            + file.getFileNameWithoutExtension() + extension;
+            renderMidiSong(song, juce::URL(folder.getChildFile(name)), format,
+                           static_cast<float>(i) / static_cast<float>(count), 1.0f / static_cast<float>(count));
+        }
+
+        endMidiRender();
+    }
+
+    void HeadlessProcessor::renderMidiSong(const std::vector<MidiSongEvent>& events, const juce::URL& destUrl,
+                                           const RenderFormat format, const float progressStart, const float progressSpan)
+    {
+        constexpr double sampleRate = kMidiRenderRate;
         constexpr int    bitDepth   = 24;
-        constexpr int    blockSize  = 512;
+        constexpr int    blockSize  = kMidiRenderBlock;
+
+        if(events.empty())
+            return;
 
         // Rendered here first. The chosen location may be a security-scoped iCloud or
         // Files URL, which cannot be written to as a plain path.
@@ -2305,20 +2678,8 @@ namespace retromulator
             return;
         out.release();   // the writer owns the stream from here
 
-        // Live audio must not touch the board while this runs: there is one device and
-        // the render drives it at its own pace.
-        suspendProcessing(true);
-        // Preferred device rate 0, as the live path passes: the board picks its native
-        // rate and the resampler bridges to 48 kHz.
-        getPlugin().setHostSamplerate(static_cast<float>(sampleRate), 0.0f);
-        getPlugin().setBlockSize(blockSize);
-        // The board renders on its own thread, and the pump below outruns it. Offline
-        // mode makes processAudio wait for each frame instead of repeating the last one.
-        if(auto* dev = getEmu88Device())
-            dev->setOfflineRender(true);
-
         // The song's own tail plus the lead-in it needs before tick 0.
-        const double songEnd = m_midiSongEvents.back().seconds;
+        const double songEnd = events.back().seconds;
         const double total   = songEnd + kMidiRenderTailSeconds;
 
         // Local cursors: the live playback members belong to the audio thread.
@@ -2353,9 +2714,9 @@ namespace retromulator
         // Then the song's own setup: everything it puts on tick 0 that is not a note,
         // so the programs, volumes and pans are in place before the first note-on. They
         // are consumed here, so the pump below starts at the first event it left.
-        for(; eventIndex < m_midiSongEvents.size(); ++eventIndex)
+        for(; eventIndex < events.size(); ++eventIndex)
         {
-            const auto& e = m_midiSongEvents[eventIndex];
+            const auto& e = events[eventIndex];
             if(e.seconds > 0.0)
                 break;
             if(e.bytes.empty())
@@ -2391,9 +2752,9 @@ namespace retromulator
             // Same event pump as live playback, so the file matches what was heard.
             const double blockSeconds = blockSize / sampleRate;
             const double blockEnd     = pos + blockSeconds;
-            while(eventIndex < m_midiSongEvents.size())
+            while(eventIndex < events.size())
             {
-                const auto& e = m_midiSongEvents[eventIndex];
+                const auto& e = events[eventIndex];
                 if(e.seconds >= blockEnd)
                     break;
                 ++eventIndex;
@@ -2436,22 +2797,13 @@ namespace retromulator
 
             const double done = (pos + kMidiPlayLeadInSeconds)
                               / (total + kMidiPlayLeadInSeconds);
-            m_renderProgress.store(static_cast<float>(juce::jlimit(0.0, 1.0, done)));
+            m_renderProgress.store(progressStart
+                + progressSpan * static_cast<float>(juce::jlimit(0.0, 1.0, done)));
         }
 
         writer.reset();   // flushes the header
 
         deliverRender(dest, destUrl, format);
-
-        resetMidiModule(0);
-        m_renderProgress.store(1.0f);
-
-        // Hand the board back to live audio at the rate it was using.
-        if(auto* dev = getEmu88Device())
-            dev->setOfflineRender(false);
-        getPlugin().setHostSamplerate(static_cast<float>(getSampleRate()), 0.0f);
-        getPlugin().setBlockSize(static_cast<uint32_t>(getBlockSize()));
-        suspendProcessing(false);
     }
 
     void HeadlessProcessor::deliverRender(const juce::File& dest, const juce::URL& destUrl, const RenderFormat format)
@@ -2539,7 +2891,7 @@ namespace retromulator
         m_trackerFileData = std::move(data);
         m_trackerFileName = fileName;
         dev->setTempoSync(m_trackerTempoSync);
-        dev->setStopAtEnd(isTrackerPlaylistMode());
+        applyTrackerStopAtEnd();
         return true;
     }
 
@@ -2550,7 +2902,7 @@ namespace retromulator
             return;
 
         dev->setTempoSync(m_trackerTempoSync);
-        dev->setStopAtEnd(isTrackerPlaylistMode());
+        applyTrackerStopAtEnd();
 
         // The bytes travel with the plugin state, so a rebooted device gets them back from here.
         if(!m_trackerFileData.empty() && !dev->loadModule(m_trackerFileData))
@@ -2589,60 +2941,9 @@ namespace retromulator
 
     // ── Trackermeister playlist ─────────────────────────────────────────────
 
-    bool HeadlessProcessor::isTrackerPlaylistFile(const juce::File& file)
-    {
-        return file.hasFileExtension("m3u;m3u8");
-    }
-
-    namespace
-    {
-        bool isTrackerModuleFile(const juce::File& file)
-        {
-            return trackerLib::isModuleExtension(
-                file.getFileExtension().trimCharactersAtStart(".").toLowerCase().toStdString());
-        }
-
-        // Entries are relative to the playlist's own folder unless they are absolute.
-        void readM3u(const juce::File& m3u, std::vector<std::string>& out)
-        {
-            juce::StringArray lines;
-            lines.addLines(m3u.loadFileAsString());
-            for(const auto& raw : lines)
-            {
-                const auto line = raw.trim();
-                if(line.isEmpty() || line.startsWithChar('#'))
-                    continue;
-                const auto file = juce::File::isAbsolutePath(line)
-                    ? juce::File(line)
-                    : m3u.getParentDirectory().getChildFile(line.replaceCharacter('\\', '/'));
-                if(file.existsAsFile() && isTrackerModuleFile(file))
-                    out.push_back(file.getFullPathName().toStdString());
-            }
-        }
-    }
-
     bool HeadlessProcessor::openTrackerPaths(const std::vector<std::string>& paths)
     {
-        std::vector<std::string> list;
-
-        for(const auto& path : paths)
-        {
-            const juce::File file{juce::String(path)};
-
-            if(file.isDirectory())
-            {
-                juce::Array<juce::File> found;
-                file.findChildFiles(found, juce::File::findFiles, true);
-                found.sort();
-                for(const auto& f : found)
-                    if(isTrackerModuleFile(f))
-                        list.push_back(f.getFullPathName().toStdString());
-            }
-            else if(isTrackerPlaylistFile(file))
-                readM3u(file, list);
-            else if(file.existsAsFile() && isTrackerModuleFile(file))
-                list.push_back(path);
-        }
+        auto list = collectPlaylistPaths(paths, isTrackerModuleFile);
 
         if(list.empty() || !getTrackerDevice() || m_renderActive.load())
             return false;
@@ -2650,8 +2951,8 @@ namespace retromulator
         const auto previous = m_trackerPlaylist;
         const int previousIndex = m_trackerPlaylistIndex;
 
-        setTrackerPlaylist(std::move(list), 0);
-        if(loadTrackerPlaylistEntry(0, +1))
+        setTrackerPlaylist(std::move(list), -1);
+        if(loadTrackerPlaylistPosition(0, +1))
         {
             // stepping through a playlist later does not churn the recent list
             addRecentTrackerModule(m_trackerPlaylist[static_cast<size_t>(m_trackerPlaylistIndex)]);
@@ -2666,33 +2967,27 @@ namespace retromulator
     void HeadlessProcessor::setTrackerPlaylist(std::vector<std::string>&& paths, const int index)
     {
         m_trackerPlaylist = std::move(paths);
-        m_trackerPlaylistIndex = m_trackerPlaylist.empty()
-            ? 0 : juce::jlimit(0, static_cast<int>(m_trackerPlaylist.size()) - 1, index);
+        const int count = static_cast<int>(m_trackerPlaylist.size());
+        m_trackerPlaylistIndex = count == 0 || index < 0 ? 0 : juce::jlimit(0, count - 1, index);
+        m_trackerOrder.reset(count, index < 0 ? -1 : m_trackerPlaylistIndex, m_trackerShuffle);
+        if(index < 0)
+            m_trackerPlaylistIndex = m_trackerOrder.indexAt(0);
 
-        if(auto* dev = getTrackerDevice())
-            dev->setStopAtEnd(isTrackerPlaylistMode());
-
-        if(isTrackerPlaylistMode())
-        {
-            if(!m_trackerPlaylistTimer)
-                m_trackerPlaylistTimer = std::make_unique<TrackerPlaylistTimer>(*this);
-            m_trackerPlaylistTimer->startTimerHz(20);
-        }
-        else if(m_trackerPlaylistTimer)
-            m_trackerPlaylistTimer->stopTimer();
+        applyTrackerStopAtEnd();
+        updatePlaylistTimer();
     }
 
-    bool HeadlessProcessor::loadTrackerPlaylistEntry(const int index, const int direction)
+    bool HeadlessProcessor::loadTrackerPlaylistPosition(const int position, const int direction)
     {
         const int count = static_cast<int>(m_trackerPlaylist.size());
         if(count == 0)
             return false;
 
         const int step = direction < 0 ? -1 : 1;
-        int i = ((index % count) + count) % count;
 
-        for(int tries = 0; tries < count; ++tries, i = (i + step + count) % count)
+        for(int tries = 0; tries < count; ++tries)
         {
+            const int i = m_trackerOrder.indexAt(position + tries * step);
             if(!loadTrackerModuleFile(m_trackerPlaylist[static_cast<size_t>(i)], false))
                 continue;
             m_trackerPlaylistIndex = i;
@@ -2703,7 +2998,7 @@ namespace retromulator
 
     bool HeadlessProcessor::playTrackerPlaylistIndex(const int index)
     {
-        if(!loadTrackerPlaylistEntry(index, +1))
+        if(!loadTrackerPlaylistPosition(m_trackerOrder.positionOf(index), +1))
             return false;
         playTracker();
         return true;
@@ -2711,7 +3006,8 @@ namespace retromulator
 
     bool HeadlessProcessor::stepTrackerPlaylist(const int delta)
     {
-        if(!isTrackerPlaylistMode() || !loadTrackerPlaylistEntry(m_trackerPlaylistIndex + delta, delta))
+        if(!isTrackerPlaylistMode()
+           || !loadTrackerPlaylistPosition(m_trackerOrder.positionOf(m_trackerPlaylistIndex) + delta, delta))
             return false;
         playTracker();
         return true;
@@ -2719,19 +3015,7 @@ namespace retromulator
 
     bool HeadlessProcessor::exportTrackerPlaylist(const juce::File& m3uFile) const
     {
-        if(m_trackerPlaylist.empty())
-            return false;
-
-        // Entries under the playlist's folder are written relative, so the folder can move.
-        const auto folder = m3uFile.getParentDirectory();
-        juce::String text("#EXTM3U\n");
-        for(const auto& path : m_trackerPlaylist)
-        {
-            const juce::File file{juce::String(path)};
-            text << (file.isAChildOf(folder) ? file.getRelativePathFrom(folder).replaceCharacter('\\', '/')
-                                             : file.getFullPathName()) << "\n";
-        }
-        return m3uFile.replaceWithText(text, false, false, "\n");
+        return writeM3u(m_trackerPlaylist, m3uFile);
     }
 
     void HeadlessProcessor::playTracker()
@@ -2763,6 +3047,28 @@ namespace retromulator
         m_trackerTempoSync = enabled;
         if(auto* dev = getTrackerDevice())
             dev->setTempoSync(enabled);
+    }
+
+    void HeadlessProcessor::setTrackerStopAtEnd(const bool enabled)
+    {
+        m_trackerStopAtEnd = enabled;
+        writeSettingsBool("trackerStopAtEnd", enabled);
+        applyTrackerStopAtEnd();
+    }
+
+    void HeadlessProcessor::setTrackerShuffle(const bool enabled)
+    {
+        m_trackerShuffle = enabled;
+        writeSettingsBool("trackerShuffle", enabled);
+        // the song playing stays where it is, the rest of the order is drawn again
+        m_trackerOrder.reset(static_cast<int>(m_trackerPlaylist.size()), m_trackerPlaylistIndex, enabled);
+    }
+
+    // A playlist always stops its songs at their end, the timer decides what comes next.
+    void HeadlessProcessor::applyTrackerStopAtEnd()
+    {
+        if(auto* dev = getTrackerDevice())
+            dev->setStopAtEnd(isTrackerPlaylistMode() || m_trackerStopAtEnd);
     }
 
     void HeadlessProcessor::processBpm(const float bpm)
@@ -2884,6 +3190,7 @@ namespace retromulator
         std::vector<synthLib::SMidiEvent> midiOut;
         const int orders = std::max(1, dev->getOrderCount());
         double seconds = 0.0;
+        float furthest = 0.0f;   // position jumps and long patterns must not move the bar back
 
         while(!m_renderCancel.load() && seconds < maxSeconds)
         {
@@ -2903,7 +3210,8 @@ namespace retromulator
 
             const float done = (static_cast<float>(dev->getOrder()) + static_cast<float>(dev->getRow()) / 64.0f)
                              / static_cast<float>(orders);
-            m_renderProgress.store(progressStart + progressSpan * juce::jlimit(0.0f, 1.0f, done));
+            furthest = std::max(furthest, juce::jlimit(0.0f, 1.0f, done));
+            m_renderProgress.store(progressStart + progressSpan * furthest);
         }
 
         writer.reset();   // flushes the header
@@ -3436,21 +3744,25 @@ namespace retromulator
                 }
             }
 
-            // C1 and D1 start and stop the loaded song. They are consumed here so they
-            // never reach the board, which would sound a note under the transport.
+            // C1 and D1 start and stop the loaded song, C#1 and D#1 step a playlist. They
+            // are consumed here so they never reach the board, which would sound a note
+            // under the transport.
             if(hasMidiFile())
             {
+                const bool playlist = m_midiPlaylistActive.load();
                 juce::MidiBuffer kept;
                 for(const auto meta : midi)
                 {
                     const auto m = meta.getMessage();
-                    if(m.isNoteOnOrOff() && (m.getNoteNumber() == kMidiPlayNote ||
-                                             m.getNoteNumber() == kMidiStopNote))
+                    const int note = m.isNoteOnOrOff() ? m.getNoteNumber() : -1;
+                    if(note == kMidiPlayNote || note == kMidiStopNote
+                       || (playlist && (note == kMidiPrevNote || note == kMidiNextNote)))
                     {
                         if(m.isNoteOn())
                         {
-                            if(m.getNoteNumber() == kMidiPlayNote) playMidiFile();
-                            else                                   stopMidiFile();
+                            if(note == kMidiPlayNote)      playMidiFile();
+                            else if(note == kMidiStopNote) stopMidiFile();
+                            else                           m_midiPlaylistStep.store(note == kMidiPrevNote ? -1 : +1);
                         }
                         continue;
                     }
@@ -3568,10 +3880,14 @@ namespace retromulator
     static constexpr int32_t kEmu88RhythmMagic = 0x52383845;
     // "E88M": the loaded MIDI song, appended after the per-part block.
     static constexpr int32_t kEmu88MidiMagic = 0x4D383845;
+    // "E88L": the MIDI playlist (options, index, count, full paths). 1 = stop at end, 2 = shuffle.
+    static constexpr int32_t kEmu88PlaylistMagic = 0x4C383845;
     // "TRKM": the Trackermeister module (name, tempo sync, bytes).
     static constexpr int32_t kTrackerMagic = 0x4D4B5254;
     // "TRKP": the playlist that module came from (index, count, full paths).
     static constexpr int32_t kTrackerPlaylistMagic = 0x504B5254;
+    // "TRKO": tracker options, a bit field. 1 = stop at end, 2 = shuffle.
+    static constexpr int32_t kTrackerOptionsMagic = 0x4F4B5254;
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -3699,6 +4015,17 @@ namespace retromulator
             destData.append(m_midiFileData.data(), m_midiFileData.size());
         }
 
+        // ['E88L':int32][options:int32][index:int32][count:int32][path * count]
+        if(m_synthType == SynthType::Emu88)
+        {
+            appendInt32(destData, kEmu88PlaylistMagic);
+            appendInt32(destData, (m_midiStopAtEnd ? 1 : 0) | (m_midiShuffle ? 2 : 0));
+            appendInt32(destData, static_cast<int32_t>(m_midiPlaylistIndex));
+            appendInt32(destData, static_cast<int32_t>(m_midiPlaylist.size()));
+            for(const auto& path : m_midiPlaylist)
+                appendString(destData, path);
+        }
+
         // ['TRKM':int32][nameLen:int32][name][sync:int32][dataLen:int32][data]
         if(m_synthType == SynthType::Trackermeister)
         {
@@ -3716,6 +4043,9 @@ namespace retromulator
             appendInt32(destData, static_cast<int32_t>(m_trackerPlaylist.size()));
             for(const auto& path : m_trackerPlaylist)
                 appendString(destData, path);
+
+            appendInt32(destData, kTrackerOptionsMagic);
+            appendInt32(destData, (m_trackerStopAtEnd ? 1 : 0) | (m_trackerShuffle ? 2 : 0));
         }
 
         // Board the session was using, taken from the live device rather than the shared
@@ -4064,6 +4394,39 @@ namespace retromulator
             offset = midiStart;
         }
 
+        // Restore the MIDI playlist (optional). Paths only: the song above plays even if
+        // they are gone. Older sessions have no block and keep the global options.
+        if(newType == SynthType::Emu88)
+        {
+            const int playlistStart = offset;
+            int32_t playlistMagic = 0, options = 0, playlistIndex = 0, playlistCount = 0;
+            std::vector<std::string> playlist;
+            bool playlistOk = readInt32(bytes, sizeInBytes, offset, playlistMagic)
+                           && playlistMagic == kEmu88PlaylistMagic
+                           && readInt32(bytes, sizeInBytes, offset, options)
+                           && readInt32(bytes, sizeInBytes, offset, playlistIndex)
+                           && readInt32(bytes, sizeInBytes, offset, playlistCount)
+                           && playlistCount >= 0;
+            for(int32_t i = 0; playlistOk && i < playlistCount; ++i)
+            {
+                std::string path;
+                playlistOk = readString(bytes, sizeInBytes, offset, path);
+                playlist.push_back(std::move(path));
+            }
+            if(playlistOk)
+            {
+                m_midiStopAtEnd = (options & 1) != 0;
+                m_midiShuffle   = (options & 2) != 0;
+            }
+            else
+            {
+                offset = playlistStart;
+                playlist.clear();
+                playlistIndex = 0;
+            }
+            setMidiPlaylist(std::move(playlist), playlistIndex);
+        }
+
         // Restore the Trackermeister module (optional).
         if(newType == SynthType::Trackermeister)
         {
@@ -4108,6 +4471,18 @@ namespace retromulator
                 playlist.clear();
                 playlistIndex = 0;
             }
+            // Older sessions have no options block and keep the global default.
+            const int optionsStart = offset;
+            int32_t optionsMagic = 0, options = 0;
+            if(readInt32(bytes, sizeInBytes, offset, optionsMagic) && optionsMagic == kTrackerOptionsMagic
+               && readInt32(bytes, sizeInBytes, offset, options))
+            {
+                m_trackerStopAtEnd = (options & 1) != 0;
+                m_trackerShuffle   = (options & 2) != 0;
+            }
+            else
+                offset = optionsStart;
+
             setTrackerPlaylist(std::move(playlist), playlistIndex);
 
             if(auto* dev = getTrackerDevice())
