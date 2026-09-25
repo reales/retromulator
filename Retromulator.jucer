@@ -511,6 +511,7 @@
       <FILE id="mx018" name="pit8254.h" compile="0" resource="0" file="source/matrixLib/pit8254.h"/>
       <FILE id="mx019" name="romloader.cpp" compile="1" resource="0" file="source/matrixLib/romloader.cpp"/>
       <FILE id="mx020" name="romloader.h" compile="0" resource="0" file="source/matrixLib/romloader.h"/>
+      <FILE id="mx021" name="halfband2x.h" compile="0" resource="0" file="source/matrixLib/halfband2x.h"/>
     </GROUP>
     <GROUP id="espLib" name="espLib">
       <FILE id="es001" name="esp_jit.cpp" compile="1" resource="0" file="source/ronaldo/esp/esp_jit.cpp"/>

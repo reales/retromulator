@@ -51,10 +51,10 @@ namespace matrixLib
 
 		Converter m_a, m_b;
 
-		// converter outputs held back one sample so the pre-event half of each
-		// BLEP/BLAMP residual can still be added
-		float m_pendA = 0.0f;
-		float m_pendB = 0.0f;
+		// converter outputs held back two samples for the pre-event half of each BLEP/BLAMP
+		// residual: samples n-2, n-1, n
+		float m_histA[3] = {};
+		float m_histB[3] = {};
 
 		float m_s[4] = {};
 		float m_damp = 0.7f;

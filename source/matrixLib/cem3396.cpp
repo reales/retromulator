@@ -27,26 +27,46 @@ namespace matrixLib
 			return 0.0f;
 		}
 
-		// residuals of a unit step / unit slope change, _x samples after the event
-		float blepAfter(const float _x) { const float t = 1.0f - _x; return -0.5f * t * t; }
-		float blepBefore(const float _x) { return 0.5f * _x * _x; }
-		float blampAfter(const float _x) { const float t = 1.0f - _x; return t * t * t * (1.0f / 6.0f); }
-		float blampBefore(const float _x) { return _x * _x * _x * (1.0f / 6.0f); }
+		// cubic B-spline BLEP and BLAMP residuals, _t = samples from the event, nonzero within +-2
+		float blep(const float _t)
+		{
+			const float a = std::fabs(_t);
+			if(a >= 2.0f) return 0.0f;
+			float i;
+			if(a < 1.0f)
+				i = 0.5f + (4.0f * a - 2.0f * a * a * a + 0.75f * a * a * a * a) * (1.0f / 6.0f);
+			else
+			{
+				const float u = 2.0f - a;
+				i = 1.0f - u * u * u * u * (1.0f / 24.0f);
+			}
+			return _t < 0.0f ? 1.0f - i : i - 1.0f;
+		}
 
+		float blamp(const float _t)
+		{
+			const float a = std::fabs(_t);
+			if(a >= 2.0f) return 0.0f;
+			if(a < 1.0f)
+				return 7.0f / 30.0f - 0.5f * a + (2.0f * a * a - 0.5f * a * a * a * a + 0.15f * a * a * a * a * a) * (1.0f / 6.0f);
+			const float u = 2.0f - a;
+			return u * u * u * u * u * (1.0f / 120.0f);
+		}
+
+		// corrections for the samples n-2 .. n+1 around the current sample n
 		struct Corrections
 		{
-			float prev = 0.0f;
-			float cur = 0.0f;
+			float t[4] = {};
 
 			void step(const float _h, const float _d)
 			{
-				cur += _h * blepAfter(_d);
-				prev += _h * blepBefore(_d);
+				for(int k = 0; k < 4; ++k)
+					t[k] += _h * blep(_d + static_cast<float>(k - 2));
 			}
 			void kink(const float _slopeDelta, const float _d)
 			{
-				cur += _slopeDelta * blampAfter(_d);
-				prev += _slopeDelta * blampBefore(_d);
+				for(int k = 0; k < 4; ++k)
+					t[k] += _slopeDelta * blamp(_d + static_cast<float>(k - 2));
 			}
 		};
 
@@ -143,7 +163,8 @@ namespace matrixLib
 	{
 		m_a = {};
 		m_b = {};
-		m_pendA = m_pendB = 0.0f;
+		for(int i = 0; i < 3; ++i)
+			m_histA[i] = m_histB[i] = 0.0f;
 		m_smoothInit = false;
 		for(auto& s : m_s)
 			s = 0.0f;
@@ -231,23 +252,19 @@ namespace matrixLib
 
 		const ConverterOut a = runConverter(m_a.phase, _c.periodA, _c.rtCtA, _c.wsA, _c.pwA, m_invRate, slopedA, pulseA);
 
-		float curA = a.pulse + pulseA.cur, prevA = pulseA.prev;
-		if(_c.slopedA)
+		auto delay = [](float* _h, const float _naive, const Corrections& _pulse, const Corrections& _sloped, const bool _useSloped)
 		{
-			curA += a.sloped + slopedA.cur * 2.0f;
-			prevA += slopedA.prev * 2.0f;
-		}
-		float curB = b.pulse + pulseB.cur, prevB = pulseB.prev;
-		if(_c.slopedB)
-		{
-			curB += b.sloped + slopedB.cur * 2.0f;
-			prevB += slopedB.prev * 2.0f;
-		}
-
-		const float convA = m_pendA + prevA;
-		const float convB = m_pendB + prevB;
-		m_pendA = curA;
-		m_pendB = curB;
+			float c[4];
+			for(int k = 0; k < 4; ++k)
+				c[k] = _pulse.t[k] + (_useSloped ? _sloped.t[k] * 2.0f : 0.0f);
+			const float out = _h[0] + c[0];
+			_h[0] = _h[1] + c[1];
+			_h[1] = _h[2] + _naive + c[2];
+			_h[2] = c[3];
+			return out;
+		};
+		const float convA = delay(m_histA, a.pulse + (_c.slopedA ? a.sloped : 0.0f), pulseA, slopedA, _c.slopedA);
+		const float convB = delay(m_histB, b.pulse + (_c.slopedB ? b.sloped : 0.0f), pulseB, slopedB, _c.slopedB);
 
 		// balance: differential pair, 80 dB of the other converter at about +-2 V
 		const float gA = 1.0f / (1.0f + std::exp(-4.6f * _c.balance));

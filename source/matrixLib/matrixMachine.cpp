@@ -27,13 +27,14 @@ namespace matrixLib
 		m_cyclesPerSample = static_cast<double>(Hardware::CpuClock) / _rate;
 		m_dcCoeff = 1.0f - 2.0f * 3.14159265f * 5.0f / _rate;
 		for(auto& v : m_voices)
-			v.setSamplerate(_rate);
+			v.setSamplerate(_rate * Oversampling);
 	}
 
 	void Machine::reset()
 	{
 		for(auto& v : m_voices)
 			v.reset();
+		m_decimator.reset();
 		m_cycleAcc = 0.0;
 		m_dcIn = m_dcOut = m_lastSum = 0.0f;
 		m_hw.reset();
@@ -98,13 +99,17 @@ namespace matrixLib
 			const uint64_t end = start + cycles;
 			m_sampleCycle = end;
 
-			const float n = noise();
-			float sum = 0.0f;
+			// voices run at twice the rate, the CPU and CVs at the output rate
+			const float n0 = noise();
+			const float n1 = noise();
+			float sum0 = 0.0f, sum1 = 0.0f;
 			for(uint32_t v = 0; v < Hardware::VoiceCount; ++v)
 			{
 				buildControls(v, c);
-				sum += m_voices[v].process(c, n);
+				sum0 += m_voices[v].process(c, n0);
+				sum1 += m_voices[v].process(c, n1);
 			}
+			const float sum = m_decimator.process(sum0, sum1);
 
 			// output coupling capacitor
 			const float y = sum - m_dcIn + m_dcCoeff * m_dcOut;

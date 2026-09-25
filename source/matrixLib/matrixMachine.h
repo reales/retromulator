@@ -7,6 +7,7 @@
 
 #include "matrixHardware.h"
 #include "cem3396.h"
+#include "halfband2x.h"
 
 namespace matrixLib
 {
@@ -34,12 +35,15 @@ namespace matrixLib
 		// true while $1D00 bit 1 mutes the output and routes the voice sum to the ACIA CTS pin
 		bool isCalibrating() const { return (m_hw.getLatch(0x1d00) & 0x02) != 0; }
 
+		static constexpr uint32_t Oversampling = 2;
+
 	private:
 		void buildControls(uint32_t _voice, Cem3396::Controls& _c);
 		float noise();
 
 		Hardware m_hw;
 		std::array<Cem3396, Hardware::VoiceCount> m_voices;
+		Halfband2x m_decimator;
 
 		float m_rate = 48000.0f;
 		double m_cyclesPerSample = Hardware::CpuClock / 48000.0;
