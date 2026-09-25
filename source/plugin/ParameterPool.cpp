@@ -397,6 +397,19 @@ namespace retromulator
         const bool fromOutside = ev.source == synthLib::MidiEventSource::Host
                               || ev.source == synthLib::MidiEventSource::Physical;
         auto* s = m_slots[static_cast<size_t>(slot)];
+
+        // The Matrix firmware ignores these CCs: spread 0-127 over the parameter's range
+        // and send it as a remote parameter edit
+        const auto& b = s->binding();
+        if(map->type == SynthType::Matrix && b.native >= 0 && b.desc)
+        {
+            const int lo = b.desc->range.getStart();
+            const int v = lo + ev.c * (b.desc->range.getEnd() - lo + 1) / 128;
+            s->setFromMidi(v, fromOutside);
+            sendSlot(*s, b, v);
+            return true;
+        }
+
         const bool isSwitch = status == synthLib::M_CONTROLCHANGE && isSwitchSlot(s->binding());
         s->setFromMidi(isSwitch ? (ev.c >= 64 ? 1 : 0) : ev.c, fromOutside);
         return true;

@@ -2359,387 +2359,483 @@
     },
     {
       "param": "slot_008",
-      "nrpn": "0"
+      "nrpn": "0",
+      "cc": "12"
     },
     {
       "param": "slot_009",
-      "nrpn": "1"
+      "nrpn": "1",
+      "cc": "13"
     },
     {
       "param": "slot_010",
-      "nrpn": "2"
+      "nrpn": "2",
+      "cc": "14"
     },
     {
       "param": "slot_011",
-      "nrpn": "3"
+      "nrpn": "3",
+      "cc": "15"
     },
     {
       "param": "slot_012",
-      "nrpn": "4"
+      "nrpn": "4",
+      "cc": "16"
     },
     {
       "param": "slot_013",
-      "nrpn": "5"
+      "nrpn": "5",
+      "cc": "17"
     },
     {
       "param": "slot_014",
-      "nrpn": "6"
+      "nrpn": "6",
+      "cc": "18"
     },
     {
       "param": "slot_015",
-      "nrpn": "7"
+      "nrpn": "7",
+      "cc": "19"
     },
     {
       "param": "slot_016",
-      "nrpn": "8"
+      "nrpn": "8",
+      "cc": "20"
     },
     {
       "param": "slot_017",
-      "nrpn": "9"
+      "nrpn": "9",
+      "cc": "21"
     },
     {
       "param": "slot_018",
-      "nrpn": "a"
+      "nrpn": "a",
+      "cc": "22"
     },
     {
       "param": "slot_019",
-      "nrpn": "b"
+      "nrpn": "b",
+      "cc": "23"
     },
     {
       "param": "slot_020",
-      "nrpn": "c"
+      "nrpn": "c",
+      "cc": "24"
     },
     {
       "param": "slot_021",
-      "nrpn": "d"
+      "nrpn": "d",
+      "cc": "25"
     },
     {
       "param": "slot_022",
-      "nrpn": "e"
+      "nrpn": "e",
+      "cc": "26"
     },
     {
       "param": "slot_023",
-      "nrpn": "f"
+      "nrpn": "f",
+      "cc": "27"
     },
     {
       "param": "slot_024",
-      "nrpn": "10"
+      "nrpn": "10",
+      "cc": "28"
     },
     {
       "param": "slot_025",
-      "nrpn": "11"
+      "nrpn": "11",
+      "cc": "29"
     },
     {
       "param": "slot_026",
-      "nrpn": "12"
+      "nrpn": "12",
+      "cc": "30"
     },
     {
       "param": "slot_027",
-      "nrpn": "13"
+      "nrpn": "13",
+      "cc": "31"
     },
     {
       "param": "slot_028",
-      "nrpn": "14"
+      "nrpn": "14",
+      "cc": "70"
     },
     {
       "param": "slot_029",
-      "nrpn": "15"
+      "nrpn": "15",
+      "cc": "74"
     },
     {
       "param": "slot_030",
-      "nrpn": "16"
+      "nrpn": "16",
+      "cc": "78"
     },
     {
       "param": "slot_031",
-      "nrpn": "17"
+      "nrpn": "17",
+      "cc": "33"
     },
     {
       "param": "slot_032",
-      "nrpn": "18"
+      "nrpn": "18",
+      "cc": "71"
     },
     {
       "param": "slot_033",
-      "nrpn": "19"
+      "nrpn": "19",
+      "cc": "34"
     },
     {
       "param": "slot_034",
-      "nrpn": "1a"
+      "nrpn": "1a",
+      "cc": "35"
     },
     {
       "param": "slot_035",
-      "nrpn": "1b"
+      "nrpn": "1b",
+      "cc": "36"
     },
     {
       "param": "slot_036",
-      "nrpn": "1c"
+      "nrpn": "1c",
+      "cc": "37"
     },
     {
       "param": "slot_037",
-      "nrpn": "1d"
+      "nrpn": "1d",
+      "cc": "39"
     },
     {
       "param": "slot_038",
-      "nrpn": "1e"
+      "nrpn": "1e",
+      "cc": "40"
     },
     {
       "param": "slot_039",
-      "nrpn": "1f"
+      "nrpn": "1f",
+      "cc": "41"
     },
     {
       "param": "slot_040",
-      "nrpn": "20"
+      "nrpn": "20",
+      "cc": "42"
     },
     {
       "param": "slot_041",
-      "nrpn": "21"
+      "nrpn": "21",
+      "cc": "43"
     },
     {
       "param": "slot_042",
-      "nrpn": "22"
+      "nrpn": "22",
+      "cc": "44"
     },
     {
       "param": "slot_043",
-      "nrpn": "23"
+      "nrpn": "23",
+      "cc": "45"
     },
     {
       "param": "slot_044",
-      "nrpn": "24"
+      "nrpn": "24",
+      "cc": "46"
     },
     {
       "param": "slot_045",
-      "nrpn": "25"
+      "nrpn": "25",
+      "cc": "47"
     },
     {
       "param": "slot_046",
-      "nrpn": "26"
+      "nrpn": "26",
+      "cc": "48"
     },
     {
       "param": "slot_047",
-      "nrpn": "28"
+      "nrpn": "28",
+      "cc": "49"
     },
     {
       "param": "slot_048",
-      "nrpn": "29"
+      "nrpn": "29",
+      "cc": "50"
     },
     {
       "param": "slot_049",
-      "nrpn": "2a"
+      "nrpn": "2a",
+      "cc": "51"
     },
     {
       "param": "slot_050",
-      "nrpn": "2b"
+      "nrpn": "2b",
+      "cc": "52"
     },
     {
       "param": "slot_051",
-      "nrpn": "2c"
+      "nrpn": "2c",
+      "cc": "5"
     },
     {
       "param": "slot_052",
-      "nrpn": "2d"
+      "nrpn": "2d",
+      "cc": "53"
     },
     {
       "param": "slot_053",
-      "nrpn": "2e"
+      "nrpn": "2e",
+      "cc": "54"
     },
     {
       "param": "slot_054",
-      "nrpn": "2f"
+      "nrpn": "2f",
+      "cc": "55"
     },
     {
       "param": "slot_055",
-      "nrpn": "30"
+      "nrpn": "30",
+      "cc": "56"
     },
     {
       "param": "slot_056",
-      "nrpn": "32"
+      "nrpn": "32",
+      "cc": "80"
     },
     {
       "param": "slot_057",
-      "nrpn": "33"
+      "nrpn": "33",
+      "cc": "81"
     },
     {
       "param": "slot_058",
-      "nrpn": "34"
+      "nrpn": "34",
+      "cc": "82"
     },
     {
       "param": "slot_059",
-      "nrpn": "35"
+      "nrpn": "35",
+      "cc": "83"
     },
     {
       "param": "slot_060",
-      "nrpn": "36"
+      "nrpn": "36",
+      "cc": "84"
     },
     {
       "param": "slot_061",
-      "nrpn": "37"
+      "nrpn": "37",
+      "cc": "85"
     },
     {
       "param": "slot_062",
-      "nrpn": "38"
+      "nrpn": "38",
+      "cc": "86"
     },
     {
       "param": "slot_063",
-      "nrpn": "39"
+      "nrpn": "39",
+      "cc": "87"
     },
     {
       "param": "slot_064",
-      "nrpn": "3a"
+      "nrpn": "3a",
+      "cc": "88"
     },
     {
       "param": "slot_065",
-      "nrpn": "3b"
+      "nrpn": "3b",
+      "cc": "89"
     },
     {
       "param": "slot_066",
-      "nrpn": "3c"
+      "nrpn": "3c",
+      "cc": "90"
     },
     {
       "param": "slot_067",
-      "nrpn": "3d"
+      "nrpn": "3d",
+      "cc": "73"
     },
     {
       "param": "slot_068",
-      "nrpn": "3e"
+      "nrpn": "3e",
+      "cc": "75"
     },
     {
       "param": "slot_069",
-      "nrpn": "3f"
+      "nrpn": "3f",
+      "cc": "79"
     },
     {
       "param": "slot_070",
-      "nrpn": "40"
+      "nrpn": "40",
+      "cc": "72"
     },
     {
       "param": "slot_071",
-      "nrpn": "41"
+      "nrpn": "41",
+      "cc": "91"
     },
     {
       "param": "slot_072",
-      "nrpn": "42"
+      "nrpn": "42",
+      "cc": "92"
     },
     {
       "param": "slot_073",
-      "nrpn": "43"
+      "nrpn": "43",
+      "cc": "93"
     },
     {
       "param": "slot_074",
-      "nrpn": "44"
+      "nrpn": "44",
+      "cc": "94"
     },
     {
       "param": "slot_075",
-      "nrpn": "45"
+      "nrpn": "45",
+      "cc": "95"
     },
     {
       "param": "slot_076",
-      "nrpn": "46"
+      "nrpn": "46",
+      "cc": "102"
     },
     {
       "param": "slot_077",
-      "nrpn": "47"
+      "nrpn": "47",
+      "cc": "103"
     },
     {
       "param": "slot_078",
-      "nrpn": "48"
+      "nrpn": "48",
+      "cc": "104"
     },
     {
       "param": "slot_079",
-      "nrpn": "49"
+      "nrpn": "49",
+      "cc": "105"
     },
     {
       "param": "slot_080",
-      "nrpn": "4a"
+      "nrpn": "4a",
+      "cc": "106"
     },
     {
       "param": "slot_081",
-      "nrpn": "4b"
+      "nrpn": "4b",
+      "cc": "107"
     },
     {
       "param": "slot_082",
-      "nrpn": "4c"
+      "nrpn": "4c",
+      "cc": "108"
     },
     {
       "param": "slot_083",
-      "nrpn": "4d"
+      "nrpn": "4d",
+      "cc": "109"
     },
     {
       "param": "slot_084",
-      "nrpn": "4e"
+      "nrpn": "4e",
+      "cc": "110"
     },
     {
       "param": "slot_085",
-      "nrpn": "4f"
+      "nrpn": "4f",
+      "cc": "111"
     },
     {
       "param": "slot_086",
-      "nrpn": "50"
+      "nrpn": "50",
+      "cc": "76"
     },
     {
       "param": "slot_087",
-      "nrpn": "51"
+      "nrpn": "51",
+      "cc": "57"
     },
     {
       "param": "slot_088",
-      "nrpn": "52"
+      "nrpn": "52",
+      "cc": "58"
     },
     {
       "param": "slot_089",
-      "nrpn": "53"
+      "nrpn": "53",
+      "cc": "59"
     },
     {
       "param": "slot_090",
-      "nrpn": "54"
+      "nrpn": "54",
+      "cc": "77"
     },
     {
       "param": "slot_091",
-      "nrpn": "55"
+      "nrpn": "55",
+      "cc": "60"
     },
     {
       "param": "slot_092",
-      "nrpn": "56"
+      "nrpn": "56",
+      "cc": "61"
     },
     {
       "param": "slot_093",
-      "nrpn": "57"
+      "nrpn": "57",
+      "cc": "62"
     },
     {
       "param": "slot_094",
-      "nrpn": "58"
+      "nrpn": "58",
+      "cc": "63"
     },
     {
       "param": "slot_095",
-      "nrpn": "5a"
+      "nrpn": "5a",
+      "cc": "112"
     },
     {
       "param": "slot_096",
-      "nrpn": "5b"
+      "nrpn": "5b",
+      "cc": "113"
     },
     {
       "param": "slot_097",
-      "nrpn": "5c"
+      "nrpn": "5c",
+      "cc": "114"
     },
     {
       "param": "slot_098",
-      "nrpn": "5d"
+      "nrpn": "5d",
+      "cc": "115"
     },
     {
       "param": "slot_099",
-      "nrpn": "5e"
+      "nrpn": "5e",
+      "cc": "116"
     },
     {
       "param": "slot_100",
-      "nrpn": "5f"
+      "nrpn": "5f",
+      "cc": "117"
     },
     {
       "param": "slot_101",
-      "nrpn": "60"
+      "nrpn": "60",
+      "cc": "118"
     },
     {
       "param": "slot_102",
-      "nrpn": "61"
+      "nrpn": "61",
+      "cc": "119"
     },
     {
       "param": "slot_103",
-      "nrpn": "62"
+      "nrpn": "62",
+      "cc": "9"
     }
   ]
 }
