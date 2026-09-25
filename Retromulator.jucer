@@ -69,6 +69,7 @@
       <FILE id="pj0012" name="parameterDescriptions_xt.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_xt.json"/>
           <FILE id="pj0013" name="parameterDescriptions_emu88.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_emu88.json"/>
       <FILE id="pj0014" name="parameterDescriptions_tracker.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_tracker.json"/>
+      <FILE id="pj0015" name="parameterDescriptions_matrix.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_matrix.json"/>
       </GROUP>
     <GROUP id="plugin" name="plugin">
       <FILE id="f0001" name="HeadlessProcessor.h" compile="0" resource="0"
@@ -488,6 +489,28 @@
       <FILE id="dx003" name="dx7.cpp" compile="1" resource="0" file="source/dx7Lib/dx7.cpp"/>
       <FILE id="dx004" name="device.cpp" compile="1" resource="0" file="source/dx7Lib/device.cpp"/>
       <FILE id="dx005" name="romloader.cpp" compile="1" resource="0" file="source/dx7Lib/romloader.cpp"/>
+    </GROUP>
+    <GROUP id="matrixLib" name="matrixLib">
+      <FILE id="mx001" name="acia6850.cpp" compile="1" resource="0" file="source/matrixLib/acia6850.cpp"/>
+      <FILE id="mx002" name="acia6850.h" compile="0" resource="0" file="source/matrixLib/acia6850.h"/>
+      <FILE id="mx003" name="cem3396.cpp" compile="1" resource="0" file="source/matrixLib/cem3396.cpp"/>
+      <FILE id="mx004" name="cem3396.h" compile="0" resource="0" file="source/matrixLib/cem3396.h"/>
+      <FILE id="mx005" name="device.cpp" compile="1" resource="0" file="source/matrixLib/device.cpp"/>
+      <FILE id="mx006" name="device.h" compile="0" resource="0" file="source/matrixLib/device.h"/>
+      <FILE id="mx007" name="m6809.cpp" compile="1" resource="0" file="source/matrixLib/m6809.cpp"/>
+      <FILE id="mx008" name="m6809.h" compile="0" resource="0" file="source/matrixLib/m6809.h"/>
+      <FILE id="mx009" name="matrixHardware.cpp" compile="1" resource="0" file="source/matrixLib/matrixHardware.cpp"/>
+      <FILE id="mx010" name="matrixHardware.h" compile="0" resource="0" file="source/matrixLib/matrixHardware.h"/>
+      <FILE id="mx011" name="matrixMachine.cpp" compile="1" resource="0" file="source/matrixLib/matrixMachine.cpp"/>
+      <FILE id="mx012" name="matrixMachine.h" compile="0" resource="0" file="source/matrixLib/matrixMachine.h"/>
+      <FILE id="mx013" name="patch.cpp" compile="1" resource="0" file="source/matrixLib/patch.cpp"/>
+      <FILE id="mx014" name="patch.h" compile="0" resource="0" file="source/matrixLib/patch.h"/>
+      <FILE id="mx015" name="patchNames.cpp" compile="1" resource="0" file="source/matrixLib/patchNames.cpp"/>
+      <FILE id="mx016" name="patchNames.h" compile="0" resource="0" file="source/matrixLib/patchNames.h"/>
+      <FILE id="mx017" name="pit8254.cpp" compile="1" resource="0" file="source/matrixLib/pit8254.cpp"/>
+      <FILE id="mx018" name="pit8254.h" compile="0" resource="0" file="source/matrixLib/pit8254.h"/>
+      <FILE id="mx019" name="romloader.cpp" compile="1" resource="0" file="source/matrixLib/romloader.cpp"/>
+      <FILE id="mx020" name="romloader.h" compile="0" resource="0" file="source/matrixLib/romloader.h"/>
     </GROUP>
     <GROUP id="espLib" name="espLib">
       <FILE id="es001" name="esp_jit.cpp" compile="1" resource="0" file="source/ronaldo/esp/esp_jit.cpp"/>

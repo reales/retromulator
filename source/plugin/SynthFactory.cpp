@@ -22,6 +22,9 @@
 #include "dx7Lib/device.h"
 #include "dx7Lib/romloader.h"
 
+#include "matrixLib/device.h"
+#include "matrixLib/romloader.h"
+
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
 #include "opl3Lib/device.h"
@@ -199,6 +202,24 @@ namespace retromulator
                 p.romData  = rom.getData();
                 p.romName  = rom.getFilename();
                 return new dx7Emu::Device(p);
+            }
+
+            case SynthType::Matrix:
+            {
+                const auto rom = matrixLib::RomLoader::findROM();
+                if(rom.firmware.empty())
+                    throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing,
+                        "Matrix-1000 firmware not found. Place the 32 KB system EPROM .bin (and the 64 KB patch EPROM .bin) in the search path.");
+
+                // system EPROM, then the patch EPROM when present; the device keeps its
+                // calibration snapshot and the ROM bank files in the Matrix data folder
+                synthLib::DeviceCreateParams p;
+                p.romData = rom.firmware;
+                p.romData.insert(p.romData.end(), rom.patchRom.begin(), rom.patchRom.end());
+                p.romName = rom.firmwareFile;
+                if(!romSearchPath().empty())
+                    p.homePath = romSearchPath() + synthTypeName(SynthType::Matrix) + "/";
+                return new matrixLib::Device(p);
             }
 
             case SynthType::AkaiS1000:

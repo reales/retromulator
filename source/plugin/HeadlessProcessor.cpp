@@ -34,6 +34,9 @@
 #include "virusLib/romfile.h"
 #include "dx7Lib/device.h"
 #include "dx7Lib/romloader.h"
+#include "matrixLib/device.h"
+#include "matrixLib/patch.h"
+#include "matrixLib/romloader.h"
 #include "virusLib/deviceModel.h"
 #include "virusLib/microcontrollerTypes.h"
 #ifdef CUSTOM
@@ -232,6 +235,7 @@ namespace retromulator
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
         case SynthType::DX7:       return dx7Emu::RomLoader::findROM().isValid();
+        case SynthType::Matrix:    return !matrixLib::RomLoader::findROM().firmware.empty();
         case SynthType::Emu88:
         {
             // Content-identified sets; rescan so a dump the user just imported is seen.
@@ -714,6 +718,8 @@ namespace retromulator
                     reloadTrackerModule();
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
+                else if(type == SynthType::Matrix)
+                    applyMatrixLfoSync();
                 else if(type == SynthType::Ayumi)
                 {
                     // Two banks: Factory (read-only presets) and User (imports).
@@ -731,7 +737,7 @@ namespace retromulator
         setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000
                        || type == SynthType::OpenWurli || type == SynthType::OPL3
                        || type == SynthType::SID || type == SynthType::Ayumi
-                       || type == SynthType::Trackermeister) ? 0 : 1);
+                       || type == SynthType::Trackermeister || type == SynthType::Matrix) ? 0 : 1);
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -838,7 +844,7 @@ namespace retromulator
                 const bool isSynchronous = (type == SynthType::JE8086 || type == SynthType::AkaiS1000
                                          || type == SynthType::OpenWurli || type == SynthType::OPL3
                                          || type == SynthType::Ayumi || type == SynthType::Trackermeister
-                                         || type == SynthType::None);
+                                         || type == SynthType::Matrix || type == SynthType::None);
                 const bool isN2X = (type == SynthType::NordN2X);
                 setLatencyBlocks(isSynchronous ? 0 : (isN2X ? 1 : 3));
             }
@@ -864,6 +870,8 @@ namespace retromulator
                     reloadTrackerModule();
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
+                else if(type == SynthType::Matrix)
+                    applyMatrixLfoSync();
                 else if(type == SynthType::Ayumi)
                 {
                     // Two banks: Factory (read-only presets) and User (imports).
@@ -962,6 +970,9 @@ namespace retromulator
 
         case SynthType::DX7:
             return dx7Emu::Device::extractPatchName(msg.data(), msg.size());
+
+        case SynthType::Matrix:
+            return matrixLib::patch::getName(msg);
 
         default:
             return {};
@@ -1146,6 +1157,11 @@ namespace retromulator
 
         synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
         ev.sysex = m_bankMessages[static_cast<size_t>(rawStart)];
+
+        // Matrix single patch (F0 10 06 01 nn ...) stores into slot nn of the current bank and
+        // is dropped for the ROM banks; opcode 0D loads it into the edit buffer so it plays.
+        if(m_synthType == SynthType::Matrix)
+            matrixLib::patch::toEditBuffer(ev.sysex);
 
         // n2x single dump: F0 33 <device> 04 <bank> <prog> ...
         // Bank dumps (bank != 0x00) target stored slots — the synth stores them
@@ -2860,6 +2876,52 @@ namespace retromulator
         }
     }
 
+    // ── Matrix LFO tempo sync ───────────────────────────────────────────────
+
+    matrixLib::Device* HeadlessProcessor::getMatrixDevice() const
+    {
+        if(m_synthType != SynthType::Matrix)
+            return nullptr;
+        return dynamic_cast<matrixLib::Device*>(m_device.get());
+    }
+
+    int HeadlessProcessor::getMatrixLfoDivisionCount()
+    {
+        return static_cast<int>(matrixLib::Device::getLfoDivisionCount());
+    }
+
+    std::string HeadlessProcessor::getMatrixLfoDivisionName(const int division)
+    {
+        return matrixLib::Device::getLfoDivisionName(static_cast<uint32_t>(division));
+    }
+
+    void HeadlessProcessor::setMatrixLfoSync(const int lfo, const int division)
+    {
+        m_matrixLfoSync[lfo & 1] = division;
+        applyMatrixLfoSync();
+    }
+
+    void HeadlessProcessor::applyMatrixLfoSync()
+    {
+        if(auto* dev = getMatrixDevice())
+        {
+            dev->setLfoSync(0, static_cast<uint32_t>(m_matrixLfoSync[0]));
+            dev->setLfoSync(1, static_cast<uint32_t>(m_matrixLfoSync[1]));
+        }
+    }
+
+    bool HeadlessProcessor::hasMatrixHostTempo() const
+    {
+        const auto* dev = getMatrixDevice();
+        return dev && dev->getHostBpm() > 0.0f;
+    }
+
+    bool HeadlessProcessor::isMatrixLfoDivisionReachable(const int division) const
+    {
+        const auto* dev = getMatrixDevice();
+        return dev && dev->isLfoDivisionReachable(static_cast<uint32_t>(division));
+    }
+
     // ── Trackermeister ──────────────────────────────────────────────────────
 
     trackerLib::Device* HeadlessProcessor::getTrackerDevice() const
@@ -3074,6 +3136,8 @@ namespace retromulator
     void HeadlessProcessor::processBpm(const float bpm)
     {
         if(auto* dev = getTrackerDevice())
+            dev->setHostBpm(bpm);
+        if(auto* dev = getMatrixDevice())
             dev->setHostBpm(bpm);
     }
 
@@ -3888,6 +3952,7 @@ namespace retromulator
     static constexpr int32_t kTrackerPlaylistMagic = 0x504B5254;
     // "TRKO": tracker options, a bit field. 1 = stop at end, 2 = shuffle.
     static constexpr int32_t kTrackerOptionsMagic = 0x4F4B5254;
+    static constexpr int32_t kMatrixLfoSyncMagic = 0x534C584D;   // 'MXLS'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -4048,6 +4113,14 @@ namespace retromulator
             appendInt32(destData, (m_trackerStopAtEnd ? 1 : 0) | (m_trackerShuffle ? 2 : 0));
         }
 
+        // ['MXLS':int32][lfo1 division:int32][lfo2 division:int32]
+        if(m_synthType == SynthType::Matrix)
+        {
+            appendInt32(destData, kMatrixLfoSyncMagic);
+            appendInt32(destData, m_matrixLfoSync[0]);
+            appendInt32(destData, m_matrixLfoSync[1]);
+        }
+
         // Board the session was using, taken from the live device rather than the shared
         // value, so what is saved is what this instance actually booted.
         // ['E88D':int32][model:int32]
@@ -4141,7 +4214,25 @@ namespace retromulator
                 m_restoredEmu88Model = model;
         }
 
+        // Matrix LFO sync sits in the last twelve bytes; read before boot so the device gets it
+        m_matrixLfoSync[0] = m_matrixLfoSync[1] = 0;
+        if(newType == SynthType::Matrix && sizeInBytes >= 12)
+        {
+            int32_t magic = 0, lfo1 = 0, lfo2 = 0;
+            std::memcpy(&magic, bytes + sizeInBytes - 12, 4);
+            std::memcpy(&lfo1, bytes + sizeInBytes - 8, 4);
+            std::memcpy(&lfo2, bytes + sizeInBytes - 4, 4);
+            const auto count = getMatrixLfoDivisionCount();
+            if(magic == kMatrixLfoSyncMagic && lfo1 >= 0 && lfo1 < count && lfo2 >= 0 && lfo2 < count)
+            {
+                m_matrixLfoSync[0] = lfo1;
+                m_matrixLfoSync[1] = lfo2;
+            }
+        }
+
         setSynthType(newType, romPath);
+        if(newType == SynthType::Matrix)
+            applyMatrixLfoSync();
 
         if(newType == SynthType::AkaiS1000)
         {

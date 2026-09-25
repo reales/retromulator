@@ -33,6 +33,9 @@ namespace retromulator
         // 88emu boards occupy 9100+, one per model: the bank combo picks the board
         // because the SC family has no bank files to list.
         static constexpr int kEmu88BoardFirst  = 9100;
+        static constexpr int kMatrixLfo1Sync   = 9860;
+        static constexpr int kMatrixLfo2Sync   = 9861;
+        static constexpr int kMatrixLfoDivFirst = 9820;
 
         juce::String m_lastSysexPath;
         juce::String m_lastBankFolder;
@@ -49,6 +52,8 @@ namespace retromulator
         void onExportPreset();
         void onExportBank();
         void onConvertVirusBank(char targetVersion);
+        void showMatrixLfoSyncMenu(int lfo);
+        void updateMatrixLfoSyncItems();
         void navigatePatch(int delta);
         void navigateBankFolder(int delta);
         void onSynthTypeChanged();

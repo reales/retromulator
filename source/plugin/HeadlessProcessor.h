@@ -25,6 +25,7 @@ namespace sidLib { class Device; }
 namespace ayumiLib { class Device; }
 namespace emu88Lib { class HardwareDevice; }
 namespace trackerLib { class Device; }
+namespace matrixLib { class Device; }
 
 namespace retromulator
 {
@@ -325,6 +326,17 @@ namespace retromulator
 
         const juce::String getName() const override { return "Retromulator"; }
 
+        // ── Matrix LFO tempo sync ──────────────────────────────────────────
+        // Division 0 is off. The device sends the nearest firmware LFO speed after every
+        // tempo change and patch load, so the patch's own speed is replaced while synced.
+        matrixLib::Device* getMatrixDevice() const;
+        static int getMatrixLfoDivisionCount();
+        static std::string getMatrixLfoDivisionName(int division);
+        int  getMatrixLfoSync(int lfo) const { return m_matrixLfoSync[lfo & 1]; }
+        void setMatrixLfoSync(int lfo, int division);
+        bool hasMatrixHostTempo() const;
+        bool isMatrixLfoDivisionReachable(int division) const;
+
         // ── Trackermeister (tracker module player) ─────────────────────────
         // The device owns the transport: note 12 plays, 14 stops, 13 and 15 step a
         // playlist, and 24 upward start the song at order (note - 24). These mirror that
@@ -515,6 +527,8 @@ namespace retromulator
         std::vector<uint8_t> m_trackerFileData;
         std::string          m_trackerFileName;
         bool                 m_trackerTempoSync = false;
+        int                  m_matrixLfoSync[2] = {0, 0};
+        void applyMatrixLfoSync();
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;
         void reloadTrackerModule();

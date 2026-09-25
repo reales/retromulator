@@ -19,6 +19,7 @@ namespace retromulator
         Ayumi     = 11, // AY-3-8910 / YM2149 PSG (Ayumi + Ym2149Synth voice engine)
         Emu88     = 12, // Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII (Ronaldo 88emu)
         Trackermeister = 13, // XM / MOD (FT2 replayer) and S3M / IT (Schism player) module player
+        Matrix    = 14, // Oberheim Matrix-1000 (6809 firmware + CEM3396 voice model)
 
         Count
     };
@@ -32,6 +33,7 @@ namespace retromulator
             SynthType::Ayumi,
             SynthType::DX7,
             SynthType::JE8086,
+            SynthType::Matrix,
             SynthType::MicroQ,
             SynthType::NordN2X,
             SynthType::OPL3,
@@ -64,6 +66,7 @@ namespace retromulator
             case SynthType::Ayumi:     return "Ayumi";
             case SynthType::Emu88:     return "88emu";
             case SynthType::Trackermeister: return "Tracker";
+            case SynthType::Matrix:    return "Matrix";
             default:                   return "None";
         }
     }

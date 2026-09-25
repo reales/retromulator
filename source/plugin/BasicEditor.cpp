@@ -171,6 +171,12 @@ namespace retromulator
                 onConvertVirusBank('A');
                 return;
             }
+            if(id == kMatrixLfo1Sync || id == kMatrixLfo2Sync)
+            {
+                m_bankCombo.setSelectedId(0, juce::dontSendNotification);
+                showMatrixLfoSyncMenu(id == kMatrixLfo1Sync ? 0 : 1);
+                return;
+            }
             // Switching board means a full reboot: the models differ in CPU, chipset and
             // ROM set, so it is not a live parameter.
             if(id >= kEmu88BoardFirst)
@@ -387,7 +393,7 @@ namespace retromulator
             const bool virusABC = (type == SynthType::VirusABC);
             // Import + ExportPreset + ExportBank = 3; +ConvertB + ConvertA = 5 for Virus ABC
             // (separators don't count in getNumItems)
-            const int extraItems = akai ? 1 : (virusABC ? 5 : 3);
+            const int extraItems = akai ? 1 : (virusABC ? 5 : 3) + (type == SynthType::Matrix ? 2 : 0);
             const int fileCount = files.size();
             bool needsRebuild = (m_bankCombo.getNumItems() != fileCount + extraItems);
             if(!needsRebuild)
@@ -411,8 +417,16 @@ namespace retromulator
                         m_bankCombo.addItem("[ Convert to Virus B... ]", kConvertToVirusB);
                         m_bankCombo.addItem("[ Convert to Virus A... ]", kConvertToVirusA);
                     }
+                    if(type == SynthType::Matrix)
+                    {
+                        m_bankCombo.addSeparator();
+                        m_bankCombo.addItem("LFO 1 Sync", kMatrixLfo1Sync);
+                        m_bankCombo.addItem("LFO 2 Sync", kMatrixLfo2Sync);
+                    }
                 }
             }
+            if(type == SynthType::Matrix)
+                updateMatrixLfoSyncItems();
 
             int selId = 0;
             for(int i = 0; i < files.size(); ++i)
@@ -982,6 +996,46 @@ namespace retromulator
         }
 
         updateStatus();
+    }
+
+    void BasicEditor::updateMatrixLfoSyncItems()
+    {
+        for(int lfo = 0; lfo < 2; ++lfo)
+        {
+            const int div = m_proc.getMatrixLfoSync(lfo);
+            const juce::String label = "[ LFO " + juce::String(lfo + 1) + " Sync: "
+                + (div == 0 ? juce::String("Off") : juce::String(HeadlessProcessor::getMatrixLfoDivisionName(div))) + " ]";
+            m_bankCombo.changeItemText(lfo == 0 ? kMatrixLfo1Sync : kMatrixLfo2Sync, label);
+        }
+    }
+
+    void BasicEditor::showMatrixLfoSyncMenu(const int lfo)
+    {
+        juce::PopupMenu menu;
+        const bool tempo = m_proc.hasMatrixHostTempo();
+        const int current = m_proc.getMatrixLfoSync(lfo);
+        const int count = HeadlessProcessor::getMatrixLfoDivisionCount();
+        for(int d = 0; d < count; ++d)
+        {
+            // without a tempo every division can still be chosen; it applies once one arrives
+            const bool reachable = d == 0 || !tempo || m_proc.isMatrixLfoDivisionReachable(d);
+            menu.addItem(kMatrixLfoDivFirst + d, HeadlessProcessor::getMatrixLfoDivisionName(d), reachable, d == current);
+        }
+        if(!tempo)
+        {
+            menu.addSeparator();
+            menu.addItem(-1, "No host tempo or MIDI clock", false, false);
+        }
+
+        juce::Component::SafePointer<BasicEditor> safe(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_bankCombo),
+            [safe, lfo, count](int r)
+            {
+                if(!safe || r < kMatrixLfoDivFirst || r >= kMatrixLfoDivFirst + count) return;
+                safe->m_proc.setMatrixLfoSync(lfo, r - kMatrixLfoDivFirst);
+                safe->updateMatrixLfoSyncItems();
+                safe->updateStatus();
+            });
     }
 
     void BasicEditor::onFirmwareMissing(SynthType type)
