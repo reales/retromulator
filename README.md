@@ -16,6 +16,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
 | Commodore 64 SID 6581 / 8580 | reSID cycle-accurate |
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
+| Oberheim Matrix-1000 | 6809 firmware + CEM3396 voice model |
 | Roland JP-8000 (JE-8086) | H8S CPU and 4x ESP ASIC cycle-accurate |
 | Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII | H8/500 and SH-2 cycle-accurate |
 | Tracker modules (XM / MOD / S3M / IT) | Fasttracker 2 and Schism Tracker replayers |
@@ -25,7 +26,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, AY-3-8910, and Tracker cores are ROM-free.
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, AY-3-8910, and Tracker cores are ROM-free.
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
@@ -41,13 +42,15 @@ The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer
 
 The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file, or a playlist of them, can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
 
+The **Oberheim Matrix-1000** runs the original firmware on an emulated 6809 board (82C54 timers, 6850 UART, S&H DAC, latches) driving six CEM3396 voice models with BLEP oscillators and 2x oversampling. The firmware calibrates the voices itself at first boot, and the result is kept as a snapshot so later boots are instant. ROM banks 2 to 9 are dumped from the patch EPROM into .syx files with the factory names. Every patch parameter is exposed to the host and mapped to a MIDI CC, and both LFOs can follow the host tempo, MIDI clock or a SysEx tempo.
+
 The standalone app opens modules, .m3u playlists and .mid files handed over by the OS (double click, Open With, or a drop on the dock icon) and switches to the matching core.
 
 ## How it differs from Gearmulator
 
 Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
 
-The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The SID emulation uses reSID by Dag Lem. The AY-3-8910 / YM2149 emulation uses Ayumi by Peter Sovietov. The JE-8086 and SC-88 family emulations are by Giulio Zausa. The Tracker core uses the Fasttracker 2 clone replayer by Olav Sorensen and the Schism Tracker player. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP. The synthLib device adapters that wrap each engine (SID, AY-3-8910, OpenWurli, OPL3 and Tracker), the bank and patch handling, the offline WAV / MP3 renderer and the host parameter pool are by discoDSP.
+The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The SID emulation uses reSID by Dag Lem. The AY-3-8910 / YM2149 emulation uses Ayumi by Peter Sovietov. The JE-8086 and SC-88 family emulations are by Giulio Zausa. The Tracker core uses the Fasttracker 2 clone replayer by Olav Sorensen and the Schism Tracker player. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP. The Matrix-1000 emulation (6809 board and CEM3396 voice model) is by discoDSP. The synthLib device adapters that wrap each engine (SID, AY-3-8910, OpenWurli, OPL3 and Tracker), the bank and patch handling, the offline WAV / MP3 renderer and the host parameter pool are by discoDSP.
 
 ## Credits
 
@@ -66,7 +69,7 @@ The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libra
 - **Jean-Marc Valin** — [Speex](https://www.speex.org/) arbitrary-rate resampler, BSD 3-Clause
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
 - **Leo Olivers** — SFZero JUCE module port
-- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, GPL v3
+- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3
 - **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
 
 JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
