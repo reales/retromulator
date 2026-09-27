@@ -6,7 +6,9 @@
 #include "baseLib/filesystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 
@@ -102,6 +104,20 @@ namespace matrixLib
 		{
 			std::ifstream f(_path, std::ios::binary);
 			return f.is_open();
+		}
+
+		// another process (the app and its AUv3 share the folder) never sees a partial file
+		bool writeFileAtomic(const std::string& _path, const std::vector<uint8_t>& _data)
+		{
+			static std::atomic<uint32_t> s_counter{0};
+			const auto id = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + s_counter.fetch_add(1);
+			const auto tmp = _path + ".tmp" + std::to_string(id);
+			if(!baseLib::filesystem::writeFile(tmp, _data))
+				return false;
+			if(std::rename(tmp.c_str(), _path.c_str()) == 0)
+				return true;
+			std::remove(tmp.c_str());
+			return false;
 		}
 
 		std::string withSlash(const std::string& _path)
@@ -206,7 +222,7 @@ namespace matrixLib
 		const auto sum = firmwareSum(getDeviceCreateParams().romData);
 		data.insert(data.end(), reinterpret_cast<const uint8_t*>(&sum), reinterpret_cast<const uint8_t*>(&sum) + 4);
 		data.insert(data.end(), sram.begin(), sram.end());
-		baseLib::filesystem::writeFile(m_homePath + SnapshotFile, data);
+		writeFileAtomic(m_homePath + SnapshotFile, data);
 	}
 
 	void Device::boot()
@@ -311,7 +327,7 @@ namespace matrixLib
 			}
 
 			if(!out.empty())
-				baseLib::filesystem::writeFile(file, out);
+				writeFileAtomic(file, out);
 		}
 
 		// return to the state the snapshot describes
