@@ -32,7 +32,11 @@ namespace matrixLib
 				return 0;
 			switch(_ev.a & 0xf0)
 			{
-			case 0xb0: return 0x10000u | (_ev.a << 8) | _ev.b;
+			case 0xb0:
+				// switches, bank select, data entry and mode messages carry state in every value
+				if(_ev.b == 0 || _ev.b == 32 || _ev.b == 6 || _ev.b == 38 || (_ev.b >= 64 && _ev.b <= 69) || _ev.b >= 96)
+					return 0;
+				return 0x10000u | (_ev.a << 8) | _ev.b;
 			case 0xd0:
 			case 0xe0: return 0x10000u | (_ev.a << 8);
 			default:   return 0;
@@ -276,10 +280,9 @@ namespace matrixLib
 			return;
 
 		auto& hw = m_machine.getHardware();
-		auto& acia = hw.getAcia();
 
-		// the dumps only need to be correct, not real time: run the UART faster meanwhile
-		acia.setCyclesPerByte(Hardware::MidiCyclesPerByte / 4);
+		// the dumps only need to be correct, not real time
+		hw.getAcia().setCyclesPerByte(UartCyclesPerByte);
 
 		for(uint32_t bank = 2; bank <= 9; ++bank)
 		{
@@ -311,8 +314,6 @@ namespace matrixLib
 				baseLib::filesystem::writeFile(file, out);
 		}
 
-		acia.setCyclesPerByte(UartCyclesPerByte);
-
 		// return to the state the snapshot describes
 		loadSnapshot();
 		m_machine.reset();
@@ -333,6 +334,11 @@ namespace matrixLib
 	{
 		m_lfoSync[_lfo & 1].store(_division < LfoDivisionCount ? _division : 0);
 		m_lfoSyncDirty.store(true);
+	}
+
+	bool Device::hasTempoSource() const
+	{
+		return m_hostBpm.load() > 0.0f || m_clockBpm.load() > 0.0f || m_sysexBpm.load() > 0.0f;
 	}
 
 	float Device::getHostBpm() const
@@ -370,6 +376,10 @@ namespace matrixLib
 			const auto division = m_lfoSync[lfo].load();
 			if(division == 0 || bpm <= 0.0f)
 			{
+				// give the patch its own speed back
+				if(m_sentSpeed[lfo] >= 0 && m_patchLfoSpeed[lfo] >= 0)
+					for(const auto b : patch::createParamChange(LfoSpeedParam[lfo], m_patchLfoSpeed[lfo]))
+						hw.midiIn(b);
 				m_sentSpeed[lfo] = -1;
 				continue;
 			}
@@ -429,9 +439,23 @@ namespace matrixLib
 				hw.midiIn(b);
 			// a new patch or an edit of the speed itself replaces the synced value
 			const auto& sx = _ev.sysex;
-			if(sx.size() > 4 && sx[1] == patch::IdOberheim && sx[2] == patch::IdMatrix &&
-				(sx[3] == patch::OpEditBuffer || sx[3] == patch::OpSinglePatch || (sx[3] == patch::OpParameter && (sx[4] == LfoSpeedParam[0] || sx[4] == LfoSpeedParam[1]))))
-				m_lfoSyncDirty.store(true);
+			if(sx.size() > 5 && sx[1] == patch::IdOberheim && sx[2] == patch::IdMatrix)
+			{
+				if(sx[3] == patch::OpEditBuffer)
+				{
+					if(const auto data = patch::decode(sx))
+						for(uint32_t lfo = 0; lfo < 2; ++lfo)
+							m_patchLfoSpeed[lfo] = (*data)[patch::findParam(LfoSpeedParam[lfo])->byte];
+					m_lfoSyncDirty.store(true);
+				}
+				else if(sx[3] == patch::OpSinglePatch)
+					m_lfoSyncDirty.store(true);
+				else if(sx[3] == patch::OpParameter && (sx[4] == LfoSpeedParam[0] || sx[4] == LfoSpeedParam[1]))
+				{
+					m_patchLfoSpeed[sx[4] == LfoSpeedParam[0] ? 0 : 1] = sx[5] & 0x7f;
+					m_lfoSyncDirty.store(true);
+				}
+			}
 			return;
 		}
 
@@ -444,7 +468,10 @@ namespace matrixLib
 			return;
 
 		if((status & 0xf0) == 0xc0)
+		{
+			m_patchLfoSpeed[0] = m_patchLfoSpeed[1] = -1;
 			m_lfoSyncDirty.store(true);
+		}
 
 		hw.midiIn(status);
 		switch(status & 0xf0)
@@ -551,7 +578,15 @@ namespace matrixLib
 
 		if(_byte & 0x80)
 		{
-			m_txRunningStatus = _byte;
+			// F4-F7 carry no data
+			if(_byte >= 0xf4)
+			{
+				if(_byte != 0xf7)
+					m_midiOut.emplace_back(synthLib::MidiEventSource::Device, _byte, 0, 0);
+				m_txRunningStatus = 0;
+			}
+			else
+				m_txRunningStatus = _byte;
 			m_txShort.clear();
 			return;
 		}
@@ -560,11 +595,13 @@ namespace matrixLib
 
 		m_txShort.push_back(_byte);
 		const auto type = m_txRunningStatus & 0xf0;
-		const size_t len = (type == 0xc0 || type == 0xd0) ? 1 : 2;
+		const size_t len = (type == 0xc0 || type == 0xd0 || m_txRunningStatus == 0xf1 || m_txRunningStatus == 0xf3) ? 1 : 2;
 		if(m_txShort.size() == len)
 		{
 			m_midiOut.emplace_back(synthLib::MidiEventSource::Device, m_txRunningStatus, m_txShort[0], len > 1 ? m_txShort[1] : 0);
 			m_txShort.clear();
+			if(type == 0xf0)
+				m_txRunningStatus = 0;
 		}
 	}
 

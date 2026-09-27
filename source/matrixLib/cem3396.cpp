@@ -247,7 +247,19 @@ namespace matrixLib
 			const double dA = _c.periodA > 0.0f ? static_cast<double>(m_invRate) / _c.periodA : 0.0;
 			const double phaseAtEvent = m_a.phase + dA * (1.0 - b.wrapD);
 			if(phaseAtEvent >= window[_c.sync] && phaseAtEvent < 1.0)
+			{
+				// the forced discharge is band-limited like the converter's own wrap
+				if(_c.periodA > 0.0f && _c.rtCtA > 0.0f && phaseAtEvent > 0.0)
+				{
+					const float vp = std::max(0.0f, _c.wsA) * _c.periodA / _c.rtCtA;
+					const float v = vp * static_cast<float>(phaseAtEvent);
+					slopedA.step(-shaper(v), b.wrapD);
+					slopedA.kink((shaperSlope(0.0f) - shaperSlope(v)) * vp * static_cast<float>(dA), b.wrapD);
+					if(_c.pwA > 0.0f && _c.pwA < vp && v >= _c.pwA)
+						pulseA.step(2.0f, b.wrapD);
+				}
 				m_a.phase = -dA * (1.0 - b.wrapD);
+			}
 		}
 
 		const ConverterOut a = runConverter(m_a.phase, _c.periodA, _c.rtCtA, _c.wsA, _c.pwA, m_invRate, slopedA, pulseA);

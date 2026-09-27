@@ -11,9 +11,8 @@
 
 namespace matrixLib
 {
-	// Oberheim Matrix-1000: original firmware on an emulated 6809 board driving six CEM3396 models.
-	// DeviceCreateParams: romData = 32 KB system EPROM followed by the optional 64 KB patch EPROM,
-	// homePath = folder for the calibration snapshot and the generated ROM bank files.
+	// Original firmware on an emulated 6809 board driving six CEM3396 models. romData = 32 KB system
+	// EPROM followed by the optional 64 KB patch EPROM, homePath = calibration snapshot and ROM banks
 	class Device : public synthLib::Device
 	{
 	public:
@@ -40,9 +39,8 @@ namespace matrixLib
 		// file names of the banks built from the patch EPROM, 2-9
 		static std::string romBankFileName(uint32_t _bank);
 
-		// LFO speed locked to the host tempo. Division 0 is off, the others index
-		// getLfoDivisionName. The nearest of the 64 firmware speeds is sent after every
-		// tempo change and patch load.
+		// LFO speed locked to the host tempo, division 0 = off. The nearest of the 64 firmware
+		// speeds is sent after every tempo change and patch load
 		static uint32_t getLfoDivisionCount();
 		static const char* getLfoDivisionName(uint32_t _division);
 		void setLfoSync(uint32_t _lfo, uint32_t _division);
@@ -51,6 +49,7 @@ namespace matrixLib
 		// host playhead tempo, else incoming MIDI clock, else the last SysEx tempo, else 120
 		// (F0 7D 54 t1 t2 t3 F7: microseconds per quarter note, three 7 bit bytes, high first)
 		float getHostBpm() const;
+		bool hasTempoSource() const;
 		// false when no speed step lands within a few percent of the division at this tempo
 		bool isLfoDivisionReachable(uint32_t _division) const;
 
@@ -103,5 +102,6 @@ namespace matrixLib
 		std::atomic<bool> m_lfoSyncDirty{false};
 		float m_sentBpm = 0.0f;
 		int m_sentSpeed[2] = {-1, -1};
+		int m_patchLfoSpeed[2] = {-1, -1};
 	};
 }

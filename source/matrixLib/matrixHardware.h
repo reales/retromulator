@@ -51,9 +51,8 @@ namespace matrixLib
 
 		std::vector<uint8_t>& getSram() { return m_sram; }
 
-		// A6..A1 select the sample and hold: mux 0-5 feed the voices (WSA, FREQ, LOG, PWA, LIN,
-		// PWB, MOD, WSB), mux 6-7 hold balance and resonance. A8 shifts the DAC output by -2.5 V.
-		// Codes are raw >> 3; a normal write sets bit 15, so 4096 is 0 V and 8191 is +5 V.
+		// S&H mux 0-5 feed the voices, mux 6-7 hold balance and resonance; A8 shifts the DAC
+		// by -2.5 V. Codes are raw >> 3, a normal write sets bit 15: 4096 is 0 V, 8191 is +5 V
 		enum CvIndex : uint8_t { CvWsA, CvFreq, CvLog, CvPwA, CvLin, CvPwB, CvMod, CvWsB };
 
 		static constexpr uint32_t cvChannel(uint16_t _addr) { return (_addr >> 1) & 0x3f; }

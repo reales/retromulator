@@ -2913,7 +2913,7 @@ namespace retromulator
     bool HeadlessProcessor::hasMatrixHostTempo() const
     {
         const auto* dev = getMatrixDevice();
-        return dev && dev->getHostBpm() > 0.0f;
+        return dev && dev->hasTempoSource();
     }
 
     bool HeadlessProcessor::isMatrixLfoDivisionReachable(const int division) const

@@ -7,9 +7,8 @@ namespace matrixLib
 {
 	namespace
 	{
-		// timing resistor times capacitor per converter range. With the firmware's nominal
-		// waveshape calibration (WS table at note + 56 below C#4, note + 10.5 above) these give
-		// a 2.5 V ramp for shape 0 (saw) and 5 V for shape 63 (triangle)
+		// timing resistor times capacitor per converter range: with the firmware's nominal
+		// waveshape calibration a 2.5 V ramp for shape 0 (saw), 5 V for shape 63 (triangle)
 		constexpr float RtCtLow = 7.34e-4f;
 		constexpr float RtCtHigh = RtCtLow / 13.8f;
 
