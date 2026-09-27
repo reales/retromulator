@@ -421,6 +421,11 @@ namespace matrixLib
 			return true;
 		}
 
+		// Logic's AU wrapper streams MIDI Tuning and master tuning SysEx nonstop; the firmware
+		// ignores anything not for Oberheim, and queueing it on the UART starves the notes
+		if(!sx.empty() && (sx.size() < 2 || sx[1] != patch::IdOberheim))
+			return true;
+
 		if(_ev.sysex.empty() && _ev.a == 0xf8)
 		{
 			// MIDI clock, 24 per quarter note: the tempo is taken over a whole beat
