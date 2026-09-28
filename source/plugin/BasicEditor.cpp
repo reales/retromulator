@@ -1,6 +1,6 @@
 #include "BasicEditor.h"
 #include "SynthFactory.h"
-#include "CcTableWindow.h"
+#include "CcTable.h"
 #include "synthLib/midiToSysex.h"
 #include "ronaldo/88emu/88lib/deviceModel.h"
 #include "ronaldo/88emu/88lib/romloader.h"
@@ -1079,7 +1079,7 @@ namespace retromulator
         if(m_synthCombo.getSelectedId() == kCcTableId)
         {
             m_synthCombo.setSelectedId(static_cast<int>(m_proc.getSynthType()) + 2, juce::dontSendNotification);
-            CcTableWindow::showFor(m_proc, this);
+            showCcTable(m_proc, this);
             return;
         }
 

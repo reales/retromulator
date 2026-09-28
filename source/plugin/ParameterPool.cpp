@@ -9,6 +9,7 @@
 #include "synthLib/midiTypes.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -355,7 +356,7 @@ namespace retromulator
         return *slot;
     }
 
-    juce::String ParameterPool::getCcTableText(const SynthType type)
+    juce::String ParameterPool::getCcTableText(const SynthType type, const bool grid)
     {
         const auto& map = mapFor(type);
 
@@ -385,17 +386,117 @@ namespace retromulator
         if(ccs.empty() && pps.empty())
             return "No MIDI CCs mapped.\n";
 
-        if(!ccs.empty())
+        const auto plainSection = [](const std::vector<std::pair<int, juce::String>>& rows)
         {
-            out << "CC   Parameter\n";
-            for(const auto& [cc, name] : ccs)
-                out << juce::String(cc).paddedLeft(' ', 3) << "  " << name << "\n";
+            juce::String s;
+            for(const auto& [n, name] : rows)
+                s << juce::String(n).paddedLeft(' ', 3) << "  " << name << "\n";
+            return s;
+        };
+
+#if JUCE_MAC
+        // NSAlert shows the message in SF 13 pt with tab stops every 28 pt up to 336 pt. Its
+        // text is 408 pt wide from 15 lines on, 220 pt below, so columns need 15 lines.
+        const juce::Font sf(juce::FontOptions().withName(".AppleSystemUIFont").withPointHeight(13.0f));
+        const auto widthOf = [&sf](const juce::String& t) { return juce::GlyphArrangement::getStringWidth(sf, t); };
+        // another font would put the tabs at the wrong stops
+        const bool haveSf = std::abs(widthOf("7 Volume") - 55.87f) < 2.0f;
+
+        const auto fit = [&widthOf](juce::String t, const float maxWidth)
+        {
+            if(widthOf(t) <= maxWidth)
+                return t;
+            const juce::String dots = juce::String::charToString(0x2026);
+            while(t.isNotEmpty() && widthOf(t + dots) > maxWidth)
+                t = t.dropLastCharacters(1);
+            return t.trimEnd() + dots;
+        };
+
+        // tabs from a name ending at x to the stop at column start
+        const auto tabsTo = [](float x, const float stop)
+        {
+            juce::String t;
+            while(x < stop - 0.5f)
+            {
+                x = (std::floor(x / 28.0f) + 1.0f) * 28.0f;
+                t << "\t";
+            }
+            return t;
+        };
+
+        const auto gridSection = [&](const juce::String& heading, const std::vector<std::pair<int, juce::String>>& rows, const int cols)
+        {
+            const float colStart[3] = {0.0f, cols == 3 ? 140.0f : 224.0f, 280.0f};
+            const float colEnd[3] = {cols == 1 ? 220.0f : colStart[1], cols == 3 ? 280.0f : 408.0f, 408.0f};
+            constexpr float numWidth = 28.0f;
+            constexpr float gap = 8.0f;
+
+            const int count = static_cast<int>(rows.size());
+            const int lines = (count + cols - 1) / cols;
+
+            const auto cell = [&](const juce::String& num, const juce::String& name, const int c, const bool last)
+            {
+                auto shown = fit(name, colEnd[c] - colStart[c] - numWidth - gap);
+                float x = colStart[c] + numWidth + widthOf(shown);
+                // a name ending within a hair of a stop may land either side of it, so a
+                // space moves it clearly past
+                const float intoStop = std::fmod(x, 28.0f);
+                if(intoStop > 26.0f || intoStop < 1.0f)
+                {
+                    shown << " ";
+                    x += widthOf(" ");
+                }
+                juce::String t = num + "\t" + shown;
+                if(!last)
+                    t << tabsTo(x, colStart[c + 1]);
+                return t;
+            };
+
+            juce::String s;
+            if(heading.isNotEmpty())
+                s << heading << "\n";
+            for(int r = 0; r < lines; ++r)
+            {
+                for(int c = 0; c < cols; ++c)
+                {
+                    const int i = c * lines + r;
+                    if(i >= count)
+                        break;
+                    const bool last = c + 1 == cols || i + lines >= count;
+                    s << cell(juce::String(rows[static_cast<size_t>(i)].first), rows[static_cast<size_t>(i)].second, c, last);
+                }
+                s << "\n";
+            }
+            return s;
+        };
+
+        if(grid && haveSf)
+        {
+            const auto build = [&](const int cols)
+            {
+                juce::String t;
+                if(!ccs.empty())
+                    t << gridSection({}, ccs, cols);
+                if(!pps.empty())
+                    t << (t.isEmpty() ? "" : "\n") << gridSection("Poly Pressure", pps, cols);
+                return t;
+            };
+            const auto lineCount = [](const juce::String& t) { return juce::StringArray::fromLines(t).size(); };
+            // the widest layout that still reaches the 408 pt box
+            for(int cols = 3; cols >= 1; --cols)
+            {
+                out = build(cols);
+                if(lineCount(out) >= 16)
+                    break;
+            }
         }
-        if(!pps.empty())
+        else
+#endif
         {
-            out << (out.isEmpty() ? "" : "\n") << "PP   Parameter (poly pressure)\n";
-            for(const auto& [pp, name] : pps)
-                out << juce::String(pp).paddedLeft(' ', 3) << "  " << name << "\n";
+            if(!ccs.empty())
+                out << "CC   Parameter\n" << plainSection(ccs);
+            if(!pps.empty())
+                out << (out.isEmpty() ? "" : "\n") << "PP   Parameter (poly pressure)\n" << plainSection(pps);
         }
 
         if(type == SynthType::Matrix)
