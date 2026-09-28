@@ -21,6 +21,8 @@ void tmSchismSetTempoScale(tm_schism_t *t, double scale);
 void tmSchismPlay(tm_schism_t *t, int order, bool stopAtEnd);
 void tmSchismStop(tm_schism_t *t);
 void tmSchismRender(tm_schism_t *t, float *interleavedStereo, uint32_t frames);
+/* The next pattern end goes to this order instead of the following one, -1 = off. */
+void tmSchismSetNextOrder(tm_schism_t *t, int order);
 
 bool tmSchismHasEnded(const tm_schism_t *t);
 int tmSchismGetOrder(const tm_schism_t *t);

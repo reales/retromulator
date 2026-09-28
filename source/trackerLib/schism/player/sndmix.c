@@ -891,11 +891,19 @@ int32_t increment_order(song_t *csf)
 			csf->process_order = 1;
 		}
 	} else if (!(csf->flags & SONG_ORDERLOCKED)) {
+		const int32_t next = csf->tm_next_order;
+		csf->tm_next_order = -1;
+		if (next >= 0 && next < MAX_ORDERS && csf->orderlist[next] < MAX_PATTERNS) {
+			/* Trackermeister: a queued jump replaces the next order */
+			csf->process_order = next;
+			csf->process_row = 0;
+		} else {
 		/* [Increase ProcessOrder] */
 		/* [while Order[ProcessOrder] = 0xFEh, increase ProcessOrder] */
 		do {
 			csf->process_order++;
 		} while (csf->orderlist[csf->process_order] == ORDER_SKIP);
+		}
 
 		/* [if Order[ProcessOrder] = 0xFFh, ProcessOrder = 0] (... or just stop playing) */
 		if (csf->orderlist[csf->process_order] == ORDER_LAST) {

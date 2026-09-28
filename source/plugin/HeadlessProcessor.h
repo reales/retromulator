@@ -556,10 +556,13 @@ namespace retromulator
         // then loads it and the program on the message thread. Encoded (bank + 1) << 8 | program.
         std::atomic<int> m_matrixBankSelect{-1};
         std::atomic<int> m_matrixPendingProgram{-1};
-        struct MatrixProgramAsync;
-        std::unique_ptr<MatrixProgramAsync> m_matrixProgramAsync;
         void filterMatrixProgramChanges(juce::MidiBuffer& midi);
         void applyMatrixProgramChange();
+        // Tracker: the F0/G0 keys moved a loop point, the host parameters follow.
+        void syncTrackerLoopParams();
+        // Audio thread MIDI that has to be handled on the message thread.
+        struct CoreAsync;
+        std::unique_ptr<CoreAsync> m_coreAsync;
 
         // Message thread: moves either playlist on when its song ends or a note asks.
         struct PlaylistTimer;

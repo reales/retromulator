@@ -40,6 +40,7 @@ tm_schism_t *tmSchismCreate(const uint8_t *data, size_t size, uint32_t freq)
 	t->csf = csf_allocate();
 	t->csf->max_voices = MAX_VOICES;
 	t->csf->tm_tempo_scale = 1.0;
+	t->csf->tm_next_order = -1;
 	csf_set_wave_config(t->csf, freq, 32, 2);
 	csf_set_resampling_mode(t->csf, SRCMODE_POLYPHASE);
 
@@ -137,6 +138,7 @@ void tmSchismPlay(tm_schism_t *t, int order, bool stopAtEnd)
 	csf->flags &= ~(SONG_PAUSED | SONG_PATTERNLOOP | SONG_ENDREACHED);
 	csf->stop_at_order = -1;
 	csf->stop_at_row = -1;
+	csf->tm_next_order = -1;
 
 	csf_set_current_order(csf, (uint32_t)order);
 	csf_reset_playmarks(csf);
@@ -182,6 +184,12 @@ void tmSchismRender(tm_schism_t *t, float *out, uint32_t frames)
 		out += n * 2;
 		frames -= n;
 	}
+}
+
+void tmSchismSetNextOrder(tm_schism_t *t, int order)
+{
+	if (t)
+		t->csf->tm_next_order = (t->orders > 0 && order >= 0 && order < t->orders) ? order : -1;
 }
 
 bool tmSchismHasEnded(const tm_schism_t *t)

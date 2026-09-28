@@ -776,6 +776,7 @@ typedef struct song {
 	uint32_t freq_factor; // not used -- for tweaking the song speed LP-style (interesting!)
 	uint32_t tempo_factor; // ditto
 	double tm_tempo_scale; // Trackermeister: host tempo / song tempo
+	int32_t tm_next_order; // Trackermeister: order the next pattern end goes to, -1 = the song's own
 	double tm_tick_frac;
 	void *tm_mix_workers; // per-thread state of the parallel sinc mix
 	int32_t repeat_count; // 0 = first playback, etc. (note: set to -1 to stop instead of looping)

@@ -133,7 +133,13 @@ namespace trackerLib
 			return true;
 		}
 
-		if(!_ev.sysex.empty() || (_ev.a & 0xf0) != 0x90 || _ev.c == 0)
+		if(!_ev.sysex.empty())
+		{
+			parseLoopMessage(_ev.sysex);
+			return true;
+		}
+
+		if((_ev.a & 0xf0) != 0x90 || _ev.c == 0)
 			return true;
 
 		const int note = _ev.b;
@@ -146,6 +152,8 @@ namespace trackerLib
 			m_playlistStep = -1;
 		else if(note == kNextNote)
 			m_playlistStep = +1;
+		else if(note == kLoopInNote || note == kLoopOutNote)
+			setLoopPoint(note == kLoopInNote ? kLoopIn : kLoopOut, m_order.load() + 1);
 		else if(note >= kFirstPosNote)
 			m_commands.push_back({_ev.offset, note - kFirstPosNote});
 
@@ -173,6 +181,42 @@ namespace trackerLib
 		m_playing = true;
 		m_heardSound = false;
 		m_silentFrames = 0;
+	}
+
+	void Device::setLoopPoint(const int _which, const int _value)
+	{
+		(_which == kLoopOut ? m_loopOut : m_loopIn) = std::clamp(_value, 0, kLoopMax);
+	}
+
+	std::vector<uint8_t> Device::createLoopMessage(const int _which, const int _value)
+	{
+		const auto v = std::clamp(_value, 0, kLoopMax);
+		return {0xf0, 0x7d, 0x4c, static_cast<uint8_t>(_which & 0x7f), static_cast<uint8_t>(v >> 7), static_cast<uint8_t>(v & 0x7f), 0xf7};
+	}
+
+	bool Device::parseLoopMessage(const std::vector<uint8_t>& _sysex)
+	{
+		if(_sysex.size() != 7 || _sysex[1] != 0x7d || _sysex[2] != 0x4c)
+			return false;
+		const int which = _sysex[3];
+		if(which != kLoopIn && which != kLoopOut)
+			return false;
+		setLoopPoint(which, (_sysex[4] << 7) | _sysex[5]);
+		return true;
+	}
+
+	// Audio thread, while playing: where the playing pattern's end goes. A render has to
+	// reach the song's end, so it never loops.
+	int Device::nextOrder() const
+	{
+		if(m_offline)
+			return -1;
+		const int in = m_loopIn.load() - 1;
+		const int out = m_loopOut.load() - 1;
+		const int count = m_engine->getOrderCount();
+		if(in < 0 || out < 0 || in > out || out >= count)
+			return -1;
+		return m_engine->getOrder() == out ? in : -1;
 	}
 
 	float Device::getSyncBpm() const
@@ -281,6 +325,7 @@ namespace trackerLib
 
 			if(m_playing.load())
 			{
+				m_engine->setNextOrder(nextOrder());
 				m_engine->render(m_buffer.data(), static_cast<uint32_t>(count));
 				if(m_bassMix)
 					processBassMix(m_buffer.data(), count);

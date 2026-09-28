@@ -21,6 +21,7 @@ extern bool loadMOD(FILE *f, uint32_t filesize);
 
 // ft2_replayer.c
 extern bool tmAmigaPan;
+extern int32_t tmNextOrder;
 
 // ft2_stubs.c
 extern void (*loaderMsgBox)(const char *, ...);
@@ -285,6 +286,7 @@ void tmFt2Play(int order, bool stopAtEnd)
 	setSongPos((int16_t)order, 0, RESET_SONG_TICK);
 	setMixerBPM(song.BPM);
 	tmResetSongEnd(stopAtEnd);
+	tmNextOrder = -1;
 
 	playMode = PLAYMODE_SONG;
 	songPlaying = true;
@@ -316,6 +318,8 @@ void tmFt2Render(float *stream, uint32_t frames)
 		frames -= n;
 	}
 }
+
+void tmFt2SetNextOrder(int order) { tmNextOrder = order; }
 
 bool tmFt2HasEnded(void) { return tmSongHasEnded(); }
 int tmFt2GetOrder(void) { return tmLoaded ? song.songPos : 0; }

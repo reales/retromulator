@@ -573,12 +573,16 @@ namespace retromulator
         }
     }
 
-    struct HeadlessProcessor::MatrixProgramAsync final : juce::AsyncUpdater
+    struct HeadlessProcessor::CoreAsync final : juce::AsyncUpdater
     {
-        explicit MatrixProgramAsync(HeadlessProcessor& p) : proc(p) {}
-        ~MatrixProgramAsync() override { cancelPendingUpdate(); }
+        explicit CoreAsync(HeadlessProcessor& p) : proc(p) {}
+        ~CoreAsync() override { cancelPendingUpdate(); }
 
-        void handleAsyncUpdate() override { proc.applyMatrixProgramChange(); }
+        void handleAsyncUpdate() override
+        {
+            proc.applyMatrixProgramChange();
+            proc.syncTrackerLoopParams();
+        }
 
         HeadlessProcessor& proc;
     };
@@ -608,8 +612,8 @@ namespace retromulator
         if(kept.getNumEvents() == midi.getNumEvents())
             return;
         midi.swapWith(kept);
-        if(changed && m_matrixProgramAsync)
-            m_matrixProgramAsync->triggerAsyncUpdate();
+        if(changed && m_coreAsync)
+            m_coreAsync->triggerAsyncUpdate();
     }
 
     void HeadlessProcessor::applyMatrixProgramChange()
@@ -646,6 +650,15 @@ namespace retromulator
         }
         if(program < getProgramCount() && program != m_currentProgram)
             selectProgram(program);
+    }
+
+    void HeadlessProcessor::syncTrackerLoopParams()
+    {
+        auto* dev = getTrackerDevice();
+        if(!dev || !m_paramPool)
+            return;
+        for(const int which : {trackerLib::Device::kLoopIn, trackerLib::Device::kLoopOut})
+            m_paramPool->setNativeSlotValue(which, dev->getLoopPoint(which), true, false);
     }
 
     void HeadlessProcessor::updatePlaylistTimer()
@@ -710,13 +723,13 @@ namespace retromulator
         m_trackerShuffle   = readSettingsBool("trackerShuffle", false);
         m_midiStopAtEnd    = readSettingsBool("midiStopAtEnd", false);
         m_midiShuffle      = readSettingsBool("midiShuffle", false);
-        m_matrixProgramAsync = std::make_unique<MatrixProgramAsync>(*this);
+        m_coreAsync = std::make_unique<CoreAsync>(*this);
     }
 
     HeadlessProcessor::~HeadlessProcessor()
     {
         m_playlistTimer.reset();
-        m_matrixProgramAsync.reset();
+        m_coreAsync.reset();
 
         // Must join before any member is destroyed: ~thread on a joinable
         // thread calls std::terminate.
@@ -3917,11 +3930,27 @@ namespace retromulator
         }
         else if(m_synthType == SynthType::Matrix)
             filterMatrixProgramChanges(midi);
+
+        bool trackerLoopKey = false;
+        if(m_synthType == SynthType::Trackermeister)
+        {
+            for(const auto meta : midi)
+            {
+                const auto m = meta.getMessage();
+                if(m.isNoteOn() && (m.getNoteNumber() == trackerLib::Device::kLoopInNote
+                                    || m.getNoteNumber() == trackerLib::Device::kLoopOutNote))
+                    trackerLoopKey = true;
+            }
+        }
+
         // Runs for every core, and from the audio path rather than a host callback that
         // only fires when a playhead offers a BPM.
         processDeferredResend();
 
         Processor::processBlock(buffer, midi);
+
+        if(trackerLoopKey && m_coreAsync)
+            m_coreAsync->triggerAsyncUpdate();
     }
 
     // ── Deferred resend (pre-audio guard + boot delay) ─────────────────────────

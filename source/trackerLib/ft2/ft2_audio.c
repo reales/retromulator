@@ -1231,6 +1231,7 @@ void closeAudio(void)
 
 volatile bool tmOrderEntryFlag; // set by getNextPos() when a new order begins
 volatile bool tmSongWrapFlag; // set when the order list runs out
+volatile bool tmJumpFlag; // set when a queued jump replaced the next order
 static uint8_t tmVisited[(256 * 256) / 8];
 static bool tmStopAtEnd, tmEndPending, tmSongEnded;
 
@@ -1261,7 +1262,7 @@ void tmResetSongEnd(bool stopAtEnd)
 	memset(tmVisited, 0, sizeof (tmVisited));
 	tmStopAtEnd = stopAtEnd;
 	tmEndPending = tmSongEnded = false;
-	tmOrderEntryFlag = tmSongWrapFlag = false;
+	tmOrderEntryFlag = tmSongWrapFlag = tmJumpFlag = false;
 	tmMarkVisited();
 	audio.tickSampleCounter = 0;
 	audio.tickSampleCounterFrac = 0;
@@ -1299,7 +1300,13 @@ void tmRenderFloat(float *stream, uint32_t frames)
 			updateVoices();
 			replayerBusy = false;
 
-			if (tmOrderEntryFlag)
+			if (tmJumpFlag)
+			{
+				tmJumpFlag = false;
+				memset(tmVisited, 0, sizeof (tmVisited));
+				tmMarkVisited();
+			}
+			else if (tmOrderEntryFlag)
 			{
 				tmOrderEntryFlag = false;
 				const uint32_t key = ((uint32_t)(song.songPos & 0xFF) << 8) | (uint32_t)(song.row & 0xFF);

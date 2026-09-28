@@ -5,6 +5,7 @@
 #include "nord/n2x/n2xLib/n2xmiditypes.h"
 #include "ronaldo/je8086/jeLib/state.h"
 #include "matrixLib/patch.h"
+#include "trackerLib/device.h"
 #include "synthLib/midiTypes.h"
 
 #include <algorithm>
@@ -399,6 +400,8 @@ namespace retromulator
 
         if(type == SynthType::Matrix)
             out << "\nProgram Change 0-99 picks the patch of the bank file.\n";
+        if(type == SynthType::Trackermeister)
+            out << "\nKeys F0 and G0 set Loop In and Loop Out to the playing order.\n";
         if(map.perPart)
             out << "\nCCs apply to the part on their MIDI channel.\n";
         return out;
@@ -449,12 +452,16 @@ namespace retromulator
         auto* s = m_slots[static_cast<size_t>(slot)];
 
         // The Matrix firmware ignores these CCs: spread 0-127 over the parameter's range
-        // and send it as a remote parameter edit
+        // and send it as a remote parameter edit. Same for the tracker's loop points.
         const auto& b = s->binding();
-        if(map->type == SynthType::Matrix && b.native >= 0 && b.desc)
+        if((map->type == SynthType::Matrix || map->type == SynthType::Trackermeister) && b.native >= 0 && b.desc)
         {
             const int lo = b.desc->range.getStart();
-            const int v = lo + ev.c * (b.desc->range.getEnd() - lo + 1) / 128;
+            const int span = b.desc->range.getEnd() - lo;
+            // a loop point has 129 values, so 127 has to reach the top one
+            const int v = map->type == SynthType::Trackermeister
+                ? lo + (ev.c * span + 63) / 127
+                : lo + ev.c * (span + 1) / 128;
             s->setFromMidi(v, fromOutside);
             sendSlot(*s, b, v);
             return true;
@@ -507,6 +514,12 @@ namespace retromulator
                 if(b.desc && b.desc->isBipolar)
                     v -= static_cast<int>(b.range.end) / 2;
                 const auto msg = matrixLib::patch::createParamChange(static_cast<uint8_t>(b.native), v);
+                ev.sysex.assign(msg.begin(), msg.end());
+            }
+            else if(map && map->type == SynthType::Trackermeister)
+            {
+                // loop points reach 128, past a 7 bit value
+                const auto msg = trackerLib::Device::createLoopMessage(b.native, midiValue);
                 ev.sysex.assign(msg.begin(), msg.end());
             }
             else if(map && map->type == SynthType::JE8086)

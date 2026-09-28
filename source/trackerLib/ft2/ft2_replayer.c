@@ -45,7 +45,8 @@ bool songPlaying = false, audioPaused = false, musicPaused = false;
 volatile bool replayerBusy = false;
 const uint16_t *note2PeriodLUT = NULL;
 int16_t patternNumRows[MAX_PATTERNS];
-extern volatile bool tmOrderEntryFlag, tmSongWrapFlag; // Trackermeister
+extern volatile bool tmOrderEntryFlag, tmSongWrapFlag, tmJumpFlag; // Trackermeister
+int32_t tmNextOrder = -1; // Trackermeister: order the next pattern end goes to, -1 = the song's own
 
 channel_t channel[MAX_CHANNELS];
 
@@ -2327,9 +2328,17 @@ static void getNextPos(void)
 		song.pBreakPos = 0;
 		song.posJumpFlag = false;
 
+		bool jumped = false;
 		if (playMode != PLAYMODE_PATT && playMode != PLAYMODE_RECPATT)
 		{
-			if (bxxOverflow)
+			if (tmNextOrder >= 0 && tmNextOrder < song.songLength)
+			{
+				song.songPos = (int16_t)tmNextOrder;
+				song.row = 0;
+				bxxOverflow = false;
+				jumped = true;
+			}
+			else if (bxxOverflow)
 			{
 				song.songPos = 0;
 				bxxOverflow = false;
@@ -2355,7 +2364,11 @@ static void getNextPos(void)
 		if (song.row >= song.currNumRows)
 			song.row = 0;
 
-		tmOrderEntryFlag = true; // Trackermeister: loop detection
+		tmNextOrder = -1;
+		if (jumped)
+			tmJumpFlag = true; // a queued jump is not the song looping
+		else
+			tmOrderEntryFlag = true; // Trackermeister: loop detection
 	}
 }
 

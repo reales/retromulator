@@ -22,6 +22,9 @@ namespace trackerLib
 		virtual void play(int _order, bool _stopAtEnd) = 0;
 		virtual void stop() = 0;
 		virtual void render(float* _interleavedStereo, uint32_t _frames) = 0;
+		// The next pattern end goes to this order instead of the following one, -1 = off.
+		// Consumed at that pattern end.
+		virtual void setNextOrder(int _order) = 0;
 
 		virtual bool hasEnded() const = 0;
 		virtual bool isAmigaPanned() const { return false; }	// MOD: hard L-R-R-L
