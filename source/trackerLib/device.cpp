@@ -155,7 +155,7 @@ namespace trackerLib
 		else if(note == kLoopInNote || note == kLoopOutNote)
 			setLoopPoint(note == kLoopInNote ? kLoopIn : kLoopOut, m_order.load() + 1);
 		else if(note >= kFirstPosNote)
-			m_commands.push_back({_ev.offset, note - kFirstPosNote});
+			m_commands.push_back({_ev.offset, note - kFirstPosNote, true});
 
 		return true;
 	}
@@ -164,6 +164,7 @@ namespace trackerLib
 	{
 		if(_c.order == kStop)
 		{
+			m_pendingJump = -1;
 			m_engine->stop();
 			m_playing = false;
 			m_atTop = true;
@@ -173,6 +174,13 @@ namespace trackerLib
 		// position notes past the last order do nothing
 		if(_c.order >= m_engine->getOrderCount())
 			return;
+
+		m_pendingJump = -1;
+		if(_c.fromNote && m_waitPatternEnd.load() && m_playing.load() && !m_offline)
+		{
+			m_pendingJump = _c.order;
+			return;
+		}
 
 		m_engine->play(std::max(0, _c.order), m_offline || m_stopAtEnd.load());
 		m_songFinished = false;
@@ -211,6 +219,8 @@ namespace trackerLib
 	{
 		if(m_offline)
 			return -1;
+		if(m_pendingJump >= 0)
+			return m_pendingJump;
 		const int in = m_loopIn.load() - 1;
 		const int out = m_loopOut.load() - 1;
 		const int count = m_engine->getOrderCount();
@@ -327,6 +337,8 @@ namespace trackerLib
 			{
 				m_engine->setNextOrder(nextOrder());
 				m_engine->render(m_buffer.data(), static_cast<uint32_t>(count));
+				if(m_pendingJump >= 0 && !m_engine->hasNextOrder())
+					m_pendingJump = -1;
 				if(m_bassMix)
 					processBassMix(m_buffer.data(), count);
 				const float gain = m_gain.load();

@@ -192,6 +192,11 @@ void tmSchismSetNextOrder(tm_schism_t *t, int order)
 		t->csf->tm_next_order = (t->orders > 0 && order >= 0 && order < t->orders) ? order : -1;
 }
 
+bool tmSchismHasNextOrder(const tm_schism_t *t)
+{
+	return t && t->csf->tm_next_order >= 0;
+}
+
 bool tmSchismHasEnded(const tm_schism_t *t)
 {
 	return t && (t->csf->flags & SONG_ENDREACHED) != 0;

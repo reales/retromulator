@@ -380,6 +380,9 @@ namespace retromulator
         // Previous, next and the end of a song follow a shuffled order. Saved like Stop at End.
         bool getTrackerShuffle() const { return m_trackerShuffle; }
         void setTrackerShuffle(bool enabled);
+        // On: a position key jumps when the playing pattern ends. Saved like Stop at End.
+        bool getTrackerWaitPatternEnd() const { return m_trackerWaitPatternEnd; }
+        void setTrackerWaitPatternEnd(bool enabled);
         // Same thread, progress and cancel as the MIDI render. 512 tap sinc, song end stops it.
         bool startTrackerRender(const juce::URL& destUrl, RenderFormat format);
         // Every playlist entry into that folder, named "01 song.wav" in playlist order.
@@ -531,6 +534,7 @@ namespace retromulator
         void applyMatrixLfoSync();
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;
+        bool                 m_trackerWaitPatternEnd = true;
         void reloadTrackerModule();
         void applyTrackerStopAtEnd();
 

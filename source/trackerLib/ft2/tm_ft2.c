@@ -320,6 +320,7 @@ void tmFt2Render(float *stream, uint32_t frames)
 }
 
 void tmFt2SetNextOrder(int order) { tmNextOrder = order; }
+bool tmFt2HasNextOrder(void) { return tmNextOrder >= 0; }
 
 bool tmFt2HasEnded(void) { return tmSongHasEnded(); }
 int tmFt2GetOrder(void) { return tmLoaded ? song.songPos : 0; }

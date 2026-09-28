@@ -25,6 +25,7 @@ namespace trackerLib
 		// The next pattern end goes to this order instead of the following one, -1 = off.
 		// Consumed at that pattern end.
 		virtual void setNextOrder(int _order) = 0;
+		virtual bool hasNextOrder() const = 0;	// set and not reached yet
 
 		virtual bool hasEnded() const = 0;
 		virtual bool isAmigaPanned() const { return false; }	// MOD: hard L-R-R-L

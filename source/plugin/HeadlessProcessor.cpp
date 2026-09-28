@@ -721,6 +721,7 @@ namespace retromulator
         loadEditorSizeFromSettings();
         m_trackerStopAtEnd = readSettingsBool("trackerStopAtEnd", false);
         m_trackerShuffle   = readSettingsBool("trackerShuffle", false);
+        m_trackerWaitPatternEnd = readSettingsBool("trackerWaitPatternEnd", true);
         m_midiStopAtEnd    = readSettingsBool("midiStopAtEnd", false);
         m_midiShuffle      = readSettingsBool("midiShuffle", false);
         m_coreAsync = std::make_unique<CoreAsync>(*this);
@@ -3216,11 +3217,21 @@ namespace retromulator
         m_trackerOrder.reset(static_cast<int>(m_trackerPlaylist.size()), m_trackerPlaylistIndex, enabled);
     }
 
+    void HeadlessProcessor::setTrackerWaitPatternEnd(const bool enabled)
+    {
+        m_trackerWaitPatternEnd = enabled;
+        writeSettingsBool("trackerWaitPatternEnd", enabled);
+        applyTrackerStopAtEnd();
+    }
+
     // A playlist always stops its songs at their end, the timer decides what comes next.
     void HeadlessProcessor::applyTrackerStopAtEnd()
     {
         if(auto* dev = getTrackerDevice())
+        {
             dev->setStopAtEnd(isTrackerPlaylistMode() || m_trackerStopAtEnd);
+            dev->setWaitPatternEnd(m_trackerWaitPatternEnd);
+        }
     }
 
     void HeadlessProcessor::processBpm(const float bpm)
@@ -4218,7 +4229,9 @@ namespace retromulator
                 appendString(destData, path);
 
             appendInt32(destData, kTrackerOptionsMagic);
-            appendInt32(destData, (m_trackerStopAtEnd ? 1 : 0) | (m_trackerShuffle ? 2 : 0));
+            // 4 is "jump at once", so sessions from before the option keep waiting
+            appendInt32(destData, (m_trackerStopAtEnd ? 1 : 0) | (m_trackerShuffle ? 2 : 0)
+                                  | (m_trackerWaitPatternEnd ? 0 : 4));
         }
 
         // ['MXLS':int32][lfo1 division:int32][lfo2 division:int32]
@@ -4678,6 +4691,7 @@ namespace retromulator
             {
                 m_trackerStopAtEnd = (options & 1) != 0;
                 m_trackerShuffle   = (options & 2) != 0;
+                m_trackerWaitPatternEnd = (options & 4) == 0;
             }
             else
                 offset = optionsStart;

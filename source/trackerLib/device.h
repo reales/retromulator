@@ -79,6 +79,8 @@ namespace trackerLib
 		// Playlist: a live song stops at its end too, and says so once. So does a song that
 		// has been silent for kSilenceSeconds after making sound, when it would stop at its end.
 		void setStopAtEnd(bool _enabled)	{ m_stopAtEnd = _enabled; }
+		// On: a position note while playing jumps when the playing pattern ends, not at once.
+		void setWaitPatternEnd(bool _enabled)	{ m_waitPatternEnd = _enabled; }
 		bool consumeSongFinished()			{ return m_songFinished.exchange(false); }
 		// Previous / next notes since the last call: -1, +1 or 0.
 		int consumePlaylistStep()			{ return m_playlistStep.exchange(0); }
@@ -111,6 +113,7 @@ namespace trackerLib
 		{
 			uint32_t offset;
 			int order;		// >= 0 start there, -2 stop
+			bool fromNote = false;
 		};
 
 		void applyCommand(const Command& _c);
@@ -152,6 +155,8 @@ namespace trackerLib
 		std::atomic<float> m_gain{1.0f};	// CC 7
 		std::atomic<bool> m_songFinished{false};
 		std::atomic<int> m_playlistStep{0};
+		std::atomic<bool> m_waitPatternEnd{true};
+		int m_pendingJump = -1;		// audio thread: order a position note queued
 		std::atomic<int> m_loopIn{0};
 		std::atomic<int> m_loopOut{0};
 		std::atomic<bool> m_tempoSync{false};
