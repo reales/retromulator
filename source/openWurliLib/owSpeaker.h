@@ -1,8 +1,10 @@
 /**
  * OpenWurli DSP — Speaker cabinet model
- * Ported from Rust openwurli-dsp (GPL v3)
+ * Ported from Rust openwurli-dsp 0.9.0 speaker.rs (GPL v3)
  *
- * Hammerstein nonlinearity + HPF/LPF + thermal compression
+ * Hammerstein nonlinearity + HPF/LPF + thermal compression. At character 0
+ * the stage is a true passthrough; the filters keep running so their state
+ * is warm when character rises.
  */
 #pragma once
 
@@ -21,10 +23,10 @@ public:
 	void init(double sampleRate)
 	{
 		m_sampleRate = sampleRate;
-		m_hpf = Biquad::highpass(95.0, 0.75, sampleRate);
-		m_lpf = Biquad::lowpass(5500.0, 0.707, sampleRate);
+		m_hpf = Biquad::highpass(HPF_AUTHENTIC_HZ, HPF_Q, sampleRate);
+		m_lpf = Biquad::lowpass(LPF_AUTHENTIC_HZ, LPF_Q, sampleRate);
 		m_character = 1.0;
-		m_thermalAlpha = 1.0 / (5.0 * sampleRate);
+		m_thermalAlpha = 1.0 / (THERMAL_TAU * sampleRate);
 		m_thermalState = 0.0;
 		updateCoefficients();
 	}
@@ -41,21 +43,18 @@ public:
 
 	double process(double input)
 	{
-		// 1. Polynomial waveshaper
 		const double x2 = input * input;
 		const double x3 = x2 * input;
 		const double shaped = (input + m_a2 * x2 + m_a3 * x3) / (1.0 + m_a2 + m_a3);
 
-		// 2. Cone excursion limiter (bypass at character ≈ 0 to avoid tanh coloration)
 		const double limited = (m_character < 0.001) ? shaped : std::tanh(shaped);
 
-		// 3. Thermal voice coil compression
 		m_thermalState += (x2 - m_thermalState) * m_thermalAlpha;
 		const double thermalGain = 1.0 / (1.0 + m_thermalCoeff * std::sqrt(m_thermalState));
 
-		// 4. Linear filters
 		const double filtered = m_hpf.process(limited * thermalGain);
-		return m_lpf.process(filtered);
+		const double out = m_lpf.process(filtered);
+		return (m_character < 0.001) ? input : out;
 	}
 
 	void reset()
@@ -66,13 +65,21 @@ public:
 	}
 
 private:
+	static constexpr double HPF_AUTHENTIC_HZ = 30.0;
+	static constexpr double HPF_Q = 0.75;
+	static constexpr double LPF_AUTHENTIC_HZ = 5500.0;
+	static constexpr double LPF_Q = 0.707;
+	static constexpr double HPF_BYPASS_HZ = 20.0;
+	static constexpr double LPF_BYPASS_HZ = 20000.0;
+	static constexpr double THERMAL_TAU = 5.0;
+
 	void updateCoefficients()
 	{
 		const double c = m_character;
-		const double hpfHz = 20.0 * std::pow(95.0 / 20.0, c);
-		const double lpfHz = 20000.0 * std::pow(5500.0 / 20000.0, c);
-		m_hpf.setHighpass(hpfHz, 0.75, m_sampleRate);
-		m_lpf.setLowpass(lpfHz, 0.707, m_sampleRate);
+		const double hpfHz = HPF_BYPASS_HZ * std::pow(HPF_AUTHENTIC_HZ / HPF_BYPASS_HZ, c);
+		const double lpfHz = LPF_BYPASS_HZ * std::pow(LPF_AUTHENTIC_HZ / LPF_BYPASS_HZ, c);
+		m_hpf.setHighpass(hpfHz, HPF_Q, m_sampleRate);
+		m_lpf.setLowpass(lpfHz, LPF_Q, m_sampleRate);
 
 		m_a2 = 0.2 * c;
 		m_a3 = 0.6 * c;

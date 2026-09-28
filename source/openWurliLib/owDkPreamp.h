@@ -1,30 +1,29 @@
 /**
- * OpenWurli DSP — DK (Discretization-Kernel) preamp
- * Ported from Rust openwurli-dsp (GPL v3)
+ * OpenWurli DSP — DK (Discretization-Kernel) preamp, drawn-topology revision
+ * Ported from Rust openwurli-dsp 0.9.0 dk_preamp_legacy.rs (GPL v3)
  *
- * Full coupled 2-stage BJT circuit solver with 8-node MNA,
- * trapezoidal discretization, Newton-Raphson on 2×2 nonlinear kernel.
- * Shadow preamp for pump cancellation.
+ * Full coupled 2-stage BJT circuit solver: 9-node MNA, trapezoidal
+ * discretization, Newton-Raphson on the 2×2 nonlinear kernel. R_ldr is an
+ * explicit source term corrected via Sherman-Morrison on a fixed inverse.
  */
 #pragma once
 
 #include <cmath>
 #include <algorithm>
 #include <array>
-#include <cstring>
 
 namespace openWurli
 {
 
-static constexpr int DK_N = 8;
+static constexpr int DK_N = 9;
 
-using Mat8 = std::array<std::array<double, DK_N>, DK_N>;
-using Vec8 = std::array<double, DK_N>;
+using Mat9 = std::array<std::array<double, DK_N>, DK_N>;
+using Vec9 = std::array<double, DK_N>;
 
 // Circuit constants
-static constexpr double DK_VCC = 15.0;
+static constexpr double DK_VCC = 14.5;
 static constexpr double DK_R1 = 22000.0;
-static constexpr double DK_R2 = 2000000.0;
+static constexpr double DK_R2 = 1000000.0;
 static constexpr double DK_R3 = 470000.0;
 static constexpr double DK_RE1 = 33000.0;
 static constexpr double DK_RC1 = 150000.0;
@@ -33,39 +32,70 @@ static constexpr double DK_RE2B = 820.0;
 static constexpr double DK_RC2 = 1800.0;
 static constexpr double DK_R9 = 6800.0;
 static constexpr double DK_R10 = 56000.0;
+static constexpr double DK_RLOAD = 100000.0;
+static constexpr double DK_R_IN_EFF = DK_R1 * DK_R2 / (DK_R1 + DK_R2);
+static constexpr double DK_K_IN_DIV = DK_R2 / (DK_R1 + DK_R2);
 static constexpr double DK_CIN = 0.022e-6;
+static constexpr double DK_C2 = 220.0e-12;
 static constexpr double DK_C3 = 100.0e-12;
 static constexpr double DK_C4 = 100.0e-12;
 static constexpr double DK_CE1 = 4.7e-6;
 static constexpr double DK_CE2 = 22.0e-6;
+static constexpr double DK_C6 = 4.7e-6;
+
+// 2N5089 card (forward-active, with base current and high injection)
 static constexpr double DK_IS = 3.03e-14;
 static constexpr double DK_VT = 0.026;
-static constexpr double DK_IS_OVER_VT = DK_IS / DK_VT;
+static constexpr double DK_NF = 1.005;
+static constexpr double DK_BF = 1434.0;
+static constexpr double DK_ISE = 2.88e-15;
+static constexpr double DK_NE = 1.262;
+static constexpr double DK_IKF = 0.01358;
+static constexpr double DK_VTF = DK_NF * DK_VT;
+static constexpr double DK_NE_VT = DK_NE * DK_VT;
+static constexpr double DK_IS_OVER_IKF = DK_IS / DK_IKF;
 static constexpr double DK_VBE_MAX = 0.85;
 
 // Node indices
-static constexpr int BASE1 = 0, EMIT1 = 1, COLL1 = 2;
-static constexpr int EMIT2 = 3, EMIT2B = 4, COLL2 = 5;
-static constexpr int OUT = 6, FB = 7;
+static constexpr int DK_BASE1 = 0, DK_EMIT1 = 1, DK_COLL1 = 2;
+static constexpr int DK_EMIT2 = 3, DK_EMIT2B = 4, DK_COLL2 = 5;
+static constexpr int DK_NODE_C6 = 6, DK_OUT = 7, DK_FB = 8;
 
-// Matrix helpers
-inline Mat8 mat8Zero()
+struct DkIncidence { int node; double coeff; };
+
+// vbe1 = v[BASE1] - v[EMIT1], vbe2 = v[COLL1] - v[EMIT2]
+static constexpr DkIncidence DK_NV[2][2] = {
+	{{DK_BASE1, 1.0}, {DK_EMIT1, -1.0}},
+	{{DK_COLL1, 1.0}, {DK_EMIT2, -1.0}},
+};
+// Collector current: into the emitter node, out of the collector node
+static constexpr DkIncidence DK_NIC[2][2] = {
+	{{DK_EMIT1, 1.0}, {DK_COLL1, -1.0}},
+	{{DK_EMIT2, 1.0}, {DK_COLL2, -1.0}},
+};
+// Base current: into the emitter node, out of the base node (TR-2's base is COLL1)
+static constexpr DkIncidence DK_NIB[2][2] = {
+	{{DK_EMIT1, 1.0}, {DK_BASE1, -1.0}},
+	{{DK_EMIT2, 1.0}, {DK_COLL1, -1.0}},
+};
+
+inline Mat9 mat9Zero()
 {
-	Mat8 m;
+	Mat9 m;
 	for (auto& row : m) row.fill(0.0);
 	return m;
 }
 
-inline Vec8 vec8Zero()
+inline Vec9 vec9Zero()
 {
-	Vec8 v;
+	Vec9 v;
 	v.fill(0.0);
 	return v;
 }
 
-inline Vec8 matVecMul(const Mat8& a, const Vec8& x)
+inline Vec9 matVecMul(const Mat9& a, const Vec9& x)
 {
-	Vec8 y = vec8Zero();
+	Vec9 y;
 	for (int i = 0; i < DK_N; i++)
 	{
 		double sum = 0.0;
@@ -76,34 +106,35 @@ inline Vec8 matVecMul(const Mat8& a, const Vec8& x)
 	return y;
 }
 
-inline Mat8 matAdd(const Mat8& a, const Mat8& b)
+inline Mat9 matAdd(const Mat9& a, const Mat9& b)
 {
-	Mat8 c;
+	Mat9 c;
 	for (int i = 0; i < DK_N; i++)
 		for (int j = 0; j < DK_N; j++)
 			c[i][j] = a[i][j] + b[i][j];
 	return c;
 }
 
-inline Mat8 matSub(const Mat8& a, const Mat8& b)
+inline Mat9 matSub(const Mat9& a, const Mat9& b)
 {
-	Mat8 c;
+	Mat9 c;
 	for (int i = 0; i < DK_N; i++)
 		for (int j = 0; j < DK_N; j++)
 			c[i][j] = a[i][j] - b[i][j];
 	return c;
 }
 
-inline Mat8 matScale(double s, const Mat8& a)
+inline Mat9 matScale(double s, const Mat9& a)
 {
-	Mat8 b;
+	Mat9 b;
 	for (int i = 0; i < DK_N; i++)
 		for (int j = 0; j < DK_N; j++)
 			b[i][j] = s * a[i][j];
 	return b;
 }
 
-inline Mat8 matInverse(const Mat8& m)
+/// Gauss-Jordan inverse with partial pivoting.
+inline Mat9 matInverse(const Mat9& m)
 {
 	double aug[DK_N][DK_N * 2];
 	for (int i = 0; i < DK_N; i++)
@@ -128,185 +159,128 @@ inline Mat8 matInverse(const Mat8& m)
 			}
 		}
 		if (maxRow != col)
-			std::swap_ranges(&aug[col][0], &aug[col][DK_N * 2], &aug[maxRow][0]);
-
+		{
+			for (int j = 0; j < DK_N * 2; j++)
+				std::swap(aug[col][j], aug[maxRow][j]);
+		}
 		const double pivot = aug[col][col];
+		if (std::abs(pivot) < 1e-300)
+			continue;
 		for (int j = 0; j < DK_N * 2; j++)
 			aug[col][j] /= pivot;
-
 		for (int row = 0; row < DK_N; row++)
 		{
-			if (row != col)
-			{
-				const double factor = aug[row][col];
-				for (int j = 0; j < DK_N * 2; j++)
-					aug[row][j] -= factor * aug[col][j];
-			}
+			if (row == col) continue;
+			const double factor = aug[row][col];
+			if (factor == 0.0) continue;
+			for (int j = 0; j < DK_N * 2; j++)
+				aug[row][j] -= factor * aug[col][j];
 		}
 	}
 
-	Mat8 inv;
+	Mat9 inv;
 	for (int i = 0; i < DK_N; i++)
 		for (int j = 0; j < DK_N; j++)
 			inv[i][j] = aug[i][DK_N + j];
 	return inv;
 }
 
-inline void stampResistor(Mat8& g, int i, int j, double r)
+inline void stampResistor(Mat9& g, int i, int j, double r)
 {
 	const double cond = 1.0 / r;
-	g[i][i] += cond; g[j][j] += cond;
-	g[i][j] -= cond; g[j][i] -= cond;
+	g[i][i] += cond;
+	g[j][j] += cond;
+	g[i][j] -= cond;
+	g[j][i] -= cond;
 }
 
-inline void stampCapacitor(Mat8& c, int i, int j, double cap)
+inline void stampCapacitor(Mat9& c, int i, int j, double cap)
 {
-	c[i][i] += cap; c[j][j] += cap;
-	c[i][j] -= cap; c[j][i] -= cap;
+	c[i][i] += cap;
+	c[j][j] += cap;
+	c[i][j] -= cap;
+	c[j][i] -= cap;
 }
 
-// BJT model
-inline double bjtIc(double vbe)
+inline void stampCapacitorToGnd(Mat9& c, int i, double cap)
+{
+	c[i][i] += cap;
+}
+
+struct DkBjt { double ic, ib, gic, gib; };
+
+/// 2N5089 forward-active model: Ic (Gummel-Poon qb), Ib (ideal + recombination), derivatives.
+inline DkBjt dkBjt(double vbe)
 {
 	const double v = std::clamp(vbe, -1.0, DK_VBE_MAX);
-	return DK_IS * (std::exp(v / DK_VT) - 1.0);
+	const double ef = std::exp(v / DK_VTF);
+	const double icc = DK_IS * (ef - 1.0);
+
+	const double q2 = DK_IS_OVER_IKF * ef;
+	const double root = std::sqrt(1.0 + 4.0 * q2);
+	const double qb = 0.5 * (1.0 + root);
+	const double ic = icc / qb;
+
+	const double ee = std::exp(v / DK_NE_VT);
+	const double ib = icc / DK_BF + DK_ISE * (ee - 1.0);
+
+	const double dicc = DK_IS * ef / DK_VTF;
+	const double dq2 = q2 / DK_VTF;
+	const double dqb = dq2 / root;
+	const double gic = (dicc * qb - icc * dqb) / (qb * qb);
+	const double gib = dicc / DK_BF + DK_ISE * ee / DK_NE_VT;
+
+	return {ic, ib, gic, gib};
 }
 
-inline void bjtIcGm(double vbe, double& ic, double& gm)
+/// K = N_v * S * N_i
+inline void computeK(const Mat9& s, const DkIncidence (&ni)[2][2], double k[2][2])
 {
-	const double v = std::clamp(vbe, -1.0, DK_VBE_MAX);
-	const double expV = std::exp(v / DK_VT);
-	ic = DK_IS * (expV - 1.0);
-	gm = DK_IS_OVER_VT * expV;
+	for (int i = 0; i < 2; i++)
+	{
+		for (int j = 0; j < 2; j++)
+		{
+			double acc = 0.0;
+			for (const auto& nv : DK_NV[i])
+				for (const auto& nc : ni[j])
+					acc += nv.coeff * nc.coeff * s[nv.node][nc.node];
+			k[i][j] = acc;
+		}
+	}
 }
 
-using K2x2 = std::array<std::array<double, 2>, 2>;
-
-inline K2x2 computeK(const Mat8& s)
+/// S * N_i[:, j] for one current column
+inline Vec9 sTimesNi(const Mat9& s, const DkIncidence (&ni)[2])
 {
-	K2x2 k;
-	k[0][0] = s[BASE1][EMIT1] - s[BASE1][COLL1] - s[EMIT1][EMIT1] + s[EMIT1][COLL1];
-	k[0][1] = s[BASE1][EMIT2] - s[BASE1][COLL2] - s[EMIT1][EMIT2] + s[EMIT1][COLL2];
-	k[1][0] = s[COLL1][EMIT1] - s[COLL1][COLL1] - s[EMIT2][EMIT1] + s[EMIT2][COLL1];
-	k[1][1] = s[COLL1][EMIT2] - s[COLL1][COLL2] - s[EMIT2][EMIT2] + s[EMIT2][COLL2];
-	return k;
+	Vec9 out;
+	for (int i = 0; i < DK_N; i++)
+		out[i] = ni[0].coeff * s[i][ni[0].node] + ni[1].coeff * s[i][ni[1].node];
+	return out;
 }
 
 struct DkState
 {
 	double jCin = 0.0;
 	double cinRhsPrev = 0.0;
-	Vec8 v;
-	double iNl[2] = {0.0, 0.0};
+	Vec9 v{};
+	double iC[2] = {0.0, 0.0};
+	double iB[2] = {0.0, 0.0};
 	double vNl[2] = {0.0, 0.0};
 
-	static DkState atDc(double gCin, const double vNlDc[2], const Vec8& vDc)
+	static DkState atDc(double gCin, const double vNlDc[2], const Vec9& vDc)
 	{
 		DkState s;
-		s.jCin = gCin * vDc[BASE1];
-		s.cinRhsPrev = gCin * vDc[BASE1];
+		const auto d0 = dkBjt(vNlDc[0]);
+		const auto d1 = dkBjt(vNlDc[1]);
+		s.jCin = gCin * vDc[DK_BASE1];
+		s.cinRhsPrev = gCin * vDc[DK_BASE1];
 		s.v = vDc;
-		s.iNl[0] = bjtIc(vNlDc[0]);
-		s.iNl[1] = bjtIc(vNlDc[1]);
-		s.vNl[0] = vNlDc[0];
-		s.vNl[1] = vNlDc[1];
+		s.iC[0] = d0.ic; s.iC[1] = d1.ic;
+		s.iB[0] = d0.ib; s.iB[1] = d1.ib;
+		s.vNl[0] = vNlDc[0]; s.vNl[1] = vNlDc[1];
 		return s;
 	}
 };
-
-/// Core DK trapezoidal step
-inline double dkStep(
-	const Mat8& aNegBase, const Vec8& twoW, const Mat8& sBase,
-	const Vec8& sFbCol, double sFbFb,
-	double gLdr, double gLdrPrev,
-	const K2x2& k, const double nvSfb[2], const double sfbNi[2],
-	double gCin, double gc1pc, double cCin,
-	DkState& state, double input)
-{
-	// 1. History
-	auto rhs = matVecMul(aNegBase, state.v);
-	rhs[FB] -= gLdrPrev * state.v[FB];
-
-	const double cinRhsNow = gCin * input + state.jCin;
-	rhs[BASE1] += cinRhsNow + state.cinRhsPrev;
-
-	rhs[EMIT1] += state.iNl[0]; rhs[COLL1] -= state.iNl[0];
-	rhs[EMIT2] += state.iNl[1]; rhs[COLL2] -= state.iNl[1];
-
-	for (int i = 0; i < DK_N; i++)
-		rhs[i] += twoW[i];
-
-	// 2. v_pred_base
-	auto vPredBase = matVecMul(sBase, rhs);
-
-	// 3. SM correction
-	const double smK = gLdr / (1.0 + sFbFb * gLdr);
-	const double smVpred = smK * vPredBase[FB];
-	Vec8 vPred;
-	for (int i = 0; i < DK_N; i++)
-		vPred[i] = vPredBase[i] - smVpred * sFbCol[i];
-
-	// 4. Predicted NL voltages
-	const double p0 = vPred[BASE1] - vPred[EMIT1];
-	const double p1 = vPred[COLL1] - vPred[EMIT2];
-
-	// 5. NR solve with R_ldr-corrected K
-	const double k00 = k[0][0] - smK * nvSfb[0] * sfbNi[0];
-	const double k01 = k[0][1] - smK * nvSfb[0] * sfbNi[1];
-	const double k10 = k[1][0] - smK * nvSfb[1] * sfbNi[0];
-	const double k11 = k[1][1] - smK * nvSfb[1] * sfbNi[1];
-
-	double vNl0 = state.vNl[0], vNl1 = state.vNl[1];
-
-	for (int iter = 0; iter < 6; iter++)
-	{
-		double ic0, gm0, ic1, gm1;
-		bjtIcGm(vNl0, ic0, gm0);
-		bjtIcGm(vNl1, ic1, gm1);
-
-		const double f0 = vNl0 - p0 - k00 * ic0 - k01 * ic1;
-		const double f1 = vNl1 - p1 - k10 * ic0 - k11 * ic1;
-
-		if (std::abs(f0) < 1e-9 && std::abs(f1) < 1e-9)
-			break;
-
-		const double j00 = 1.0 - k00 * gm0;
-		const double j01 = -k01 * gm1;
-		const double j10 = -k10 * gm0;
-		const double j11 = 1.0 - k11 * gm1;
-
-		const double det = j00 * j11 - j01 * j10;
-		if (std::abs(det) < 1e-30) break;
-		const double invDet = 1.0 / det;
-
-		vNl0 -= invDet * (j11 * f0 - j01 * f1);
-		vNl1 -= invDet * (j00 * f1 - j10 * f0);
-	}
-
-	// 6. Final NL currents
-	const double icNew0 = bjtIc(vNl0);
-	const double icNew1 = bjtIc(vNl1);
-
-	// 7. Node voltage update
-	const double sfbNiDotIc = sfbNi[0] * icNew0 + sfbNi[1] * icNew1;
-	for (int i = 0; i < DK_N; i++)
-	{
-		const double sNi = icNew0 * (sBase[i][EMIT1] - sBase[i][COLL1])
-						 + icNew1 * (sBase[i][EMIT2] - sBase[i][COLL2]);
-		state.v[i] = vPred[i] + sNi - smK * sfbNiDotIc * sFbCol[i];
-	}
-
-	// 8. Cin companion update
-	state.cinRhsPrev = cinRhsNow;
-	const double dvCin = input - state.v[BASE1];
-	state.jCin = -gc1pc * dvCin - cCin * state.jCin;
-
-	// 9. State update
-	state.iNl[0] = icNew0; state.iNl[1] = icNew1;
-	state.vNl[0] = vNl0;   state.vNl[1] = vNl1;
-
-	return state.v[OUT];
-}
 
 class DkPreamp
 {
@@ -318,96 +292,95 @@ public:
 		const double t = 1.0 / sampleRate;
 		const double twoOverT = 2.0 / t;
 
-		// Cin-R1 companion
-		const double alphaCin = 2.0 * DK_R1 * DK_CIN * sampleRate;
+		// Cin companion: Thevenin of the R1/R2/Cin input two-port seen from base1
+		const double alphaCin = 2.0 * DK_R_IN_EFF * DK_CIN * sampleRate;
 		m_gCin = (2.0 * DK_CIN * sampleRate) / (1.0 + alphaCin);
 		m_cCin = (1.0 - alphaCin) / (1.0 + alphaCin);
 		m_gc1pc = m_gCin * (1.0 + m_cCin);
 
-		// G_base (no R_ldr)
-		auto gBase = mat8Zero();
-		auto w = vec8Zero();
+		Mat9 gBase = mat9Zero();
+		Vec9 w = vec9Zero();
 
-		gBase[BASE1][BASE1] += 1.0 / DK_R2; w[BASE1] += DK_VCC / DK_R2;
-		gBase[BASE1][BASE1] += 1.0 / DK_R3;
-		gBase[EMIT1][EMIT1] += 1.0 / DK_RE1;
-		gBase[COLL1][COLL1] += 1.0 / DK_RC1; w[COLL1] += DK_VCC / DK_RC1;
-		stampResistor(gBase, EMIT2, EMIT2B, DK_RE2A);
-		gBase[EMIT2B][EMIT2B] += 1.0 / DK_RE2B;
-		gBase[COLL2][COLL2] += 1.0 / DK_RC2; w[COLL2] += DK_VCC / DK_RC2;
-		stampResistor(gBase, COLL2, OUT, DK_R9);
-		stampResistor(gBase, OUT, FB, DK_R10);
+		stampResistor(gBase, DK_BASE1, DK_EMIT2B, DK_R3);
+		gBase[DK_EMIT1][DK_EMIT1] += 1.0 / DK_RE1;
+		gBase[DK_COLL1][DK_COLL1] += 1.0 / DK_RC1;
+		w[DK_COLL1] += DK_VCC / DK_RC1;
+		stampResistor(gBase, DK_EMIT2, DK_EMIT2B, DK_RE2A);
+		gBase[DK_EMIT2B][DK_EMIT2B] += 1.0 / DK_RE2B;
+		gBase[DK_COLL2][DK_COLL2] += 1.0 / DK_RC2;
+		w[DK_COLL2] += DK_VCC / DK_RC2;
+		stampResistor(gBase, DK_NODE_C6, DK_OUT, DK_R9);
+		stampResistor(gBase, DK_NODE_C6, DK_FB, DK_R10);
+		gBase[DK_OUT][DK_OUT] += 1.0 / DK_RLOAD;
 
 		m_gDcBase = gBase;
+		gBase[DK_BASE1][DK_BASE1] += m_gCin;
 
-		// Add g_cin
-		gBase[BASE1][BASE1] += m_gCin;
-
-		// C matrix
-		auto c = mat8Zero();
-		stampCapacitor(c, COLL1, BASE1, DK_C3);
-		stampCapacitor(c, COLL2, COLL1, DK_C4);
-		stampCapacitor(c, EMIT1, FB, DK_CE1);
-		stampCapacitor(c, EMIT2, EMIT2B, DK_CE2);
-		auto twoCoverT = matScale(twoOverT, c);
+		Mat9 c = mat9Zero();
+		stampCapacitor(c, DK_COLL1, DK_BASE1, DK_C3);
+		stampCapacitor(c, DK_COLL2, DK_COLL1, DK_C4);
+		stampCapacitor(c, DK_EMIT1, DK_FB, DK_CE1);
+		stampCapacitor(c, DK_COLL2, DK_NODE_C6, DK_C6);
+		stampCapacitorToGnd(c, DK_EMIT2, DK_CE2);
+		stampCapacitorToGnd(c, DK_BASE1, DK_C2);
+		const Mat9 twoCOverT = matScale(twoOverT, c);
 
 		for (int i = 0; i < DK_N; i++)
 			m_twoW[i] = 2.0 * w[i];
 
-		auto aBase = matAdd(twoCoverT, gBase);
-		m_aNegBase = matSub(twoCoverT, gBase);
+		const Mat9 aBase = matAdd(twoCOverT, gBase);
+		m_aNegBase = matSub(twoCOverT, gBase);
 		m_sBase = matInverse(aBase);
-		m_k = computeK(m_sBase);
+		computeK(m_sBase, DK_NIC, m_kC);
+		computeK(m_sBase, DK_NIB, m_kB);
 
-		// SM projection vectors
 		for (int i = 0; i < DK_N; i++)
 		{
-			m_sFbCol[i] = m_sBase[i][FB];
-			m_sFbRow[i] = m_sBase[FB][i];
+			m_sFbCol[i] = m_sBase[i][DK_FB];
+			m_sFbRow[i] = m_sBase[DK_FB][i];
 		}
-		m_sFbFb = m_sBase[FB][FB];
+		m_sFbFb = m_sBase[DK_FB][DK_FB];
 
-		m_nvSfb[0] = m_sFbCol[BASE1] - m_sFbCol[EMIT1];
-		m_nvSfb[1] = m_sFbCol[COLL1] - m_sFbCol[EMIT2];
-		m_sfbNi[0] = m_sFbRow[EMIT1] - m_sFbRow[COLL1];
-		m_sfbNi[1] = m_sFbRow[EMIT2] - m_sFbRow[COLL2];
+		for (int i = 0; i < 2; i++)
+		{
+			m_nvSfb[i] = DK_NV[i][0].coeff * m_sFbCol[DK_NV[i][0].node]
+			           + DK_NV[i][1].coeff * m_sFbCol[DK_NV[i][1].node];
+			m_sfbNic[i] = DK_NIC[i][0].coeff * m_sFbRow[DK_NIC[i][0].node]
+			            + DK_NIC[i][1].coeff * m_sFbRow[DK_NIC[i][1].node];
+			m_sfbNib[i] = DK_NIB[i][0].coeff * m_sFbRow[DK_NIB[i][0].node]
+			            + DK_NIB[i][1].coeff * m_sFbRow[DK_NIB[i][1].node];
+			m_sNic[i] = sTimesNi(m_sBase, DK_NIC[i]);
+			m_sNib[i] = sTimesNi(m_sBase, DK_NIB[i]);
+		}
 
-		// DC solve
-		constexpr double rLdrInit = 1000000.0;
-		double vNlDc[2]; Vec8 vDc;
-		fullDcSolve(m_gDcBase, w, rLdrInit, vNlDc, vDc);
+		m_rLdr = 1000000.0;
+		m_gLdr = 1.0 / m_rLdr;
+		m_gLdrPrev = m_gLdr;
 
+		double vNlDc[2];
+		Vec9 vDc;
+		fullDcSolve(m_gDcBase, w, m_rLdr, vNlDc, vDc);
 		m_vDc = vDc;
 		m_main = DkState::atDc(m_gCin, vNlDc, vDc);
-		m_shadow = m_main;
+	}
 
-		m_rLdr = rLdrInit;
-		m_gLdr = 1.0 / rLdrInit;
-		m_gLdrPrev = m_gLdr;
+	/// Factor turning `out` into the preamp's open-circuit voltage at the R-9 terminal.
+	static constexpr double openCircuitOutputFactor()
+	{
+		return (DK_R9 + DK_RLOAD) / DK_RLOAD;
 	}
 
 	double processSample(double input)
 	{
-		const double mainOut = dkStep(
-			m_aNegBase, m_twoW, m_sBase, m_sFbCol, m_sFbFb,
-			m_gLdr, m_gLdrPrev, m_k, m_nvSfb, m_sfbNi,
-			m_gCin, m_gc1pc, m_cCin, m_main, input);
-
-		const double pump = dkStep(
-			m_aNegBase, m_twoW, m_sBase, m_sFbCol, m_sFbFb,
-			m_gLdr, m_gLdrPrev, m_k, m_nvSfb, m_sfbNi,
-			m_gCin, m_gc1pc, m_cCin, m_shadow, 0.0);
-
+		const double out = dkStep(m_main, input);
 		m_gLdrPrev = m_gLdr;
 
-		const double result = mainOut - pump;
-
-		if (!std::isfinite(result))
+		if (!std::isfinite(out))
 		{
 			reset();
 			return 0.0;
 		}
-		return result;
+		return out;
 	}
 
 	void setLdrResistance(double rLdrPath)
@@ -422,76 +395,191 @@ public:
 
 	void reset()
 	{
-		Vec8 wHalf;
+		Vec9 w;
 		for (int i = 0; i < DK_N; i++)
-			wHalf[i] = m_twoW[i] * 0.5;
+			w[i] = m_twoW[i] * 0.5;
 
-		double vNlDc[2]; Vec8 vDc;
-		fullDcSolve(m_gDcBase, wHalf, m_rLdr, vNlDc, vDc);
+		double vNlDc[2];
+		Vec9 vDc;
+		fullDcSolve(m_gDcBase, w, m_rLdr, vNlDc, vDc);
 
 		m_vDc = vDc;
 		m_gLdr = 1.0 / m_rLdr;
 		m_gLdrPrev = m_gLdr;
-
-		auto state = DkState::atDc(m_gCin, vNlDc, vDc);
-		m_shadow = state;
-		m_main = state;
+		m_main = DkState::atDc(m_gCin, vNlDc, vDc);
 	}
 
 private:
-	static void fullDcSolve(const Mat8& gDcBase, const Vec8& w, double rLdr,
-							double vNlDc[2], Vec8& vDc)
+	static void fullDcSolve(const Mat9& gDcBase, const Vec9& w, double rLdr,
+	                        double vNlDc[2], Vec9& vDc)
 	{
-		auto gFull = gDcBase;
-		gFull[FB][FB] += 1.0 / rLdr;
-		auto sDc = matInverse(gFull);
-		auto kDc = computeK(sDc);
-		auto sv = matVecMul(sDc, w);
-		const double pDc0 = sv[BASE1] - sv[EMIT1];
-		const double pDc1 = sv[COLL1] - sv[EMIT2];
+		Mat9 gFull = gDcBase;
+		gFull[DK_FB][DK_FB] += 1.0 / rLdr;
+		const Mat9 sDc = matInverse(gFull);
+		double kCDc[2][2], kBDc[2][2];
+		computeK(sDc, DK_NIC, kCDc);
+		computeK(sDc, DK_NIB, kBDc);
+		const Vec9 sv = matVecMul(sDc, w);
+		const double pDc[2] = { sv[DK_BASE1] - sv[DK_EMIT1], sv[DK_COLL1] - sv[DK_EMIT2] };
 
 		double vNl0 = 0.56, vNl1 = 0.66;
-		for (int iter = 0; iter < 100; iter++)
+		for (int iter = 0; iter < 200; iter++)
 		{
-			double ic0, gm0, ic1, gm1;
-			bjtIcGm(vNl0, ic0, gm0);
-			bjtIcGm(vNl1, ic1, gm1);
+			const auto d0 = dkBjt(vNl0);
+			const auto d1 = dkBjt(vNl1);
+			const double f0 = vNl0 - pDc[0]
+				- kCDc[0][0] * d0.ic - kCDc[0][1] * d1.ic
+				- kBDc[0][0] * d0.ib - kBDc[0][1] * d1.ib;
+			const double f1 = vNl1 - pDc[1]
+				- kCDc[1][0] * d0.ic - kCDc[1][1] * d1.ic
+				- kBDc[1][0] * d0.ib - kBDc[1][1] * d1.ib;
+			if (std::abs(f0) < 1e-13 && std::abs(f1) < 1e-13)
+				break;
 
-			const double f0 = vNl0 - pDc0 - kDc[0][0] * ic0 - kDc[0][1] * ic1;
-			const double f1 = vNl1 - pDc1 - kDc[1][0] * ic0 - kDc[1][1] * ic1;
-
-			if (std::abs(f0) < 1e-12 && std::abs(f1) < 1e-12) break;
-
-			const double j00 = 1.0 - kDc[0][0] * gm0;
-			const double j01 = -kDc[0][1] * gm1;
-			const double j10 = -kDc[1][0] * gm0;
-			const double j11 = 1.0 - kDc[1][1] * gm1;
+			const double j00 = 1.0 - kCDc[0][0] * d0.gic - kBDc[0][0] * d0.gib;
+			const double j01 = -kCDc[0][1] * d1.gic - kBDc[0][1] * d1.gib;
+			const double j10 = -kCDc[1][0] * d0.gic - kBDc[1][0] * d0.gib;
+			const double j11 = 1.0 - kCDc[1][1] * d1.gic - kBDc[1][1] * d1.gib;
 			const double det = j00 * j11 - j01 * j10;
 			const double invDet = 1.0 / det;
 			const double dv0 = invDet * (j11 * f0 - j01 * f1);
 			const double dv1 = invDet * (j00 * f1 - j10 * f0);
-			constexpr double maxStep = 2.0 * DK_VT;
+			const double maxStep = 2.0 * DK_VT;
 			vNl0 -= std::clamp(dv0, -maxStep, maxStep);
 			vNl1 -= std::clamp(dv1, -maxStep, maxStep);
 		}
 
-		vNlDc[0] = vNl0; vNlDc[1] = vNl1;
-
-		auto dcRhs = w;
-		dcRhs[EMIT1] += bjtIc(vNl0); dcRhs[COLL1] -= bjtIc(vNl0);
-		dcRhs[EMIT2] += bjtIc(vNl1); dcRhs[COLL2] -= bjtIc(vNl1);
+		const auto d0 = dkBjt(vNl0);
+		const auto d1 = dkBjt(vNl1);
+		const double ic[2] = { d0.ic, d1.ic };
+		const double ib[2] = { d0.ib, d1.ib };
+		Vec9 dcRhs = w;
+		for (int j = 0; j < 2; j++)
+		{
+			for (const auto& n : DK_NIC[j]) dcRhs[n.node] += n.coeff * ic[j];
+			for (const auto& n : DK_NIB[j]) dcRhs[n.node] += n.coeff * ib[j];
+		}
 		vDc = matVecMul(sDc, dcRhs);
+		vNlDc[0] = vNl0;
+		vNlDc[1] = vNl1;
 	}
 
-	Mat8 m_sBase, m_aNegBase, m_gDcBase;
-	K2x2 m_k;
-	Vec8 m_twoW, m_vDc;
-	Vec8 m_sFbCol, m_sFbRow;
+	/// One trapezoidal DK step. Returns v[OUT].
+	double dkStep(DkState& state, double input) const
+	{
+		// 1. History
+		Vec9 rhs = matVecMul(m_aNegBase, state.v);
+		rhs[DK_FB] -= m_gLdrPrev * state.v[DK_FB];
+
+		const double vinEff = input * DK_K_IN_DIV;
+		const double cinRhsNow = m_gCin * vinEff + state.jCin;
+		rhs[DK_BASE1] += cinRhsNow + state.cinRhsPrev;
+
+		for (int j = 0; j < 2; j++)
+		{
+			for (const auto& n : DK_NIC[j]) rhs[n.node] += n.coeff * state.iC[j];
+			for (const auto& n : DK_NIB[j]) rhs[n.node] += n.coeff * state.iB[j];
+		}
+		for (int i = 0; i < DK_N; i++)
+			rhs[i] += m_twoW[i];
+
+		// 2. Prediction without R_ldr on the LHS
+		const Vec9 vPredBase = matVecMul(m_sBase, rhs);
+
+		// 3. Sherman-Morrison correction for the current R_ldr
+		const double smK = m_gLdr / (1.0 + m_sFbFb * m_gLdr);
+		const double smVpred = smK * vPredBase[DK_FB];
+		Vec9 vPred;
+		for (int i = 0; i < DK_N; i++)
+			vPred[i] = vPredBase[i] - smVpred * m_sFbCol[i];
+
+		// 4. Predicted NL voltages
+		const double p0 = vPred[DK_BASE1] - vPred[DK_EMIT1];
+		const double p1 = vPred[DK_COLL1] - vPred[DK_EMIT2];
+
+		// 5. NR on the 2x2 system with R_ldr-corrected kernels
+		double kc[2][2], kb[2][2];
+		for (int i = 0; i < 2; i++)
+		{
+			for (int j = 0; j < 2; j++)
+			{
+				kc[i][j] = m_kC[i][j] - smK * m_nvSfb[i] * m_sfbNic[j];
+				kb[i][j] = m_kB[i][j] - smK * m_nvSfb[i] * m_sfbNib[j];
+			}
+		}
+
+		double vNl0 = state.vNl[0], vNl1 = state.vNl[1];
+		for (int iter = 0; iter < 6; iter++)
+		{
+			const auto d0 = dkBjt(vNl0);
+			const auto d1 = dkBjt(vNl1);
+
+			const double f0 = vNl0 - p0 - kc[0][0] * d0.ic - kc[0][1] * d1.ic - kb[0][0] * d0.ib - kb[0][1] * d1.ib;
+			const double f1 = vNl1 - p1 - kc[1][0] * d0.ic - kc[1][1] * d1.ic - kb[1][0] * d0.ib - kb[1][1] * d1.ib;
+
+			if (std::abs(f0) < 1e-9 && std::abs(f1) < 1e-9)
+				break;
+
+			const double j00 = 1.0 - kc[0][0] * d0.gic - kb[0][0] * d0.gib;
+			const double j01 = -kc[0][1] * d1.gic - kb[0][1] * d1.gib;
+			const double j10 = -kc[1][0] * d0.gic - kb[1][0] * d0.gib;
+			const double j11 = 1.0 - kc[1][1] * d1.gic - kb[1][1] * d1.gib;
+
+			const double det = j00 * j11 - j01 * j10;
+			if (std::abs(det) < 1e-30)
+				break;
+			const double invDet = 1.0 / det;
+
+			vNl0 -= invDet * (j11 * f0 - j01 * f1);
+			vNl1 -= invDet * (j00 * f1 - j10 * f0);
+		}
+
+		// 6. Final NL currents
+		const auto d0 = dkBjt(vNl0);
+		const auto d1 = dkBjt(vNl1);
+		const double icNew[2] = { d0.ic, d1.ic };
+		const double ibNew[2] = { d0.ib, d1.ib };
+
+		// 7. Node voltage update
+		const double sfbDot = m_sfbNic[0] * icNew[0] + m_sfbNic[1] * icNew[1]
+		                    + m_sfbNib[0] * ibNew[0] + m_sfbNib[1] * ibNew[1];
+		for (int i = 0; i < DK_N; i++)
+		{
+			const double sNiI = icNew[0] * m_sNic[0][i] + icNew[1] * m_sNic[1][i]
+			                  + ibNew[0] * m_sNib[0][i] + ibNew[1] * m_sNib[1][i];
+			state.v[i] = vPred[i] + sNiI - smK * sfbDot * m_sFbCol[i];
+		}
+
+		// 8. Cin companion update
+		state.cinRhsPrev = cinRhsNow;
+		const double dvCin = vinEff - state.v[DK_BASE1];
+		state.jCin = -m_gc1pc * dvCin - m_cCin * state.jCin;
+
+		// 9. State update
+		state.iC[0] = icNew[0]; state.iC[1] = icNew[1];
+		state.iB[0] = ibNew[0]; state.iB[1] = ibNew[1];
+		state.vNl[0] = vNl0; state.vNl[1] = vNl1;
+
+		return state.v[DK_OUT];
+	}
+
+	Mat9 m_sBase{};
+	Mat9 m_aNegBase{};
+	double m_kC[2][2] = {};
+	double m_kB[2][2] = {};
+	Vec9 m_twoW{};
+	Vec9 m_sNic[2]{};
+	Vec9 m_sNib[2]{};
+	Vec9 m_sFbCol{};
+	Vec9 m_sFbRow{};
 	double m_sFbFb = 0.0;
 	double m_nvSfb[2] = {0.0, 0.0};
-	double m_sfbNi[2] = {0.0, 0.0};
+	double m_sfbNic[2] = {0.0, 0.0};
+	double m_sfbNib[2] = {0.0, 0.0};
+	Vec9 m_vDc{};
+	Mat9 m_gDcBase{};
 	double m_gCin = 0.0, m_cCin = 0.0, m_gc1pc = 0.0;
-	DkState m_main, m_shadow;
+	DkState m_main;
 	double m_rLdr = 1000000.0;
 	double m_gLdr = 1e-6;
 	double m_gLdrPrev = 1e-6;

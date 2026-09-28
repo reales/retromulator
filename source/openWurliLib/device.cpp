@@ -11,6 +11,23 @@
 namespace openWurliLib
 {
 
+namespace
+{
+	uint32_t rampSamplesForRate(double sampleRate)
+	{
+		return std::max(static_cast<uint32_t>(sampleRate * 0.005), 1u);
+	}
+
+	double onePoleAlpha(double fc, double sr)
+	{
+		if (!std::isfinite(fc) || fc >= 0.5 * sr)
+			return 1.0;
+		return 1.0 - std::exp(-2.0 * M_PI * fc / sr);
+	}
+
+	constexpr double kOutputAlignment = 5.011872336272722; // 10^(14/20)
+}
+
 Device::Device(const synthLib::DeviceCreateParams& _params)
 	: synthLib::Device(_params)
 {
@@ -21,12 +38,20 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 	m_preamp.init(m_osSampleRate);
 	m_tremolo.init(m_tremoloDepth, m_osSampleRate);
 	m_oversampler.init();
+	m_powerAmp.init(m_osSampleRate);
 	m_speaker.init(m_sampleRate);
+
+	const uint32_t ramp = rampSamplesForRate(m_sampleRate);
+	m_volumeSmoother.init(m_volume, ramp);
+	m_tremoloDepthSmoother.init(m_tremoloDepth, ramp);
+	m_speakerCharacterSmoother.init(m_speakerCharacter, ramp);
 
 	m_voiceBuf.resize(MAX_BLOCK, 0.0);
 	m_sumBuf.resize(MAX_BLOCK, 0.0);
 	m_upBuf.resize(MAX_BLOCK * 2, 0.0);
 	m_outBuf.resize(MAX_BLOCK, 0.0);
+
+	warmUp();
 }
 
 Device::~Device()
@@ -41,7 +66,7 @@ float Device::getSamplerate() const
 
 bool Device::isValid() const
 {
-	return true; // No ROM needed — pure physical model
+	return true; // No ROM needed, pure physical model
 }
 
 bool Device::setDspClockPercent(uint32_t)
@@ -89,7 +114,7 @@ bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _t
 		float mlp;
 		std::memcpy(&mlp, p, sizeof(float)); p += sizeof(float);
 		m_mlpEnabled = mlp > 0.5f;
-		// velocityCurve added later — backwards compatible (missing = default)
+		// velocityCurve added later, backwards compatible (missing = default)
 		if (_state.size() >= 6 * sizeof(float))
 		{
 			float vc;
@@ -100,6 +125,9 @@ bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _t
 		{
 			m_velocityCurve = kVelocityCurveDefault;
 		}
+		m_volumeSmoother.snapTo(static_cast<double>(m_volume * m_expression));
+		m_tremoloDepthSmoother.snapTo(static_cast<double>(m_tremoloDepth));
+		m_speakerCharacterSmoother.snapTo(static_cast<double>(m_speakerCharacter));
 		return true;
 	}
 	return false;
@@ -120,7 +148,7 @@ void Device::noteOn(uint8_t note, uint8_t velocity)
 	case 0: vel = rawVel;                                     break; // Linear
 	case 1: vel = rawVel * rawVel;                            break; // Soft (square)
 	case 2: vel = rawVel;                                     break; // Medium (engine S-curve handles it)
-	case 3: vel = std::sqrt(rawVel);                          break; // Hard (sqrt — boosted low velocities)
+	case 3: vel = std::sqrt(rawVel);                          break; // Hard (sqrt, boosted low velocities)
 	case 4: vel = 0.75;                                       break; // Fixed (mezzo-forte)
 	default: vel = rawVel;                                    break;
 	}
@@ -159,8 +187,7 @@ void Device::noteOn(uint8_t note, uint8_t velocity)
 
 void Device::noteOff(uint8_t note)
 {
-	// Clamp identically to noteOn — otherwise an out-of-range note-on (stored
-	// as the clamped pitch) could never be released by the matching note-off.
+	// Clamp identically to noteOn so an out-of-range note-on can always be released.
 	const uint8_t matchNote = std::clamp(note, openWurli::MIDI_LO, openWurli::MIDI_HI);
 
 	// Release oldest held voice matching this note. With the pedal down,
@@ -211,8 +238,6 @@ void Device::allNotesOff()
 size_t Device::allocateVoice()
 {
 	// Priority: Free > oldest Releasing > oldest Sustained > oldest Held.
-	// Sustained voices already had their key released — less disruptive
-	// to steal than Held voices the player is still pressing.
 	size_t bestIdx = 0;
 	uint64_t bestPriority = UINT64_MAX;
 
@@ -236,9 +261,35 @@ size_t Device::allocateVoice()
 	return bestIdx;
 }
 
-void Device::renderSubblock(size_t offset, size_t len)
+void Device::resetChain()
 {
-	// Sum all active voices
+	m_preamp.reset();
+	m_c9State = 0.0;
+	m_oversampler.reset();
+	m_powerAmp.reset();
+	m_speaker.reset();
+}
+
+// Settle the preamp / tremolo oscillator / CdS envelope to their steady operating
+// point with 0.6 s of internal silence, so the first note never rides a cold-start
+// gain excursion.
+void Device::warmUp()
+{
+	const size_t total = static_cast<size_t>(m_sampleRate * 0.6);
+	size_t done = 0;
+	while (done < total)
+	{
+		const size_t len = std::min<size_t>(512, total - done);
+		renderVoicesToAmpOut(0, len);
+		renderOutput(nullptr, nullptr, len);
+		done += len;
+	}
+}
+
+// Sum voices, then run preamp → drawn volume network → power amp inside the
+// oversampled bus. Leaves the post-amp signal at base rate in m_outBuf.
+void Device::renderVoicesToAmpOut(size_t offset, size_t len)
+{
 	std::fill(m_sumBuf.begin(), m_sumBuf.begin() + len, 0.0);
 
 	for (auto& slot : m_voices)
@@ -246,7 +297,6 @@ void Device::renderSubblock(size_t offset, size_t len)
 		if (slot.state == VoiceState::Free && !slot.hasStealVoice)
 			continue;
 
-		// Render main voice
 		if (slot.state != VoiceState::Free)
 		{
 			slot.voice.render(m_voiceBuf.data(), len);
@@ -254,7 +304,6 @@ void Device::renderSubblock(size_t offset, size_t len)
 				m_sumBuf[i] += m_voiceBuf[i];
 		}
 
-		// Render stealing voice with fade-out
 		if (slot.hasStealVoice)
 		{
 			slot.stealVoice.render(m_voiceBuf.data(), len);
@@ -273,30 +322,69 @@ void Device::renderSubblock(size_t offset, size_t len)
 		}
 	}
 
-	// NaN guard on voice output
+	// NaN guard on voice output, before anything with IIR state sees it
 	bool hasNan = false;
 	for (size_t i = 0; i < len; i++)
 	{
 		if (!std::isfinite(m_sumBuf[i])) { hasNan = true; break; }
 	}
 	if (hasNan)
+	{
 		std::fill(m_sumBuf.begin(), m_sumBuf.begin() + len, 0.0);
+		for (auto& slot : m_voices)
+		{
+			if (slot.state == VoiceState::Free && !slot.hasStealVoice)
+				continue;
+			if (slot.state != VoiceState::Free)
+			{
+				slot.voice.render(m_voiceBuf.data(), len);
+				for (size_t i = 0; i < len; i++)
+				{
+					if (!std::isfinite(m_voiceBuf[i]))
+					{
+						slot.state = VoiceState::Free;
+						slot.voice.setInactive();
+						break;
+					}
+				}
+			}
+			if (slot.hasStealVoice)
+			{
+				slot.stealVoice.render(m_voiceBuf.data(), len);
+				for (size_t i = 0; i < len; i++)
+				{
+					if (!std::isfinite(m_voiceBuf[i]))
+					{
+						slot.hasStealVoice = false;
+						slot.stealFade = 0;
+						break;
+					}
+				}
+			}
+		}
+	}
 
-	// Preamp processing
+	const double r11 = openWurli::R11_REED_BAR_VOLUME_DEFAULT;
+	constexpr double ocFactor = openWurli::DkPreamp::openCircuitOutputFactor();
+
 	if (m_oversample)
 	{
 		m_oversampler.upsample2x(m_sumBuf.data(), m_upBuf.data(), len);
 
 		for (size_t i = 0; i < len; i++)
 		{
-			m_tremolo.setDepth(static_cast<double>(m_tremoloDepth));
+			m_tremolo.setDepth(m_tremoloDepthSmoother.next());
+			const double vol = m_volumeSmoother.next();
+			const double driveGain = ocFactor * openWurli::volumePotGain(vol, r11);
+			m_c9Alpha = onePoleAlpha(openWurli::volumePotPoleHz(vol, r11), m_osSampleRate);
 
 			for (int j = 0; j < 2; j++)
 			{
 				const size_t idx = i * 2 + j;
-				const double rLdr = m_tremolo.process();
-				m_preamp.setLdrResistance(rLdr);
-				m_upBuf[idx] = m_preamp.processSample(m_upBuf[idx]);
+				m_preamp.setLdrResistance(m_tremolo.process());
+				const double preampOut = m_preamp.processSample(m_upBuf[idx]);
+				m_c9State += m_c9Alpha * (preampOut * driveGain - m_c9State);
+				m_upBuf[idx] = m_powerAmp.process(m_c9State);
 			}
 		}
 
@@ -306,9 +394,38 @@ void Device::renderSubblock(size_t offset, size_t len)
 	{
 		for (size_t i = 0; i < len; i++)
 		{
-			const double rLdr = m_tremolo.process();
-			m_preamp.setLdrResistance(rLdr);
-			m_outBuf[offset + i] = m_preamp.processSample(m_sumBuf[i]);
+			m_tremolo.setDepth(m_tremoloDepthSmoother.next());
+			m_preamp.setLdrResistance(m_tremolo.process());
+			const double preampOut = m_preamp.processSample(m_sumBuf[i]);
+			const double vol = m_volumeSmoother.next();
+			const double driveGain = ocFactor * openWurli::volumePotGain(vol, r11);
+			m_c9Alpha = onePoleAlpha(openWurli::volumePotPoleHz(vol, r11), m_osSampleRate);
+			m_c9State += m_c9Alpha * (preampOut * driveGain - m_c9State);
+			m_outBuf[offset + i] = m_powerAmp.process(m_c9State);
+		}
+	}
+}
+
+// Speaker + output alignment on m_outBuf. Null outputs discard (warm-up).
+void Device::renderOutput(float* outL, float* outR, size_t len)
+{
+	for (size_t i = 0; i < len; i++)
+	{
+		m_speaker.setCharacter(m_speakerCharacterSmoother.next());
+		const double shaped = m_speaker.process(m_outBuf[i]);
+		const double post = shaped * openWurli::POST_SPEAKER_GAIN * kOutputAlignment;
+
+		float sample = static_cast<float>(post);
+		if (!std::isfinite(sample))
+		{
+			resetChain();
+			sample = 0.0f;
+		}
+
+		if (outL)
+		{
+			outL[i] = sample;
+			outR[i] = sample; // mono → stereo
 		}
 	}
 }
@@ -329,7 +446,6 @@ void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synth
 {
 	if (m_shutdown.load()) return;
 
-	// Ensure buffers are large enough
 	if (m_outBuf.size() < _samples)
 	{
 		m_voiceBuf.resize(_samples, 0.0);
@@ -338,37 +454,13 @@ void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synth
 		m_outBuf.resize(_samples, 0.0);
 	}
 
-	// Render all voices in one block (MIDI events already dispatched by base class)
-	renderSubblock(0, _samples);
+	m_volumeSmoother.setTarget(static_cast<double>(m_volume * m_expression));
+	m_tremoloDepthSmoother.setTarget(static_cast<double>(m_tremoloDepth));
+	m_speakerCharacterSmoother.setTarget(static_cast<double>(m_speakerCharacter));
 
-	// Output chain: volume → power amp → speaker
-	auto* outL = _outputs[0];
-	auto* outR = _outputs[1];
-
-	for (size_t i = 0; i < _samples; i++)
-	{
-		const double volume = static_cast<double>(m_volume * m_expression);
-		m_speaker.setCharacter(static_cast<double>(m_speakerCharacter));
-
-		// Volume pot (audio taper: vol²)
-		const double attenuated = m_outBuf[i] * volume * volume;
-		const double amplified = m_powerAmp.process(attenuated);
-		const double shaped = m_speaker.process(amplified);
-		const double post = shaped * openWurli::POST_SPEAKER_GAIN;
-
-		float sample = static_cast<float>(post);
-		if (!std::isfinite(sample))
-		{
-			m_preamp.reset();
-			m_oversampler.reset();
-			m_powerAmp.reset();
-			m_speaker.reset();
-			sample = 0.0f;
-		}
-
-		outL[i] = sample;
-		outR[i] = sample; // mono → stereo
-	}
+	// MIDI events were already dispatched by the base class
+	renderVoicesToAmpOut(0, _samples);
+	renderOutput(_outputs[0], _outputs[1], _samples);
 
 	cleanupVoices();
 }
@@ -413,8 +505,7 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 			m_sustainPedal = (_ev.c >= 64);
 			if (!m_sustainPedal)
 			{
-				// Release every Sustained voice — they kept ringing while the
-				// pedal was held; lifting it triggers the deferred note-off.
+				// Lifting the pedal triggers the deferred note-off of every Sustained voice.
 				for (auto& slot : m_voices)
 				{
 					if (slot.state == VoiceState::Sustained)
@@ -425,7 +516,7 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 				}
 			}
 			break;
-		case 70: // Sound Controller 1 → pickup (MLP) on/off
+		case 70: // Sound Controller 1 → MLP corrections on/off
 			setMlpEnabled(_ev.c == 1 || _ev.c >= 64);	// 0/1 from the switch parameter
 			break;
 		case 71: // Sound Controller 2 → speaker character
@@ -440,7 +531,7 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 		}
 		return true;
 
-	case 0xE0: // Pitch bend — ignored for Wurlitzer
+	case 0xE0: // Pitch bend, ignored for Wurlitzer
 		return true;
 
 	default:

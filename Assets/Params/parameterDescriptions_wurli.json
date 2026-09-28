@@ -263,7 +263,7 @@
     },
     {
       "name": "slot_008",
-      "displayName": "Pickup",
+      "displayName": "MLP Corrections",
       "min": 0,
       "max": 1,
       "toText": "vl_pickup",

@@ -1,6 +1,6 @@
 /**
  * OpenWurli DSP — Single voice: reed + hammer + pickup + decay
- * Ported from Rust openwurli-dsp (GPL v3)
+ * Ported from Rust openwurli-dsp 0.9.0 voice.rs (GPL v3)
  */
 #pragma once
 
@@ -37,52 +37,34 @@ public:
 		for (int i = 0; i < NUM_MODES; i++)
 			amplitudes[i] = params.modeAmplitudes[i] * dwell[i] * ampOffsets[i];
 
-		// Velocity curve
+		// Sigmoid → power-law velocity curve (hammer force, pre-pickup)
 		const double velExp = velocityExponent(m_midiNote);
 		const double velScale = std::pow(velocityScurve(velocity), velExp);
 		for (auto& a : amplitudes)
 			a *= velScale;
 
-		// MLP corrections
 		const auto corrections = mlpEnabled ? MlpCorrections::infer(m_midiNote, velocity) : MlpCorrections::identity();
 
-		// Apply frequency corrections to modes 1-5
 		auto correctedRatios = params.modeRatiosArr;
 		for (int i = 0; i < std::min(5, NUM_MODES - 1); i++)
 			correctedRatios[i + 1] *= std::pow(2.0, corrections.freqOffsetsCents[i] / 1200.0);
 
-		// Apply decay corrections to modes 1-5
 		auto correctedDecay = params.modeDecayRatesArr;
 		for (int i = 0; i < std::min(5, NUM_MODES - 1); i++)
 			correctedDecay[i + 1] /= corrections.decayOffsets[i];
 
-		// Displacement scale correction
-		const double baseDs = pickupDisplacementScale(m_midiNote);
-		const double correctedDs = baseDs * corrections.dsCorrection;
+		// The note's ff swing at the pickup (mm); the velocity curve scales the reed from there.
+		const double swingMm = pickupSwingMm(m_midiNote);
 
 		m_reed.init(detunedFundamental, correctedRatios, amplitudes, correctedDecay,
-					onsetTime, velocity, sampleRate, noiseSeed);
+					onsetTime, velocity, sampleRate);
+		m_airDragDbPerMm = airDragDbPerMm(m_midiNote);
+		m_reed.setAirDrag(m_airDragDbPerMm, swingMm, sampleRate);
 
-		m_pickup.init(sampleRate, correctedDs);
+		m_pickup.init(sampleRate, m_midiNote, swingMm);
 		m_noise.init(velocity, detunedFundamental, sampleRate, noiseSeed);
 
-		// MLP ds_correction shifts pickup drive, which changes output level
-		// as a side effect (the MLP targets H2/H1 spectral shape, not level).
-		// sqrt of the proxy ratio matches the RC pickup's smoothing — the
-		// static Fourier proxy overestimates response at high ds because
-		// charge dynamics self-limit peak excursions. Empirically: half-in-dB.
-		double mlpLevelCompensation = 1.0;
-		if (std::abs(corrections.dsCorrection - 1.0) > 1e-6)
-		{
-			constexpr double HPF_FC = 2312.0;
-			const double f0 = midiToFreq(m_midiNote);
-			const double proxyBase = pickupRmsProxy(baseDs, f0, HPF_FC);
-			const double proxyCorrected = pickupRmsProxy(correctedDs, f0, HPF_FC);
-			if (proxyCorrected > 1e-10)
-				mlpLevelCompensation = std::sqrt(proxyBase / proxyCorrected);
-		}
-
-		m_postPickupGain = outputScale(m_midiNote, velocity) * mlpLevelCompensation;
+		m_postPickupGain = outputScale(m_midiNote, velocity);
 		m_active = true;
 	}
 
@@ -122,6 +104,7 @@ private:
 	Pickup m_pickup;
 	AttackNoise m_noise;
 	double m_postPickupGain = 1.0;
+	double m_airDragDbPerMm = 0.0;
 	double m_sampleRate = 44100.0;
 	uint8_t m_midiNote = 60;
 	bool m_active = false;

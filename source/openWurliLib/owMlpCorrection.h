@@ -1,9 +1,9 @@
 /**
  * OpenWurli DSP — Per-note MLP v2 parameter corrections
- * Ported from Rust openwurli-dsp (GPL v3)
+ * Ported from Rust openwurli-dsp 0.9.0 mlp_correction.rs (GPL v3)
  *
- * Tiny neural network (2→8→8→11) runs ONCE at note-on.
- * Zero per-sample CPU cost.
+ * Tiny neural network (2→16→16→11) run ONCE at note-on. Only the H2/H3
+ * heads were trained; the others (and ds_correction) emit identity.
  */
 #pragma once
 
@@ -11,17 +11,18 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <cstdint>
 
 namespace openWurli
 {
 
 static constexpr int MLP_N_FREQ = 5;
 static constexpr int MLP_N_DECAY = 5;
-static constexpr int MLP_DS_IDX = 10;
+static constexpr int MLP_N_TRAINED_HARMONICS = 2;
 static constexpr double MLP_MIDI_MIN = 21.0;
 static constexpr double MLP_MIDI_MAX = 108.0;
-static constexpr double MLP_TRAIN_LO = 65.0;
-static constexpr double MLP_TRAIN_HI = 97.0;
+static constexpr double MLP_TRAIN_LO = 38.0;
+static constexpr double MLP_TRAIN_HI = 86.0;
 static constexpr double MLP_FADE_SEMITONES = 12.0;
 
 struct MlpCorrections
@@ -32,18 +33,13 @@ struct MlpCorrections
 
 	static MlpCorrections identity()
 	{
-		MlpCorrections c;
-		for (auto& f : c.freqOffsetsCents) f = 0.0;
-		for (auto& d : c.decayOffsets) d = 1.0;
-		c.dsCorrection = 1.0;
-		return c;
+		return MlpCorrections{};
 	}
 
 	static MlpCorrections infer(uint8_t midiNote, double velocity)
 	{
 		const double midi = static_cast<double>(midiNote);
 
-		// Fade factor outside training range
 		double fade;
 		if (midi < MLP_TRAIN_LO)
 			fade = std::clamp((midi - (MLP_TRAIN_LO - MLP_FADE_SEMITONES)) / MLP_FADE_SEMITONES, 0.0, 1.0);
@@ -55,12 +51,10 @@ struct MlpCorrections
 		if (fade <= 0.0)
 			return identity();
 
-		// Normalize inputs to [0, 1]
 		const double midiNorm = std::clamp((midi - MLP_MIDI_MIN) / (MLP_MIDI_MAX - MLP_MIDI_MIN), 0.0, 1.0);
 		const double velNorm = std::clamp(velocity, 0.0, 1.0);
 		const double input[2] = {midiNorm, velNorm};
 
-		// Layer 1: affine + ReLU
 		double h1[MLP_HIDDEN_SIZE];
 		for (int i = 0; i < MLP_HIDDEN_SIZE; i++)
 		{
@@ -70,7 +64,6 @@ struct MlpCorrections
 			h1[i] = (sum > 0.0) ? sum : 0.0;
 		}
 
-		// Layer 2: affine + ReLU
 		double h2[MLP_HIDDEN_SIZE];
 		for (int i = 0; i < MLP_HIDDEN_SIZE; i++)
 		{
@@ -80,7 +73,6 @@ struct MlpCorrections
 			h2[i] = (sum > 0.0) ? sum : 0.0;
 		}
 
-		// Layer 3: affine (linear) + denormalization
 		double raw[MLP_N_OUTPUTS];
 		for (int i = 0; i < MLP_N_OUTPUTS; i++)
 		{
@@ -91,15 +83,14 @@ struct MlpCorrections
 		}
 
 		MlpCorrections c;
-		for (int h = 0; h < MLP_N_FREQ; h++)
+		for (int h = 0; h < std::min(MLP_N_FREQ, MLP_N_TRAINED_HARMONICS); h++)
 			c.freqOffsetsCents[h] = std::clamp(raw[h] * fade, -100.0, 100.0);
-		for (int h = 0; h < MLP_N_DECAY; h++)
+		for (int h = 0; h < std::min(MLP_N_DECAY, MLP_N_TRAINED_HARMONICS); h++)
 		{
 			const double rawDecay = std::clamp(raw[MLP_N_FREQ + h], 0.3, 3.0);
 			c.decayOffsets[h] = 1.0 + (rawDecay - 1.0) * fade;
 		}
-		const double rawDs = std::clamp(raw[MLP_DS_IDX], 0.7, 1.5);
-		c.dsCorrection = 1.0 + (rawDs - 1.0) * fade;
+		c.dsCorrection = 1.0;
 
 		return c;
 	}

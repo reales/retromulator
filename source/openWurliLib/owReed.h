@@ -1,10 +1,10 @@
 /**
  * OpenWurli DSP — Modal reed oscillator (7 damped sinusoidal modes)
- * Ported from Rust openwurli-dsp (GPL v3)
+ * Ported from Rust openwurli-dsp 0.9.0 reed.rs (GPL v3)
  *
  * Each mode uses a quadrature oscillator (sin/cos pair rotated per sample)
- * instead of computing sin(phase) per sample. Per-mode frequency jitter
- * (Ornstein-Uhlenbeck process) breaks digital phase coherence.
+ * and holds its frequency exactly. Mode 1 carries an amplitude-dependent
+ * loss (quadratic air drag).
  */
 #pragma once
 
@@ -21,10 +21,6 @@
 namespace openWurli
 {
 
-static constexpr double JITTER_SIGMA = 0.0004;
-static constexpr double JITTER_TAU = 0.020;
-static constexpr double SQRT_3 = 1.7320508080;
-static constexpr uint64_t JITTER_SUBSAMPLE = 16;
 static constexpr uint64_t RENORM_INTERVAL = 1024;
 
 struct ReedMode
@@ -33,22 +29,12 @@ struct ReedMode
 	double c = 1.0;           // quadrature cosine
 	double cosInc = 1.0;
 	double sinInc = 0.0;
-	double phaseInc = 0.0;
 	double amplitude = 0.0;
 	double decayMult = 1.0;
 	double envelope = 1.0;
-	double jitterDrift = 0.0;
 	double damperRate = 0.0;
 	double damperMult = 1.0;
 };
-
-/// LCG PRNG → scaled uniform noise with unit variance
-inline double lcgUniformScaled(uint32_t& state)
-{
-	state = state * 1664525u + 1013904223u;
-	const double u = static_cast<double>(state >> 1) / (4294967295.0 / 2.0);
-	return (u * 2.0 - 1.0) * SQRT_3;
-}
 
 class ModalReed
 {
@@ -62,42 +48,23 @@ public:
 		const std::array<double, NUM_MODES>& decayRatesDb,
 		double onsetTimeS,
 		double velocity,
-		double sampleRate,
-		uint32_t jitterSeed)
+		double sampleRate)
 	{
-		const double dt = 1.0 / sampleRate;
-		m_jitterRevert = std::exp(-dt / JITTER_TAU);
-		m_jitterDiffusion = JITTER_SIGMA * std::sqrt(1.0 - m_jitterRevert * m_jitterRevert);
-		m_jitterState = std::max(jitterSeed, 1u);
-
-		// Box-Muller initial drifts
-		double initialDrifts[NUM_MODES];
-		for (int i = 0; i < NUM_MODES; i++)
-		{
-			m_jitterState = m_jitterState * 1664525u + 1013904223u;
-			double u1 = static_cast<double>(m_jitterState >> 1) / (4294967295.0 / 2.0);
-			m_jitterState = m_jitterState * 1664525u + 1013904223u;
-			double u2 = static_cast<double>(m_jitterState >> 1) / (4294967295.0 / 2.0);
-			double r = std::sqrt(-2.0 * std::log(std::max(u1, 1e-30)));
-			initialDrifts[i] = JITTER_SIGMA * r * std::cos(2.0 * M_PI * u2);
-		}
-
 		for (int i = 0; i < NUM_MODES; i++)
 		{
 			auto& m = m_modes[i];
 			const double freq = fundamentalHz * modeRatiosArr[i];
-			m.phaseInc = 2.0 * M_PI * freq / sampleRate;
+			const double phaseInc = 2.0 * M_PI * freq / sampleRate;
 			const double alphaNepers = decayRatesDb[i] / 8.686;
 			const double decayPerSample = alphaNepers / sampleRate;
 
 			m.s = 0.0;
 			m.c = 1.0;
-			m.cosInc = std::cos(m.phaseInc);
-			m.sinInc = std::sin(m.phaseInc);
+			m.cosInc = std::cos(phaseInc);
+			m.sinInc = std::sin(phaseInc);
 			m.amplitude = amplitudes[i];
 			m.decayMult = std::exp(-decayPerSample);
 			m.envelope = 1.0;
-			m.jitterDrift = initialDrifts[i];
 			m.damperRate = 0.0;
 			m.damperMult = 1.0;
 		}
@@ -112,6 +79,15 @@ public:
 		m_damperRampSamples = 0.0;
 		m_damperReleaseCount = 0.0;
 		m_damperRampDone = false;
+		m_dragK = 0.0;
+	}
+
+	/// Quadratic air drag on mode 1: betaDbPerMm is the extra decay in dB/s per mm of swing
+	/// at the pickup; swingMm is the swing one unit of model displacement stands for.
+	void setAirDrag(double betaDbPerMm, double swingMm, double sampleRate)
+	{
+		const double betaNepers = betaDbPerMm / 8.686;
+		m_dragK = betaNepers * std::abs(m_modes[0].amplitude) * swingMm / sampleRate;
 	}
 
 	void startDamper(uint8_t midiNote, double sampleRate)
@@ -140,14 +116,10 @@ public:
 
 	void render(double* output, size_t numSamples)
 	{
-		const double revert = m_jitterRevert;
-		const double diffusion = m_jitterDiffusion;
-
 		for (size_t n = 0; n < numSamples; n++)
 		{
 			double sum = 0.0;
 
-			// Advance damper
 			if (m_damperActive)
 			{
 				m_damperReleaseCount += 1.0;
@@ -173,7 +145,6 @@ public:
 				}
 			}
 
-			// Onset ramp
 			double onset = 1.0;
 			if (m_sample < m_onsetRampSamples)
 			{
@@ -187,33 +158,24 @@ public:
 					onset = std::pow(cosine, m_onsetShapeExp);
 			}
 
-			// Subsample jitter update
-			if ((m_sample & (JITTER_SUBSAMPLE - 1)) == 0)
-			{
-				for (auto& m : m_modes)
-				{
-					const double noise = lcgUniformScaled(m_jitterState);
-					m.jitterDrift = revert * m.jitterDrift + diffusion * noise;
-				}
-			}
-
-			// Quadrature oscillator
 			for (auto& m : m_modes)
 			{
 				sum += m.amplitude * m.s * onset * m.envelope;
 
-				const double deltaPhase = m.jitterDrift * m.phaseInc;
-				const double ci = m.cosInc - deltaPhase * m.sinInc;
-				const double si = m.sinInc + deltaPhase * m.cosInc;
-				const double sNew = m.s * ci + m.c * si;
-				const double cNew = m.c * ci - m.s * si;
+				const double sNew = m.s * m.cosInc + m.c * m.sinInc;
+				const double cNew = m.c * m.cosInc - m.s * m.sinInc;
 				m.s = sNew;
 				m.c = cNew;
 
 				m.envelope *= m.decayMult;
 			}
 
-			// Renormalize quadrature radius
+			if (m_dragK > 0.0)
+			{
+				const double env = m_modes[0].envelope;
+				m_modes[0].envelope = env * (1.0 - m_dragK * env);
+			}
+
 			if ((m_sample & (RENORM_INTERVAL - 1)) == 0 && m_sample > 0)
 			{
 				for (auto& m : m_modes)
@@ -258,9 +220,7 @@ private:
 	double m_damperRampSamples = 0.0;
 	double m_damperReleaseCount = 0.0;
 	bool m_damperRampDone = false;
-	uint32_t m_jitterState = 1;
-	double m_jitterRevert = 0.0;
-	double m_jitterDiffusion = 0.0;
+	double m_dragK = 0.0;
 };
 
 } // namespace openWurli
