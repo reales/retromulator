@@ -552,6 +552,15 @@ namespace retromulator
         void setMidiPlaylist(std::vector<std::string>&& paths, int index);
         bool loadMidiPlaylistPosition(int position, int direction);
 
+        // Matrix: CC0/CC32 pick the bank file (sorted like the bank combo), a program change
+        // then loads it and the program on the message thread. Encoded (bank + 1) << 8 | program.
+        std::atomic<int> m_matrixBankSelect{-1};
+        std::atomic<int> m_matrixPendingProgram{-1};
+        struct MatrixProgramAsync;
+        std::unique_ptr<MatrixProgramAsync> m_matrixProgramAsync;
+        void filterMatrixProgramChanges(juce::MidiBuffer& midi);
+        void applyMatrixProgramChange();
+
         // Message thread: moves either playlist on when its song ends or a note asks.
         struct PlaylistTimer;
         std::unique_ptr<PlaylistTimer> m_playlistTimer;

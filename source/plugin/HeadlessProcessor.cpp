@@ -573,6 +573,81 @@ namespace retromulator
         }
     }
 
+    struct HeadlessProcessor::MatrixProgramAsync final : juce::AsyncUpdater
+    {
+        explicit MatrixProgramAsync(HeadlessProcessor& p) : proc(p) {}
+        ~MatrixProgramAsync() override { cancelPendingUpdate(); }
+
+        void handleAsyncUpdate() override { proc.applyMatrixProgramChange(); }
+
+        HeadlessProcessor& proc;
+    };
+
+    // Audio thread. The firmware never sees these: its own bank switch would race the
+    // edit buffer the plugin sends for the loaded bank file.
+    void HeadlessProcessor::filterMatrixProgramChanges(juce::MidiBuffer& midi)
+    {
+        bool changed = false;
+        juce::MidiBuffer kept;
+        for(const auto meta : midi)
+        {
+            const auto m = meta.getMessage();
+            if(m.isController() && (m.getControllerNumber() == 0 || m.getControllerNumber() == 32))
+            {
+                m_matrixBankSelect.store(m.getControllerValue());
+                continue;
+            }
+            if(m.isProgramChange())
+            {
+                m_matrixPendingProgram.store(((m_matrixBankSelect.load() + 1) << 8) | m.getProgramChangeNumber());
+                changed = true;
+                continue;
+            }
+            kept.addEvent(m, meta.samplePosition);
+        }
+        if(kept.getNumEvents() == midi.getNumEvents())
+            return;
+        midi.swapWith(kept);
+        if(changed && m_matrixProgramAsync)
+            m_matrixProgramAsync->triggerAsyncUpdate();
+    }
+
+    void HeadlessProcessor::applyMatrixProgramChange()
+    {
+        const int pending = m_matrixPendingProgram.exchange(-1);
+        if(pending < 0 || m_synthType != SynthType::Matrix || m_renderActive.load())
+            return;
+
+        const int bank = (pending >> 8) - 1;
+        const int program = pending & 0x7f;
+
+        if(bank >= 0)
+        {
+            juce::Array<juce::File> files;
+            juce::File(getSynthDataFolder(SynthType::Matrix)).findChildFiles(files, juce::File::findFiles, false,
+                                                                              "*.syx;*.mid;*.bin;*.pfm");
+            files.sort();
+            if(bank >= files.size())
+                return;
+            const auto& f = files.getReference(bank);
+            if(f.getFullPathName().toStdString() != m_sysexFilePath)
+            {
+                loadPresetFromFile(f.getFullPathName().toStdString(), f.getFileNameWithoutExtension().toStdString(), program);
+                return;
+            }
+        }
+
+        // No bank file loaded: the firmware plays its own patch memory
+        if(getProgramCount() == 0)
+        {
+            getPlugin().addMidiEvent(synthLib::SMidiEvent(synthLib::MidiEventSource::Editor,
+                synthLib::M_PROGRAMCHANGE, static_cast<uint8_t>(program), 0));
+            return;
+        }
+        if(program < getProgramCount() && program != m_currentProgram)
+            selectProgram(program);
+    }
+
     void HeadlessProcessor::updatePlaylistTimer()
     {
         if(isTrackerPlaylistMode() || isMidiPlaylistMode())
@@ -635,11 +710,13 @@ namespace retromulator
         m_trackerShuffle   = readSettingsBool("trackerShuffle", false);
         m_midiStopAtEnd    = readSettingsBool("midiStopAtEnd", false);
         m_midiShuffle      = readSettingsBool("midiShuffle", false);
+        m_matrixProgramAsync = std::make_unique<MatrixProgramAsync>(*this);
     }
 
     HeadlessProcessor::~HeadlessProcessor()
     {
         m_playlistTimer.reset();
+        m_matrixProgramAsync.reset();
 
         // Must join before any member is destroyed: ~thread on a joinable
         // thread calls std::terminate.
@@ -3838,6 +3915,8 @@ namespace retromulator
             processDemoSequence(static_cast<uint32_t>(buffer.getNumSamples()), getSampleRate());
             processMidiFile(static_cast<uint32_t>(buffer.getNumSamples()), getSampleRate());
         }
+        else if(m_synthType == SynthType::Matrix)
+            filterMatrixProgramChanges(midi);
         // Runs for every core, and from the audio path rather than a host callback that
         // only fires when a playhead offers a BPM.
         processDeferredResend();
