@@ -95,6 +95,7 @@ namespace trackerLib
 	void Device::play()								{ m_request = 0; }
 	void Device::playFromOrder(const int _order)	{ m_request = std::max(0, _order); }
 	void Device::stop()								{ m_request = kStop; }
+	void Device::jumpToOrder(const int _order)		{ m_jumpRequest = std::max(0, _order); }
 
 	bool Device::isPlaying() const
 	{
@@ -313,6 +314,9 @@ namespace trackerLib
 		const auto request = m_request.exchange(kNoRequest);
 		if(request != kNoRequest)
 			m_commands.insert(m_commands.begin(), {0, request});
+		const auto jump = m_jumpRequest.exchange(kNoRequest);
+		if(jump != kNoRequest)
+			m_commands.insert(m_commands.begin(), {0, jump, true});
 
 		applyTempo();
 

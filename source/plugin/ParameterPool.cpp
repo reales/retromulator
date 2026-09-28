@@ -386,11 +386,12 @@ namespace retromulator
         if(ccs.empty() && pps.empty())
             return "No MIDI CCs mapped.\n";
 
-        const auto plainSection = [](const std::vector<std::pair<int, juce::String>>& rows)
+        // grid without tab columns (iOS centres alert text): "7 Volume", no padding
+        const auto plainSection = [grid](const std::vector<std::pair<int, juce::String>>& rows)
         {
             juce::String s;
             for(const auto& [n, name] : rows)
-                s << juce::String(n).paddedLeft(' ', 3) << "  " << name << "\n";
+                s << (grid ? juce::String(n) : juce::String(n).paddedLeft(' ', 3)) << (grid ? " " : "  ") << name << "\n";
             return s;
         };
 
@@ -494,9 +495,9 @@ namespace retromulator
 #endif
         {
             if(!ccs.empty())
-                out << "CC   Parameter\n" << plainSection(ccs);
+                out << (grid ? "" : "CC   Parameter\n") << plainSection(ccs);
             if(!pps.empty())
-                out << (out.isEmpty() ? "" : "\n") << "PP   Parameter (poly pressure)\n" << plainSection(pps);
+                out << (out.isEmpty() ? "" : "\n") << (grid ? "Poly Pressure\n" : "PP   Parameter (poly pressure)\n") << plainSection(pps);
         }
 
         if(type == SynthType::Matrix)

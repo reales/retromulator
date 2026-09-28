@@ -56,6 +56,8 @@ namespace trackerLib
 		// Any thread; the audio thread picks the request up.
 		void play();						// from the top, also while playing
 		void playFromOrder(int _order);
+		// Like a position note: waits for the pattern end when that option is on.
+		void jumpToOrder(int _order);
 		void stop();
 		// A request the audio thread has not picked up yet already counts.
 		bool isPlaying() const;
@@ -147,6 +149,7 @@ namespace trackerLib
 
 		static constexpr int kNoRequest = -100;
 		std::atomic<int> m_request{kNoRequest};
+		std::atomic<int> m_jumpRequest{kNoRequest};
 
 		std::atomic<bool> m_hasModule{false};
 		std::atomic<bool> m_playing{false};
