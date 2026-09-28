@@ -354,6 +354,56 @@ namespace retromulator
         return *slot;
     }
 
+    juce::String ParameterPool::getCcTableText(const SynthType type)
+    {
+        const auto& map = mapFor(type);
+
+        std::vector<std::pair<int, juce::String>> ccs, pps;
+        for(const auto& b : map.bindings)
+        {
+            if(!b.desc)
+                continue;
+            if(b.cc >= 0)
+                ccs.emplace_back(b.cc, juce::String(b.desc->displayName));
+            if(b.pp >= 0)
+                pps.emplace_back(b.pp, juce::String(b.desc->displayName));
+        }
+
+        // handled by the plugin, not the parameter map
+        if(type == SynthType::Matrix)
+        {
+            ccs.emplace_back(0, "Bank Select (bank file)");
+            ccs.emplace_back(32, "Bank Select (bank file)");
+        }
+
+        const auto byNumber = [](const auto& a, const auto& b) { return a.first < b.first; };
+        std::stable_sort(ccs.begin(), ccs.end(), byNumber);
+        std::stable_sort(pps.begin(), pps.end(), byNumber);
+
+        juce::String out;
+        if(ccs.empty() && pps.empty())
+            return "No MIDI CCs mapped.\n";
+
+        if(!ccs.empty())
+        {
+            out << "CC   Parameter\n";
+            for(const auto& [cc, name] : ccs)
+                out << juce::String(cc).paddedLeft(' ', 3) << "  " << name << "\n";
+        }
+        if(!pps.empty())
+        {
+            out << (out.isEmpty() ? "" : "\n") << "PP   Parameter (poly pressure)\n";
+            for(const auto& [pp, name] : pps)
+                out << juce::String(pp).paddedLeft(' ', 3) << "  " << name << "\n";
+        }
+
+        if(type == SynthType::Matrix)
+            out << "\nProgram Change 0-99 picks the patch of the bank file.\n";
+        if(map.perPart)
+            out << "\nCCs apply to the part on their MIDI channel.\n";
+        return out;
+    }
+
     void ParameterPool::refreshFor(const SynthType type)
     {
         const auto idx = static_cast<size_t>(static_cast<int>(type) + 1);

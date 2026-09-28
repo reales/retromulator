@@ -25,6 +25,7 @@ namespace retromulator
         juce::ComboBox m_bankCombo;
         juce::Label    m_statusLabel;
 
+        static constexpr int kCcTableId      = 1000;  // synth combo "MIDI CC Table..."
         static constexpr int kImportId         = 9999;
         static constexpr int kExportPresetId   = 9998;
         static constexpr int kExportBankId     = 9997;

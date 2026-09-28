@@ -1,5 +1,6 @@
 #include "BasicEditor.h"
 #include "SynthFactory.h"
+#include "CcTableWindow.h"
 #include "synthLib/midiToSysex.h"
 #include "ronaldo/88emu/88lib/deviceModel.h"
 #include "ronaldo/88emu/88lib/romloader.h"
@@ -78,6 +79,8 @@ namespace retromulator
         for(int i = 0; i < displayCount; ++i)
             m_synthCombo.addItem(synthTypeName(displayOrder[i]),
                                  static_cast<int>(displayOrder[i]) + 2);
+        m_synthCombo.addSeparator();
+        m_synthCombo.addItem("MIDI CC Table...", kCcTableId);
         m_synthCombo.setSelectedId(static_cast<int>(m_proc.getSynthType()) + 2,
                                    juce::dontSendNotification);
         m_synthCombo.onChange = [this] { onSynthTypeChanged(); };
@@ -1073,6 +1076,13 @@ namespace retromulator
 
     void BasicEditor::onSynthTypeChanged()
     {
+        if(m_synthCombo.getSelectedId() == kCcTableId)
+        {
+            m_synthCombo.setSelectedId(static_cast<int>(m_proc.getSynthType()) + 2, juce::dontSendNotification);
+            CcTableWindow::showFor(m_proc, this);
+            return;
+        }
+
         const auto newType = static_cast<SynthType>(m_synthCombo.getSelectedId() - 2);
 
         m_currentBankFolder.clear();

@@ -145,6 +145,9 @@ namespace retromulator
 
         static const char* coreFileName(SynthType type);
 
+        // Message thread. The core's MIDI CC table as text, one controller per line.
+        juce::String getCcTableText(SynthType type);
+
     private:
         struct CoreMap
         {

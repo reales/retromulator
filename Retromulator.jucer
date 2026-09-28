@@ -87,6 +87,7 @@
       <FILE id="f0009" name="BasicEditor.h" compile="0" resource="0" file="source/plugin/BasicEditor.h"/>
       <FILE id="f0010" name="BasicEditor.cpp" compile="1" resource="0" file="source/plugin/BasicEditor.cpp"/>
       <FILE id="f0011" name="ParameterPool.h" compile="0" resource="0" file="source/plugin/ParameterPool.h"/>
+      <FILE id="cct001" name="CcTableWindow.h" compile="0" resource="0" file="source/plugin/CcTableWindow.h"/>
       <FILE id="f0012" name="ParameterPool.cpp" compile="1" resource="0" file="source/plugin/ParameterPool.cpp"/>
           <FILE id="f0013" name="Emu88Tones.cpp" compile="1" resource="0" file="source/plugin/Emu88Tones.cpp"/>
             <FILE id="f0013b" name="Emu88ToneTable.cpp" compile="1" resource="0" file="source/plugin/Emu88ToneTable.cpp"/>
