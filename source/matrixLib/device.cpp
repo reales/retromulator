@@ -17,7 +17,7 @@ namespace matrixLib
 	namespace
 	{
 		// bump when the voice model changes: the snapshot holds calibration done against it
-		constexpr uint8_t SnapshotVersion = 4;
+		constexpr uint8_t SnapshotVersion = 5;
 		constexpr char SnapshotMagic[] = "M1KSRAM";
 		constexpr char SnapshotFile[] = "matrix1000.nvram";
 
@@ -235,6 +235,7 @@ namespace matrixLib
 		if(warm)
 		{
 			runSeconds(1.0f);
+			selectFirmwareProgram();
 			return;
 		}
 
@@ -253,8 +254,19 @@ namespace matrixLib
 				break;
 		}
 		runSeconds(1.0f);
+		selectFirmwareProgram();
 
 		saveSnapshot();
+	}
+
+	void Device::selectFirmwareProgram()
+	{
+		// Only a firmware patch load points the remote edit target ($79AB) at the edit
+		// buffer. Left at its boot value, opcode 06 edits land in voice 3 and crash the CPU
+		auto& hw = m_machine.getHardware();
+		hw.midiIn(0xc0);
+		hw.midiIn(0x00);
+		runSeconds(0.25f);
 	}
 
 	std::string Device::romBankFileName(const uint32_t _bank)

@@ -63,6 +63,7 @@ namespace matrixLib
 		bool loadSnapshot();
 		void saveSnapshot() const;
 		void runSeconds(float _seconds);
+		void selectFirmwareProgram();
 
 		// asks the firmware for every patch of banks 2-9 and writes them as .syx files
 		void createRomBanks();

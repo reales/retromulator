@@ -376,6 +376,7 @@ namespace retromulator
         {
             ccs.emplace_back(0, "Bank Select (bank file)");
             ccs.emplace_back(32, "Bank Select (bank file)");
+            ccs.emplace_back(3, "Bank Select (bank file)");
         }
 
         const auto byNumber = [](const auto& a, const auto& b) { return a.first < b.first; };

@@ -78,9 +78,11 @@ namespace matrixLib
 			float wrapD = 0.0f;       // samples since the discharge
 		};
 
-		// advances one converter by one sample and returns band-limited sloped and pulse outputs
-		ConverterOut runConverter(double& _phase, const float _period, const float _rtCt, const float _ws, const float _pw,
-								  const float _invRate, Corrections& _sloped, Corrections& _pulse)
+		// advances one converter by one sample and returns band-limited sloped and pulse outputs.
+		// _syncD >= 0: samples since the other converter's discharge, which syncs this one
+		ConverterOut runConverter(double& _phase, bool& _pulseHigh, const float _period, const float _rtCt, const float _ws, const float _pw,
+								  const float _invRate, Corrections& _sloped, Corrections& _pulse,
+								  const float _syncD = -1.0f, const double _syncWindow = 1.0)
 		{
 			ConverterOut out;
 			if(_period <= 0.0f || _rtCt <= 0.0f)
@@ -96,9 +98,6 @@ namespace matrixLib
 			const float vp = std::max(0.0f, _ws) * _period / _rtCt;    // ramp peak for this period
 			const float dvPerSample = vp * static_cast<float>(dphase);
 			const bool pulseActive = _pw > 0.0f && _pw < vp;
-
-			const double start = _phase;
-			double end = start + dphase;
 
 			// shaper corners and the pulse edge between two phases of the same ramp,
 			// _after = samples from the segment end to the output sample
@@ -116,30 +115,60 @@ namespace matrixLib
 					_pulse.step(-2.0f, at(_pw));
 			};
 
-			if(end >= 1.0)
+			// ramp back to 0 V from phase _p, _d samples before the output sample
+			auto discharge = [&](const double _p, const float _d)
 			{
-				end -= 1.0;
-				const float d = static_cast<float>(end / dphase);
-				crossings(start, 1.0, d);
+				const float v = vp * static_cast<float>(_p);
+				_sloped.step(-shaper(v), _d);
+				_sloped.kink((shaperSlope(0.0f) - shaperSlope(v)) * dvPerSample, _d);
+				if(pulseActive && v >= _pw)
+					_pulse.step(2.0f, _d);
+			};
 
-				const float vEnd = vp;
-
-				_sloped.step(-shaper(vEnd), d);
-				_sloped.kink((shaperSlope(0.0f) - shaperSlope(vEnd)) * dvPerSample, d);
-				if(pulseActive)
-					_pulse.step(2.0f, d);
-
-				crossings(0.0, end, 0.0f);
+			// events are handled in the order they happen: the segment ends _after samples early
+			auto advance = [&](const double _p0, const double _len, const float _after)
+			{
+				double p1 = _p0 + _len;
+				if(p1 < 1.0)
+				{
+					crossings(_p0, p1, _after);
+					return p1;
+				}
+				p1 -= 1.0;
+				const float d = std::min(0.9999f, static_cast<float>(p1 / dphase) + _after);
+				crossings(_p0, 1.0, d);
+				discharge(1.0, d);
+				crossings(0.0, p1, _after);
 				out.wrapped = true;
 				out.wrapD = d;
+				return p1;
+			};
+
+			double phase = std::max(0.0, _phase);
+
+			// a moving width can pass the ramp between two samples
+			auto isHigh = [&](const double _p) { return pulseActive ? vp * static_cast<float>(_p) < _pw : _pw > 0.0f; };
+			if(isHigh(phase) != _pulseHigh)
+				_pulse.step(_pulseHigh ? -2.0f : 2.0f, 0.9999f);
+
+			if(_syncD >= 0.0f)
+			{
+				phase = advance(phase, dphase * (1.0 - _syncD), _syncD);
+				if(phase >= _syncWindow)
+				{
+					discharge(phase, _syncD);
+					phase = 0.0;
+				}
+				phase = advance(phase, dphase * _syncD, 0.0f);
 			}
 			else
 			{
-				crossings(start, end, 0.0f);
+				phase = advance(phase, dphase, 0.0f);
 			}
 
-			_phase = end;
-			const float v = vp * static_cast<float>(end);
+			_phase = phase;
+			_pulseHigh = isHigh(phase);
+			const float v = vp * static_cast<float>(phase);
 			out.sloped = shaper(v) * 2.0f - 1.0f;
 			// centred on its own duty cycle, so changing or muting the width does not step the DC level
 			const float duty = pulseActive ? _pw / vp : 0.0f;
@@ -237,32 +266,14 @@ namespace matrixLib
 		}
 		else
 		{
-			b = runConverter(m_b.phase, _c.periodB, _c.rtCtB, _c.wsB, _c.pwB, m_invRate, slopedB, pulseB);
+			b = runConverter(m_b.phase, m_b.pulseHigh, _c.periodB, _c.rtCtB, _c.wsB, _c.pwB, m_invRate, slopedB, pulseB);
 		}
 
-		if(b.wrapped && _c.sync)
-		{
-			// soft and medium sync only catch A late in its cycle
-			static constexpr double window[4] = {1.0, 0.8, 0.5, 0.0};
-			const double dA = _c.periodA > 0.0f ? static_cast<double>(m_invRate) / _c.periodA : 0.0;
-			const double phaseAtEvent = m_a.phase + dA * (1.0 - b.wrapD);
-			if(phaseAtEvent >= window[_c.sync] && phaseAtEvent < 1.0)
-			{
-				// the forced discharge is band-limited like the converter's own wrap
-				if(_c.periodA > 0.0f && _c.rtCtA > 0.0f && phaseAtEvent > 0.0)
-				{
-					const float vp = std::max(0.0f, _c.wsA) * _c.periodA / _c.rtCtA;
-					const float v = vp * static_cast<float>(phaseAtEvent);
-					slopedA.step(-shaper(v), b.wrapD);
-					slopedA.kink((shaperSlope(0.0f) - shaperSlope(v)) * vp * static_cast<float>(dA), b.wrapD);
-					if(_c.pwA > 0.0f && _c.pwA < vp && v >= _c.pwA)
-						pulseA.step(2.0f, b.wrapD);
-				}
-				m_a.phase = -dA * (1.0 - b.wrapD);
-			}
-		}
-
-		const ConverterOut a = runConverter(m_a.phase, _c.periodA, _c.rtCtA, _c.wsA, _c.pwA, m_invRate, slopedA, pulseA);
+		// soft and medium sync only catch A late in its cycle
+		static constexpr double window[4] = {1.0, 0.8, 0.5, 0.0};
+		const float syncD = b.wrapped && _c.sync ? b.wrapD : -1.0f;
+		const ConverterOut a = runConverter(m_a.phase, m_a.pulseHigh, _c.periodA, _c.rtCtA, _c.wsA, _c.pwA, m_invRate, slopedA, pulseA,
+											syncD, window[_c.sync & 3]);
 
 		auto delay = [](float* _h, const float _naive, const Corrections& _pulse, const Corrections& _sloped, const bool _useSloped)
 		{
@@ -282,10 +293,10 @@ namespace matrixLib
 		const float gA = 1.0f / (1.0f + std::exp(-4.6f * _c.balance));
 		const float mix = convA * gA + convB * (1.0f - gA);
 
-		// cutoff: -0.5 V per octave, FM from converter A up to 2x. The 0 V frequency is set so the
-		// firmware's calibration table stays in range up to VCF 127 (about 30 kHz at DAC code 0)
+		// cutoff, FM from converter A up to 2x. Scale and 0 V frequency follow the firmware's
+		// default tuning table ($DD49), so the calibrated codes stay above 0 up to VCF 127
 		const float depth = std::clamp(_c.mod * (1.0f / 4.5f), 0.0f, 1.1f) * 2.0f;
-		float fc = 1100.0f * std::exp2(-_c.freq * 2.0f) * std::max(0.0f, 1.0f + depth * convA * 0.5f);
+		float fc = 2045.0f * std::exp2(-_c.freq * 2.034f) * std::max(0.0f, 1.0f + depth * convA * 0.5f);
 		fc = std::clamp(fc, 5.0f, m_rate * 0.45f);
 
 		const float k = std::clamp(_c.resonance, 0.0f, 5.0f);

@@ -596,9 +596,13 @@ namespace retromulator
         for(const auto meta : midi)
         {
             const auto m = meta.getMessage();
-            if(m.isController() && (m.getControllerNumber() == 0 || m.getControllerNumber() == 32))
+            // MSB picks the bank file; hosts send LSB 0 right after it, so LSB is dropped.
+            // CC3 does the same for hosts that keep bank select back (Logic)
+            const int ccNum = m.isController() ? m.getControllerNumber() : -1;
+            if(ccNum == 0 || ccNum == 32 || ccNum == 3)
             {
-                m_matrixBankSelect.store(m.getControllerValue());
+                if(ccNum != 32)
+                    m_matrixBankSelect.store(m.getControllerValue());
                 continue;
             }
             if(m.isProgramChange())

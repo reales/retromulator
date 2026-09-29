@@ -41,7 +41,7 @@ namespace matrixLib
 		struct Converter
 		{
 			double phase = 0.0;
-			float lastRamp = 0.0f;
+			bool pulseHigh = false;   // pulse comparator output
 		};
 
 		float filter(float _in, float _cutoff, float _k);
