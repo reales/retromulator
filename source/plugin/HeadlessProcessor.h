@@ -337,6 +337,12 @@ namespace retromulator
         bool hasMatrixHostTempo() const;
         bool isMatrixLfoDivisionReachable(int division) const;
 
+        // ── DX7 controller setup (Function mode) ───────────────────────────
+        // n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Assign bits 1=pitch 2=amp 4=EG bias
+        int  getDx7CtrlRange(int n) const  { return m_dx7Ctrl[n & 3][0]; }
+        int  getDx7CtrlAssign(int n) const { return m_dx7Ctrl[n & 3][1]; }
+        void setDx7Controller(int n, int range, int assign);
+
         // ── Trackermeister (tracker module player) ─────────────────────────
         // The device owns the transport: note 12 plays, 14 stops, 13 and 15 step a
         // playlist, and 24 upward start the song at order (note - 24). These mirror that
@@ -532,6 +538,8 @@ namespace retromulator
         bool                 m_trackerTempoSync = false;
         int                  m_matrixLfoSync[2] = {0, 0};
         void applyMatrixLfoSync();
+        int                  m_dx7Ctrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
+        void applyDx7Controllers(synthLib::Device* dev);
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;
         bool                 m_trackerWaitPatternEnd = true;

@@ -3017,6 +3017,23 @@ namespace retromulator
         return dev && dev->isLfoDivisionReachable(static_cast<uint32_t>(division));
     }
 
+    // ── DX7 ─────────────────────────────────────────────────────────────────
+
+    void HeadlessProcessor::setDx7Controller(const int n, const int range, const int assign)
+    {
+        m_dx7Ctrl[n & 3][0] = juce::jlimit(0, 99, range);
+        m_dx7Ctrl[n & 3][1] = assign & 7;
+        if(m_synthType == SynthType::DX7)
+            applyDx7Controllers(m_device.get());
+    }
+
+    void HeadlessProcessor::applyDx7Controllers(synthLib::Device* dev)
+    {
+        if(auto* dx = dynamic_cast<dx7Emu::Device*>(dev))
+            for(int n = 0; n < 4; ++n)
+                dx->setController(n, m_dx7Ctrl[n][0], m_dx7Ctrl[n][1]);
+    }
+
     // ── Trackermeister ──────────────────────────────────────────────────────
 
     trackerLib::Device* HeadlessProcessor::getTrackerDevice() const
@@ -4021,7 +4038,10 @@ namespace retromulator
         m_restoredEmu88Model = -1;
 
         // Let DeviceException propagate — caller (rebootDevice or getPlugin) handles it.
-        return SynthFactory::create(m_synthType, m_romPath, model);
+        auto* dev = SynthFactory::create(m_synthType, m_romPath, model);
+        if(m_synthType == SynthType::DX7)
+            applyDx7Controllers(dev);
+        return dev;
     }
 
     pluginLib::Controller* HeadlessProcessor::createController()
@@ -4076,6 +4096,7 @@ namespace retromulator
     // "TRKO": tracker options, a bit field. 1 = stop at end, 2 = shuffle.
     static constexpr int32_t kTrackerOptionsMagic = 0x4F4B5254;
     static constexpr int32_t kMatrixLfoSyncMagic = 0x534C584D;   // 'MXLS'
+    static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -4246,6 +4267,14 @@ namespace retromulator
             appendInt32(destData, m_matrixLfoSync[1]);
         }
 
+        // ['DX7C':int32][range | assign << 8 : int32 x 4]
+        if(m_synthType == SynthType::DX7)
+        {
+            appendInt32(destData, kDx7CtrlMagic);
+            for(const auto& c : m_dx7Ctrl)
+                appendInt32(destData, c[0] | (c[1] << 8));
+        }
+
         // Board the session was using, taken from the live device rather than the shared
         // value, so what is saved is what this instance actually booted.
         // ['E88D':int32][model:int32]
@@ -4355,9 +4384,25 @@ namespace retromulator
             }
         }
 
+        // DX7 controller setup sits in the last twenty bytes; sessions without it get the defaults
+        for(auto& c : m_dx7Ctrl) { c[0] = 99; c[1] = 7; }
+        if(newType == SynthType::DX7 && sizeInBytes >= 20)
+        {
+            int32_t v[5] = {};
+            std::memcpy(v, bytes + sizeInBytes - 20, 20);
+            if(v[0] == kDx7CtrlMagic)
+                for(int n = 0; n < 4; ++n)
+                {
+                    m_dx7Ctrl[n][0] = juce::jlimit(0, 99, static_cast<int>(v[n + 1] & 0xff));
+                    m_dx7Ctrl[n][1] = (v[n + 1] >> 8) & 7;
+                }
+        }
+
         setSynthType(newType, romPath);
         if(newType == SynthType::Matrix)
             applyMatrixLfoSync();
+        else if(newType == SynthType::DX7)
+            applyDx7Controllers(m_device.get());
 
         if(newType == SynthType::AkaiS1000)
         {

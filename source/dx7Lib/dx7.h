@@ -87,6 +87,11 @@ struct DX7: public HD6303R {
 	void tune(int tuning); // Master tuning -256 to +255
 	void initControllers(); // Restore wheel/pedal defaults after firmware boot
 
+	// n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Range 0-99, assign bits 1=pitch 2=amp 4=EG bias
+	void setController(int n, uint8_t range, uint8_t assign);
+	uint8_t ctrlRange[4]  = {99, 99, 99, 99};
+	uint8_t ctrlAssign[4] = {0x07, 0x07, 0x07, 0x07};
+
 	// Interrupt to transfer events from sub-cpu to main
 	bool byte1Sent = false, haveMsg = false;
 

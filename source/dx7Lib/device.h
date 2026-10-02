@@ -41,6 +41,8 @@ public:
 	uint32_t getDspClockPercent() const override { return 100; }
 	uint64_t getDspClockHz() const override;
 
+	void setController(int n, int range, int assign) { m_dx7.setController(n, static_cast<uint8_t>(range), static_cast<uint8_t>(assign)); }
+
 	// DX7 patch name from internal RAM (current voice)
 	static std::string extractPatchName(const uint8_t* voiceData, size_t size);
 

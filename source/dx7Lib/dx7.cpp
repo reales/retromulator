@@ -72,30 +72,21 @@ void DX7::start() {
 
 void DX7::initControllers() {
 	// Controller range/assign live in battery RAM and the firmware never
-	// initialises them -- on hardware they simply persist. Booting from
-	// cleared RAM leaves range 0, so every wheel and pedal is dead, and
-	// this ROM exposes no sysex path to change them.
-	//
-	// Mod wheel -> pitch at full range: matches what factory cartridge
-	// patches assume (they program LFO pitch-mod sensitivity expecting the
-	// wheel to bring in vibrato). Deliberately more useful than hardware,
-	// which would need the values dialled in on the front panel.
-	M_MOD_WHEEL_RANGE    = 99;
-	M_MOD_WHEEL_ASSIGN   = 0x01;
-
-	// Breath and foot -> EG bias, per Yamaha's own recommended setup.
-	M_BREATH_CTRL_RANGE  = 99;
-	M_BREATH_CTRL_ASSIGN = 0x04;
-	M_FOOT_CTRL_RANGE    = 99;
-	M_FOOT_CTRL_ASSIGN   = 0x04;
-
-	// Aftertouch -> pitch + EG bias at moderate range.
-	M_AFTERTOUCH_RANGE   = 50;
-	M_AFTERTOUCH_ASSIGN  = 0x05;
+	// initialises them, so cleared RAM leaves every wheel and pedal dead.
+	for(int n = 0; n < 4; n++)
+		setController(n, ctrlRange[n], ctrlAssign[n]);
 
 	// Cleared RAM boots with SYS INFO UNAVAIL, which makes the firmware drop
 	// incoming voice parameter changes (F0 43 1n ...). Host parameters need it.
 	setSysInfoAvail(true);
+}
+
+void DX7::setController(int n, uint8_t range, uint8_t assign) {
+	if(n < 0 || n > 3) return;
+	ctrlRange[n] = range > 99 ? 99 : range;
+	ctrlAssign[n] = assign & 0x07;
+	memory[0x2336 + 2*n] = ctrlRange[n];
+	memory[0x232E + 2*n] = ctrlAssign[n];
 }
 
 void DX7::tune(int tuning) {
