@@ -5,7 +5,7 @@
 namespace matrixLib
 {
 	// Intel 82C54, evaluated lazily from the tick count of its clock input.
-	// All three counters share one clock and have GATE tied high.
+	// All three counters share one clock, GATE is high unless gate() pulses it.
 	class Pit8254
 	{
 	public:
@@ -22,6 +22,8 @@ namespace matrixLib
 			uint32_t pendingReload = 0;
 			uint64_t pendingAt = 0;
 			bool hasPending = false;
+			bool pendingLow = false;    // mode 3: the pending count starts with the low half
+			uint32_t phaseOfs = 0;      // ticks into the period at loadedAt
 
 			uint64_t loadedAt = 0;      // tick where counting started
 			bool running = false;
@@ -39,6 +41,9 @@ namespace matrixLib
 
 		void write(uint8_t _reg, uint8_t _val, uint64_t _tick);
 		uint8_t read(uint8_t _reg, uint64_t _tick);
+
+		// GATE low from _lowAt until _highAt: modes 2 and 3 hold OUT high and reload on the next clock
+		void gate(uint32_t _counter, uint64_t _lowAt, uint64_t _highAt);
 
 		bool getOut(uint32_t _counter, uint64_t _tick);
 		uint16_t getCount(uint32_t _counter, uint64_t _tick);

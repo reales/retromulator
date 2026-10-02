@@ -19,6 +19,10 @@ namespace matrixLib
 		static constexpr uint32_t VoiceTimerClock = 4000000;       // DCO timers count at twice the E clock
 		static constexpr uint32_t MidiCyclesPerByte = CpuClock * 10 / 31250;
 		static constexpr uint32_t VoiceCount = 6;
+		// range 0 spans 5.42 V
+		static constexpr float DacFullScale = 5.42f * 145.0f / 159.6f;
+		static constexpr float DacReference = DacFullScale / 0.996f;
+		static constexpr uint32_t SyncPulseTicks = 14;             // 470 pF and 10 kOhm into a HC gate, about 3.5 us
 		static constexpr uint32_t CvChannelCount = 64;             // 8 multiplexers x 8 sample and holds
 
 		Hardware();
@@ -47,6 +51,18 @@ namespace matrixLib
 		uint32_t getDcoPeriod(uint32_t _voice, uint32_t _dco);
 		bool getRangeHigh(uint32_t _voice, uint32_t _dco) const { return m_latches[(_dco ? 0x80 : 0x00) + _voice] != 0; }
 		Pit8254& getVoiceTimer(uint32_t _index) { return m_timers[_index]; }
+
+		// Capacitor discharge pulses of a voice's converters in voice timer ticks, oldest first.
+		// The timer outputs are AC coupled into the discharge transistors: a rising edge fires.
+		// DCO2's falling edge is the sync source: SYNC1 pulses the DCO1 timer GATE, SYNC2
+		// discharges the DCO1 capacitor
+		struct DcoEvents
+		{
+			std::vector<uint64_t> a;
+			std::vector<uint64_t> b;
+		};
+		DcoEvents& scanDco(uint32_t _voice);
+		uint64_t getTimerTick() const { return m_cpu.getCycles() * 2; }
 		Pit8254& getSystemTimer() { return m_sysTimer; }
 
 		std::vector<uint8_t>& getSram() { return m_sram; }
@@ -60,7 +76,10 @@ namespace matrixLib
 		static constexpr uint32_t balanceCv(uint32_t _voice) { return 48 + _voice; }
 		static constexpr uint32_t resonanceCv(uint32_t _voice) { return 54 + _voice; }
 
-		// held voltage per channel
+		// Each S&H is a 33 nF hold capacitor feeding the chip pin (6.8 nF) through 1 MOhm.
+		// A fast write (DAC word bit 15 clear) also drives the pin directly; balance and
+		// resonance have no fast path. Returns the pin voltages
+		void advanceCv(float _seconds);
 		const std::array<float, CvChannelCount>& getCvVolts() const { return m_cvVolts; }
 		float getCvVolts(uint32_t _channel) const { return m_cvVolts[_channel]; }
 
@@ -76,8 +95,21 @@ namespace matrixLib
 		uint8_t* sramPtr(uint16_t _addr);
 		void updateIrq();
 
+		struct DcoScan
+		{
+			DcoEvents events;
+			uint64_t scannedA = 0;
+			uint64_t scannedB = 0;
+			bool levelA = true;
+			bool levelB = true;
+		};
+		void scanDcoA(uint32_t _voice, uint64_t _until);
+		void scanDco(uint32_t _voice, uint64_t _until);
+		void scanTimer(uint32_t _timer, uint64_t _until);
+
 		M6809 m_cpu;
 		Pit8254 m_timers[4];
+		std::array<DcoScan, VoiceCount> m_dco;
 		Pit8254 m_sysTimer;
 		Acia6850 m_acia;
 
@@ -89,6 +121,9 @@ namespace matrixLib
 		std::array<uint8_t, 0x400> m_latches{};
 		std::array<uint16_t, CvChannelCount> m_cv{};
 		std::array<float, CvChannelCount> m_cvVolts{};
+		std::array<float, CvChannelCount> m_cvHold{};
+		float m_dacVolts = 0.0f;
+		bool m_dacFast = false;
 		uint8_t m_dacHigh = 0;
 		uint8_t m_dacLow = 0;
 		uint32_t m_cvChannel = 0;

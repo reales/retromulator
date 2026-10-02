@@ -17,7 +17,7 @@ namespace matrixLib
 	namespace
 	{
 		// bump when the voice model changes: the snapshot holds calibration done against it
-		constexpr uint8_t SnapshotVersion = 5;
+		constexpr uint8_t SnapshotVersion = 7;
 		constexpr char SnapshotMagic[] = "M1KSRAM";
 		constexpr char SnapshotFile[] = "matrix1000.nvram";
 

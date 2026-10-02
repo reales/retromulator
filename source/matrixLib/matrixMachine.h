@@ -39,6 +39,7 @@ namespace matrixLib
 
 	private:
 		void buildControls(uint32_t _voice, Cem3396::Controls& _c);
+		void buildDischarges(uint32_t _voice, double _from, double _to, Cem3396::Discharges& _d0, Cem3396::Discharges& _d1);
 		float noise();
 
 		Hardware m_hw;
@@ -50,9 +51,15 @@ namespace matrixLib
 		double m_cycleAcc = 0.0;
 		uint64_t m_sampleCycle = 0;
 
+		static constexpr double EdgeMargin = 2.0;        // one CPU cycle in timer ticks
+		double m_edgeTick = 0.0;
+
 		float m_dcIn = 0.0f;
 		float m_dcOut = 0.0f;
 		float m_dcCoeff = 0.9995f;
+		float m_cmpIn = 0.0f;
+		float m_cmpOut = 0.0f;
+		float m_cmpCoeff = 0.997f;
 		float m_lastSum = 0.0f;
 		bool m_comparator = false;
 

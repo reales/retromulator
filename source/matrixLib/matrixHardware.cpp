@@ -1,5 +1,7 @@
 #include "matrixHardware.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace matrixLib
@@ -41,6 +43,96 @@ namespace matrixLib
 		m_acia.reset();
 		m_bankLatch = 0;
 		m_cpu.reset();
+		for(auto& d : m_dco)
+			d = DcoScan();
+	}
+
+	void Hardware::scanDcoA(const uint32_t _voice, const uint64_t _until)
+	{
+		auto& d = m_dco[_voice];
+		auto& timer = m_timers[_voice >= 3 ? 1 : 0];
+		const uint32_t ch = _voice % 3;
+
+		uint64_t t = d.scannedA;
+		if(_until <= t)
+			return;
+		while(true)
+		{
+			const bool level = timer.getOut(ch, t);
+			if(level != d.levelA)
+			{
+				d.levelA = level;
+				if(level)
+				{
+					// a sync discharge may already be queued behind this tick
+					auto& a = d.events.a;
+					a.insert(std::upper_bound(a.begin(), a.end(), t), t);
+				}
+			}
+			const uint64_t e = timer.nextOutEdge(ch, t);
+			if(e >= _until)
+				break;
+			t = e;
+		}
+		d.scannedA = _until;
+	}
+
+	void Hardware::scanDco(const uint32_t _voice, const uint64_t _until)
+	{
+		auto& d = m_dco[_voice];
+		auto& timerA = m_timers[_voice >= 3 ? 1 : 0];
+		auto& timerB = m_timers[_voice >= 3 ? 3 : 2];
+		const uint32_t ch = _voice % 3;
+
+		// $1D00 bit 3 = SYNC1*, bit 2 = SYNC2*
+		const uint8_t ctl = m_latches[0x100];
+		const bool syncGate = !(ctl & 0x08);
+		const bool syncDischarge = !(ctl & 0x04);
+
+		uint64_t t = d.scannedB;
+		if(_until > t)
+		{
+			while(true)
+			{
+				const bool level = timerB.getOut(ch, t);
+				if(level != d.levelB)
+				{
+					d.levelB = level;
+					if(level)
+					{
+						d.events.b.push_back(t);
+					}
+					else if(syncGate || syncDischarge)
+					{
+						// the differentiated falling edge holds the gates low for SyncPulseTicks
+						scanDcoA(_voice, t);
+						if(syncGate)
+							timerA.gate(ch, t, t + SyncPulseTicks);
+						if(syncDischarge)
+							d.events.a.push_back(t + SyncPulseTicks);
+					}
+				}
+				const uint64_t e = timerB.nextOutEdge(ch, t);
+				if(e >= _until)
+					break;
+				t = e;
+			}
+			d.scannedB = _until;
+		}
+		scanDcoA(_voice, _until);
+	}
+
+	void Hardware::scanTimer(const uint32_t _timer, const uint64_t _until)
+	{
+		const uint32_t first = (_timer & 1) * 3;
+		for(uint32_t v = first; v < first + 3; ++v)
+			scanDco(v, _until);
+	}
+
+	Hardware::DcoEvents& Hardware::scanDco(const uint32_t _voice)
+	{
+		scanDco(_voice, getTimerTick());
+		return m_dco[_voice].events;
 	}
 
 	uint8_t* Hardware::sramPtr(const uint16_t _addr)
@@ -75,7 +167,11 @@ namespace matrixLib
 		uint8_t v = 0;
 
 		if(_addr < 0x1000)
+		{
+			// the timers evaluate lazily, the edges up to now have to be collected first
+			scanTimer((_addr >> 10) & 3, t * 2);
 			v = m_timers[(_addr >> 10) & 3].read(_addr & 3, t * 2);
+		}
 		else if(_addr >= 0x1400 && _addr < 0x1800)
 		{
 			if(_addr & 0x0200)
@@ -117,6 +213,7 @@ namespace matrixLib
 
 		if(_addr < 0x1000)
 		{
+			scanTimer((_addr >> 10) & 3, t * 2);
 			m_timers[(_addr >> 10) & 3].write(_addr & 3, _val, t * 2);
 		}
 		else if(_addr < 0x1400)
@@ -139,12 +236,22 @@ namespace matrixLib
 			{
 				const auto raw = static_cast<uint16_t>((m_dacHigh << 8) | m_dacLow);
 				const auto code = static_cast<uint16_t>(raw >> 3);
-				// the DAC sees the low 15 bits: 0 to +5 V
-				float volts = static_cast<float>(raw & 0x7ff8) * (5.0f / 32768.0f);
+				// 12 bit DAC on bits 14-3, 0 to -DacFullScale at the I/V converter. The output
+				// amplifier inverts with 12k feedback: A8 (RANGE2) removes the 133k in parallel
+				// and adds 20k from the reference, A7 (RANGE1) adds 182k from the reference
+				const float dac = static_cast<float>(raw & 0x7ff8) * (DacFullScale / 32768.0f);
+				const float feedback = (m_cvRange & 2) ? 12.0f : 12.0f * 133.0f / 145.0f;
+				float volts = dac * feedback / 10.0f;
 				if(m_cvRange & 2)
-					volts -= 2.5f;
+					volts -= DacReference * feedback / 20.0f;
+				if(m_cvRange & 1)
+					volts -= DacReference * feedback / 182.0f;
 				m_cv[m_cvChannel] = code;
-				m_cvVolts[m_cvChannel] = volts;
+				m_dacVolts = volts;
+				m_dacFast = !(raw & 0x8000) && m_cvChannel < VoiceCount * 8;
+				m_cvHold[m_cvChannel] = volts;
+				if(m_dacFast)
+					m_cvVolts[m_cvChannel] = volts;
 				if(onCvWrite)
 					onCvWrite(_addr & 0xfffe, code);
 			}
@@ -161,23 +268,55 @@ namespace matrixLib
 		}
 		else if(_addr >= 0x1c00)
 		{
+			if((_addr & 0x3ff) == 0x100)
+			{
+				// the sync gates change
+				for(uint32_t v = 0; v < VoiceCount; ++v)
+					scanDco(v, t * 2);
+			}
 			m_latches[_addr & 0x3ff] = _val;
 			if(_addr == 0x1d80)
 				m_bankLatch = _val;
 		}
 	}
 
+	void Hardware::advanceCv(const float _seconds)
+	{
+		constexpr float hold = 33e-9f;
+		constexpr float pin = 6.8e-9f;
+		constexpr float tau = 1e6f * hold * pin / (hold + pin);
+		const float moved = 1.0f - std::exp(-_seconds / tau);
+		const float toPin = moved * hold / (hold + pin);
+		const float fromHold = moved * pin / (hold + pin);
+
+		for(size_t i = 0; i < m_cvVolts.size(); ++i)
+		{
+			const float d = m_cvHold[i] - m_cvVolts[i];
+			m_cvVolts[i] += d * toPin;
+			m_cvHold[i] -= d * fromHold;
+		}
+
+		// the multiplexer stays on its channel until the next write, the DAC keeps driving it
+		if(!m_cvInhibit)
+		{
+			m_cvHold[m_cvChannel] = m_dacVolts;
+			if(m_dacFast)
+				m_cvVolts[m_cvChannel] = m_dacVolts;
+		}
+	}
+
 	uint32_t Hardware::getDcoPeriod(const uint32_t _voice, const uint32_t _dco)
 	{
+		scanDco(_voice, getTimerTick());
 		auto& timer = m_timers[(_dco ? 2 : 0) + (_voice >= 3 ? 1 : 0)];
-		return timer.getPeriod(_voice % 3, m_cpu.getCycles() * 2);
+		return timer.getPeriod(_voice % 3, getTimerTick());
 	}
 
 	void Hardware::updateIrq()
 	{
 		const uint64_t t = m_cpu.getCycles();
 		m_acia.advance(t);
-		m_cpu.setFirq(m_acia.getIrq());
+		m_cpu.setFirq(m_acia.getIrq(t));
 		m_cpu.setIrq(!m_sysTimer.getOut(2, t));
 	}
 

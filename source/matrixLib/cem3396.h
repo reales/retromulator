@@ -11,7 +11,7 @@ namespace matrixLib
 	public:
 		struct Controls
 		{
-			float periodA = 0.0f;     // seconds between discharge pulses, 0 = stopped
+			float periodA = 0.0f;     // timer period in seconds, 0 = stopped; only centres the pulse
 			float periodB = 0.0f;
 			float rtCtA = 0.0f;       // conversion resistance times timing capacitor
 			float rtCtB = 0.0f;
@@ -22,7 +22,6 @@ namespace matrixLib
 			bool slopedA = true;      // wave select, from the quad level driver
 			bool slopedB = false;
 			bool noiseB = false;      // converter B capacitor driven by the noise source
-			uint8_t sync = 0;         // 0 off, 1 soft, 2 medium, 3 hard
 			float balance = 0.0f;
 			float freq = 0.0f;
 			float resonance = 0.0f;
@@ -31,16 +30,26 @@ namespace matrixLib
 			float linGain = 0.0f;
 		};
 
+		// capacitor discharge pulses inside one sample, as fractions of it in ascending order
+		struct Discharges
+		{
+			static constexpr uint32_t Max = 24;
+			float a[Max];
+			float b[Max];
+			uint32_t countA = 0;
+			uint32_t countB = 0;
+		};
+
 		void setSamplerate(float _rate);
 		void reset();
 
 		// renders one sample
-		float process(const Controls& _in, float _noise);
+		float process(const Controls& _in, const Discharges& _discharges, float _noise);
 
 	private:
 		struct Converter
 		{
-			double phase = 0.0;
+			double volts = 0.0;       // timing capacitor
 			bool pulseHigh = false;   // pulse comparator output
 		};
 
@@ -53,15 +62,22 @@ namespace matrixLib
 
 		// converter outputs held back two samples for the pre-event half of each BLEP/BLAMP
 		// residual: samples n-2, n-1, n
-		float m_histA[3] = {};
-		float m_histB[3] = {};
+		float m_histSlopedA[3] = {};
+		float m_histSlopedB[3] = {};
+		float m_histPulseA[3] = {};
+		float m_histPulseB[3] = {};
 
 		float m_s[4] = {};
 		float m_damp = 0.7f;
 		float m_dampInv = 1.0f / 0.7f;
 
-		Controls m_smooth;
+		float m_logGain = 0.0f;
+		float m_linGain = 0.0f;
 		bool m_smoothInit = false;
 		float m_cvCoeff = 0.02f;
+
+		float m_acIn = 0.0f;
+		float m_acOut = 0.0f;
+		float m_acCoeff = 0.999f;
 	};
 }

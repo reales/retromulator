@@ -14,6 +14,7 @@ namespace matrixLib
 		{
 			_c.reload = _c.pendingReload;
 			_c.loadedAt = _c.pendingAt;
+			_c.phaseOfs = _c.pendingLow ? (effective(_c.reload) + 1) / 2 : 0;
 			_c.hasPending = false;
 		}
 	}
@@ -22,6 +23,10 @@ namespace matrixLib
 	{
 		++_c.writes;
 		_c.nullCount = false;
+
+		const bool reloading = (_c.mode == 2 || _c.mode == 3) && _c.running;
+		if(!reloading)
+			_c.phaseOfs = 0;
 
 		switch(_c.mode)
 		{
@@ -50,11 +55,14 @@ namespace matrixLib
 			}
 			else
 			{
-				// a new count takes effect at the end of the current period
+				// mode 2 takes a new count at the end of the period, mode 3 at the end of the half cycle
 				update(_c, _tick);
 				const uint64_t n = effective(_c.reload);
-				const uint64_t elapsed = _tick >= _c.loadedAt ? _tick - _c.loadedAt : 0;
-				_c.pendingAt = _c.loadedAt + (elapsed / n + 1) * n;
+				const uint64_t half = (n + 1) / 2;
+				const uint64_t phase = _tick >= _c.loadedAt ? (_tick - _c.loadedAt + _c.phaseOfs) % n : 0;
+				const uint64_t base = (_tick >= _c.loadedAt ? _tick : _c.loadedAt) - phase;
+				_c.pendingLow = _c.mode == 3 && phase < half;
+				_c.pendingAt = base + (_c.pendingLow ? half : n);
 				_c.pendingReload = _count;
 				_c.hasPending = true;
 			}
@@ -66,6 +74,21 @@ namespace matrixLib
 			_c.outIdle = true;
 			break;
 		}
+	}
+
+	void Pit8254::gate(const uint32_t _counter, const uint64_t _lowAt, const uint64_t _highAt)
+	{
+		auto& c = m_counters[_counter];
+		update(c, _lowAt);
+		if(!c.running || (c.mode != 2 && c.mode != 3))
+			return;
+		if(c.hasPending)
+		{
+			c.reload = c.pendingReload;
+			c.hasPending = false;
+		}
+		c.loadedAt = _highAt + 1;
+		c.phaseOfs = 0;
 	}
 
 	void Pit8254::write(const uint8_t _reg, const uint8_t _val, const uint64_t _tick)
@@ -219,7 +242,7 @@ namespace matrixLib
 			return c.outIdle;
 
 		const uint64_t n = effective(c.reload);
-		const uint64_t elapsed = _tick - c.loadedAt;
+		const uint64_t elapsed = _tick - c.loadedAt + c.phaseOfs;
 
 		switch(c.mode)
 		{
@@ -240,7 +263,7 @@ namespace matrixLib
 		if(!c.running || _tick < c.loadedAt)
 			return static_cast<uint16_t>(c.reload);
 
-		const uint64_t elapsed = _tick - c.loadedAt;
+		const uint64_t elapsed = _tick - c.loadedAt + c.phaseOfs;
 
 		switch(c.mode)
 		{
@@ -280,7 +303,7 @@ namespace matrixLib
 			return c.mode == 0 ? c.loadedAt + effective(c.reload) : c.loadedAt;
 
 		const uint64_t n = effective(c.reload);
-		const uint64_t elapsed = _tick - c.loadedAt;
+		const uint64_t elapsed = _tick - c.loadedAt + c.phaseOfs;
 
 		uint64_t edge = never;
 		switch(c.mode)
@@ -293,17 +316,18 @@ namespace matrixLib
 			break;
 		case 2:
 		{
-			const uint64_t base = c.loadedAt + (elapsed / n) * n;
 			const uint64_t phase = elapsed % n;
+			const uint64_t base = _tick - phase;
 			edge = phase < n - 1 ? base + n - 1 : base + n;
 			break;
 		}
 		case 3:
 		{
 			const uint64_t half = (n + 1) / 2;
-			const uint64_t base = c.loadedAt + (elapsed / n) * n;
 			const uint64_t phase = elapsed % n;
-			edge = phase < half ? base + half : base + n;
+			const uint64_t base = _tick - phase;
+			// a count of 1 never leaves the high half
+			edge = half >= n ? never : (phase < half ? base + half : base + n);
 			break;
 		}
 		default:

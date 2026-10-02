@@ -25,7 +25,7 @@ namespace matrixLib
 
 		void readTx(std::vector<uint8_t>& _dst) { _dst.insert(_dst.end(), m_txOut.begin(), m_txOut.end()); m_txOut.clear(); }
 
-		bool getIrq() const;
+		bool getIrq(uint64_t _cycle) const;
 
 		// cycle of the next internal event, ~0 if idle
 		uint64_t nextEvent() const;
@@ -35,6 +35,9 @@ namespace matrixLib
 		void setCyclesPerByte(uint32_t _c) { m_cyclesPerByte = _c; }
 
 	private:
+		void startTx(uint64_t _cycle);
+		bool cts(uint64_t _cycle) const { return _cycle >= m_ctsAt ? m_ctsAfter : m_ctsBefore; }
+
 		uint32_t m_cyclesPerByte;
 
 		uint8_t m_control = 0;

@@ -13,12 +13,12 @@ namespace matrixLib
 		m_txOut.clear();
 	}
 
-	bool Acia6850::getIrq() const
+	bool Acia6850::getIrq(const uint64_t _cycle) const
 	{
 		if(m_masterReset)
 			return false;
 		const bool rxIrq = (m_control & 0x80) && (m_rdrf || m_ovrn);
-		const bool txIrq = ((m_control & 0x60) == 0x20) && m_tdre;
+		const bool txIrq = ((m_control & 0x60) == 0x20) && m_tdre && !cts(_cycle);
 		return rxIrq || txIrq;
 	}
 
@@ -26,13 +26,13 @@ namespace matrixLib
 	{
 		if(!(_reg & 1))
 		{
-			const bool cts = _cycle >= m_ctsAt ? m_ctsAfter : m_ctsBefore;
+			const bool c = cts(_cycle);
 			uint8_t s = 0;
 			if(m_rdrf) s |= 0x01;
-			if(m_tdre && !cts) s |= 0x02;
-			if(cts) s |= 0x08;
+			if(m_tdre && !c) s |= 0x02;
+			if(c) s |= 0x08;
 			if(m_ovrn) s |= 0x20;
-			if(getIrq()) s |= 0x80;
+			if(getIrq(_cycle)) s |= 0x80;
 			return s;
 		}
 
@@ -63,13 +63,18 @@ namespace matrixLib
 
 		m_tdr = _val;
 		m_tdre = false;
-		if(!m_txShifting)
-		{
-			m_tsr = m_tdr;
-			m_tdre = true;
-			m_txShifting = true;
-			m_txDoneAt = _cycle + m_cyclesPerByte;
-		}
+		startTx(_cycle);
+	}
+
+	void Acia6850::startTx(const uint64_t _cycle)
+	{
+		// the transmitter holds the byte while CTS is high
+		if(m_txShifting || m_tdre || cts(_cycle))
+			return;
+		m_tsr = m_tdr;
+		m_tdre = true;
+		m_txShifting = true;
+		m_txDoneAt = _cycle + m_cyclesPerByte;
 	}
 
 	void Acia6850::advance(const uint64_t _cycle)
@@ -80,17 +85,10 @@ namespace matrixLib
 		while(m_txShifting && _cycle >= m_txDoneAt)
 		{
 			m_txOut.push_back(m_tsr);
-			if(!m_tdre)
-			{
-				m_tsr = m_tdr;
-				m_tdre = true;
-				m_txDoneAt += m_cyclesPerByte;
-			}
-			else
-			{
-				m_txShifting = false;
-			}
+			m_txShifting = false;
+			startTx(m_txDoneAt);
 		}
+		startTx(_cycle);
 
 		// hold the next byte until the firmware has read the previous one instead of overrunning
 		if(!m_rxQueue.empty() && _cycle >= m_nextRxAt && !m_rdrf)
