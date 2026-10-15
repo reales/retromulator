@@ -16,6 +16,8 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
 | Commodore 64 SID 6581 / 8580 | reSID cycle-accurate |
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
+| Hammond B3 + Leslie (OpenB3) | setBfree tonewheel and Leslie engine |
+| Moog Minimoog Model D (CA-72) | Circuit model from SPICE simulations |
 | Oberheim Matrix-1000 | 6809 firmware + CEM3396 voice model |
 | Roland JP-8000 (JE-8086) | H8S CPU and 4x ESP ASIC cycle-accurate |
 | Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII | H8/500 and SH-2 cycle-accurate |
@@ -26,9 +28,13 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OPL3, AY-3-8910, and Tracker cores are ROM-free.
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OpenB3, CA-72, OPL3, AY-3-8910, and Tracker cores are ROM-free.
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
+
+The **Hammond B3 (OpenB3)** is the setBfree tonewheel organ and Leslie engine by way of OpenB3, with upper, lower and pedal drawbars, percussion, vibrato and chorus, overdrive, three Leslie cabinets with convolution cabinet bodies, a plate reverb, a keyboard split and .fxp presets in Factory and User banks.
+
+The **Minimoog Model D (CA-72)** is the CA-72 circuit model by Idle Foundry: every board of a 1972 Model D transcribed into SPICE netlists, with real-time models derived from those simulations. It runs at the host sample rate in LO, HI and ULTRA quality, with a 4x engine for offline renders, and opens its own front panel below the plugin bar. Presets are .fxp files in Factory and User banks, with .fxb bank import and export, and every panel control is a host parameter with a MIDI CC.
 
 The **Wurlitzer 200A (OpenWurli)** is a physical model of the Wurlitzer 200A electric piano with 64-voice polyphony, tremolo, speaker character modeling, velocity curves, and 2x oversampling.
 
@@ -71,6 +77,9 @@ The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libra
 - **Leo Olivers** — SFZero JUCE module port
 - **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3
 - **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
+- **Michele Perrone** — [OpenB3](https://github.com/michele-perrone/OpenB3) Hammond B3 and Leslie, AGPL v3, based on [setBfree](https://github.com/pantherb/setBfree) by Robin Gareus, GPL v2+
+- **Idle Foundry** — [CA-72](https://github.com/idlefoundry/ca-72) Minimoog Model D circuit model and front panel, GPL v3 or later; ported to C++ / JUCE by discoDSP
+- **Laurent de Soras** — [hiir](http://ldesoras.free.fr/prod.html#src_hiir) polyphase IIR halfband filters, WTFPL
 
 JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 

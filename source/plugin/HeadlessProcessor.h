@@ -23,6 +23,8 @@ namespace openWurliLib { class Device; }
 namespace opl3Lib { class Device; }
 namespace sidLib { class Device; }
 namespace ayumiLib { class Device; }
+namespace openB3Lib { class Device; }
+namespace ca72Lib { class Device; }
 namespace emu88Lib { class HardwareDevice; }
 namespace trackerLib { class Device; }
 namespace matrixLib { class Device; }
@@ -112,6 +114,15 @@ namespace retromulator
 
         // Returns the Ayumi device if the current synth type is Ayumi, else nullptr.
         ayumiLib::Device* getAyumiDevice() const;
+
+        // Returns the OpenB3 device if the current synth type is OpenB3, else nullptr.
+        openB3Lib::Device* getOpenB3Device() const;
+
+        // Returns the CA-72 device if the current synth type is CA72, else nullptr.
+        ca72Lib::Device* getCA72Device() const;
+
+        // Message thread. Panel edits on the CA-72 move the matching host parameters.
+        void syncCA72PanelEdits();
 
         // 88emu (SC-88 family) device, or nullptr if another core is loaded.
         emu88Lib::HardwareDevice* getEmu88Device() const;
@@ -243,6 +254,14 @@ namespace retromulator
         // corresponding .ay file on the message thread. Call periodically from the
         // editor timer. No-op if not Ayumi or nothing pending.
         void pollAyumiProgramChange();
+
+        // OpenB3 and CA-72 counterparts: .fxp files of the active bank answer MIDI Program Change.
+        void updateFxpProgramList(const std::string& bankFolder);
+        void pollFxpProgramChange();
+
+        // Message thread. Writes the current OpenB3 / CA-72 settings to <data>/<core>/User/<name>.fxp
+        // and loads it, so it shows in the preset list. Returns the file, empty on failure.
+        std::string saveFxpPreset(const std::string& name);
 
         // ── Program bank accessors ──────────────────────────────────────────
         // m_bankStride: number of raw sysex messages per logical program (1 for most
@@ -412,6 +431,8 @@ namespace retromulator
         void processDeferredResend();
         // Watches program changes so the cached per-part programs follow the board.
         void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
+
+        bool isBooting() const { return m_isBooting.load(); }
 
         int getSavedEditorWidth()  const { return m_savedEditorWidth; }
         int getSavedEditorHeight() const { return m_savedEditorHeight; }

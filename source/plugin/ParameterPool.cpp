@@ -5,6 +5,7 @@
 #include "nord/n2x/n2xLib/n2xmiditypes.h"
 #include "ronaldo/je8086/jeLib/state.h"
 #include "matrixLib/patch.h"
+#include "openB3Lib/device.h"
 #include "trackerLib/device.h"
 #include "synthLib/midiTypes.h"
 
@@ -187,6 +188,8 @@ namespace retromulator
         case SynthType::DX7:       return "dx7";
         case SynthType::AkaiS1000: return "akai";
         case SynthType::OpenWurli: return "wurli";
+        case SynthType::OpenB3:    return "openb3";
+        case SynthType::CA72:      return "ca72";
         case SynthType::OPL3:      return "opl3";
         case SynthType::SID:       return "sid";
         case SynthType::Ayumi:     return "ayumi";
@@ -546,12 +549,25 @@ namespace retromulator
         if(map->perPart && (ev.a & 0x0f) != getPartChannel())
             return false;
 
+        const bool fromOutside = ev.source == synthLib::MidiEventSource::Host
+                              || ev.source == synthLib::MidiEventSource::Physical;
+
+        // OpenB3 mod wheel / sustain switch the Leslie, so the Rotary slot follows the engine
+        if(map->type == SynthType::OpenB3 && status == synthLib::M_CONTROLCHANGE && (ev.b == 1 || ev.b == 64))
+        {
+            const int rotSlot = map->ccToSlot[openB3Lib::Device::rotaryCc()];
+            if(rotSlot < 0)
+                return false;
+            auto* rs = m_slots[static_cast<size_t>(rotSlot)];
+            const int cc = openB3Lib::Device::rotaryCcFromPedal(ev.b, ev.c, static_cast<uint8_t>(rs->getMidiValue()));
+            if(cc >= 0 && cc != rs->getMidiValue())
+                rs->setFromMidi(cc, fromOutside);
+            return false;
+        }
+
         const int slot = status == synthLib::M_CONTROLCHANGE ? map->ccToSlot[ev.b] : map->ppToSlot[ev.b];
         if(slot < 0)
             return false;
-
-        const bool fromOutside = ev.source == synthLib::MidiEventSource::Host
-                              || ev.source == synthLib::MidiEventSource::Physical;
         auto* s = m_slots[static_cast<size_t>(slot)];
 
         // The Matrix firmware ignores these CCs: spread 0-127 over the parameter's range
@@ -1002,6 +1018,49 @@ namespace retromulator
             s->clearTouched();
         }
         m_mirroring.store(false, std::memory_order_release);
+    }
+
+    void ParameterPool::syncFromCcValues(const std::vector<std::pair<uint8_t, uint8_t>>& values)
+    {
+        const auto* map = m_current.load(std::memory_order_acquire);
+        if(!map)
+            return;
+
+        m_mirroring.store(true, std::memory_order_release);
+        for(const auto& [cc, value] : values)
+        {
+            const int slot = map->ccToSlot[cc & 0x7f];
+            if(slot < 0)
+                continue;
+            auto* s = m_slots[static_cast<size_t>(slot)];
+            const auto& b = s->binding();
+            if(!b.desc)
+                continue;
+            const int v = b.desc->isBool ? (value >= 64 ? 1 : 0) : value;
+            if(s->getMidiValue() != v)
+                s->setFromMidi(v, true);
+            s->clearTouched();
+        }
+        m_mirroring.store(false, std::memory_order_release);
+    }
+
+    void ParameterPool::setCcFromEditor(uint8_t cc, uint8_t value)
+    {
+        const auto* map = m_current.load(std::memory_order_acquire);
+        if(!map)
+            return;
+        const int slot = map->ccToSlot[cc & 0x7f];
+        if(slot < 0)
+            return;
+        auto* s = m_slots[static_cast<size_t>(slot)];
+        const auto& b = s->binding();
+        if(!b.desc)
+            return;
+        const int v = b.desc->isBool ? (value >= 64 ? 1 : 0) : value;
+        if(s->getMidiValue() != v)
+            s->setFromMidi(v, true);
+        // the device state keeps the panel's full resolution; a saved 7-bit slot would round it
+        s->clearTouched();
     }
 
     void ParameterPool::restoreValues(const std::vector<std::pair<uint8_t, uint8_t>>& values)

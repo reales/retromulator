@@ -20,6 +20,8 @@ namespace retromulator
         Emu88     = 12, // Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII (Ronaldo 88emu)
         Trackermeister = 13, // XM / MOD (FT2 replayer) and S3M / IT (Schism player) module player
         Matrix    = 14, // Oberheim Matrix-1000 (6809 firmware + CEM3396 voice model)
+        OpenB3    = 15, // Hammond B3 + Leslie (OpenB3 / setBfree Beatrix engine)
+        CA72      = 16, // Minimoog Model D (CA-72 circuit model by Idle Foundry)
 
         Count
     };
@@ -31,12 +33,14 @@ namespace retromulator
             SynthType::Emu88,
             SynthType::AkaiS1000,
             SynthType::Ayumi,
+            SynthType::CA72,
             SynthType::DX7,
             SynthType::JE8086,
             SynthType::Matrix,
             SynthType::MicroQ,
             SynthType::NordN2X,
             SynthType::OPL3,
+            SynthType::OpenB3,
             SynthType::OpenWurli,
             SynthType::SID,
             SynthType::Trackermeister,
@@ -67,6 +71,8 @@ namespace retromulator
             case SynthType::Emu88:     return "88emu";
             case SynthType::Trackermeister: return "Tracker";
             case SynthType::Matrix:    return "Matrix";
+            case SynthType::OpenB3:    return "OpenB3";
+            case SynthType::CA72:      return "CA-72";
             default:                   return "None";
         }
     }

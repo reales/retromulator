@@ -27,6 +27,8 @@
 
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
+#include "openB3Lib/device.h"
+#include "ca72Lib/device.h"
 #include "opl3Lib/device.h"
 #include "trackerLib/device.h"
 #include "sidLib/device.h"
@@ -232,6 +234,18 @@ namespace retromulator
             {
                 synthLib::DeviceCreateParams p;
                 return new openWurliLib::Device(p);
+            }
+
+            case SynthType::OpenB3:
+            {
+                synthLib::DeviceCreateParams p;
+                return new openB3Lib::Device(p);
+            }
+
+            case SynthType::CA72:
+            {
+                synthLib::DeviceCreateParams p;
+                return new ca72Lib::Device(p);
             }
 
             case SynthType::OPL3:

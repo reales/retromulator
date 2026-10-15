@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HeadlessProcessor.h"
+#include "ca72Lib/gui/Panel.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace retromulator
@@ -10,7 +11,7 @@ namespace retromulator
     {
     public:
         explicit BasicEditor(HeadlessProcessor& p);
-        ~BasicEditor() override { stopTimer(); }
+        ~BasicEditor() override { stopTimer(); m_corePanel.reset(); }
 
         void paint(juce::Graphics& g) override;
         void resized() override;
@@ -44,6 +45,15 @@ namespace retromulator
         juce::String m_currentBankFolder;
 
         std::shared_ptr<juce::FileChooser> m_fileChooser;
+
+        // A core's own front panel (CA-72), below the bar.
+        static constexpr int kBarWidth   = 640;
+        static constexpr int kBarHeight  = 80;
+        static constexpr int kPanelWidth = 1200;
+        std::unique_ptr<ca72ui::Panel> m_corePanel;
+        juce::String m_fxpProgramFolder;
+        void updateCorePanel();
+        void onSaveFxpPreset();
 
         static bool isFolderMode(SynthType type, const juce::File& synthFolder);
 

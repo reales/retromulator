@@ -50,6 +50,8 @@
 #include "trackerLib/device.h"
 #include "sidLib/device.h"
 #include "ayumiLib/device.h"
+#include "openB3Lib/device.h"
+#include "ca72Lib/device.h"
 
 #include <cstring>
 #include <fstream>
@@ -825,6 +827,19 @@ namespace retromulator
                     root.getChildFile("Factory").createDirectory();
                     root.getChildFile("User").createDirectory();
                 }
+                else if(type == SynthType::OpenB3)
+                {
+                    // Factory holds the built-in presets, User the saved and imported ones
+                    const juce::File root(getSynthDataFolder(SynthType::OpenB3));
+                    openB3Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
+                    root.getChildFile("User").createDirectory();
+                }
+                else if(type == SynthType::CA72)
+                {
+                    const juce::File root(getSynthDataFolder(SynthType::CA72));
+                    ca72Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
+                    root.getChildFile("User").createDirectory();
+                }
             }
         }
 
@@ -832,7 +847,8 @@ namespace retromulator
         setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000
                        || type == SynthType::OpenWurli || type == SynthType::OPL3
                        || type == SynthType::SID || type == SynthType::Ayumi
-                       || type == SynthType::Trackermeister || type == SynthType::Matrix) ? 0 : 1);
+                       || type == SynthType::Trackermeister || type == SynthType::Matrix
+                       || type == SynthType::OpenB3 || type == SynthType::CA72) ? 0 : 1);
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -939,7 +955,8 @@ namespace retromulator
                 const bool isSynchronous = (type == SynthType::JE8086 || type == SynthType::AkaiS1000
                                          || type == SynthType::OpenWurli || type == SynthType::OPL3
                                          || type == SynthType::Ayumi || type == SynthType::Trackermeister
-                                         || type == SynthType::Matrix || type == SynthType::None);
+                                         || type == SynthType::Matrix || type == SynthType::OpenB3
+                                         || type == SynthType::CA72 || type == SynthType::None);
                 const bool isN2X = (type == SynthType::NordN2X);
                 setLatencyBlocks(isSynchronous ? 0 : (isN2X ? 1 : 3));
             }
@@ -975,6 +992,19 @@ namespace retromulator
                     const juce::File root(getSynthDataFolder(SynthType::Ayumi));
                     root.createDirectory();
                     root.getChildFile("Factory").createDirectory();
+                    root.getChildFile("User").createDirectory();
+                }
+                else if(type == SynthType::OpenB3)
+                {
+                    // Factory holds the built-in presets, User the saved and imported ones
+                    const juce::File root(getSynthDataFolder(SynthType::OpenB3));
+                    openB3Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
+                    root.getChildFile("User").createDirectory();
+                }
+                else if(type == SynthType::CA72)
+                {
+                    const juce::File root(getSynthDataFolder(SynthType::CA72));
+                    ca72Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
                     root.getChildFile("User").createDirectory();
                 }
             }
@@ -1588,6 +1618,50 @@ namespace retromulator
             m_programNames.clear();
             m_bankStride     = 1;
             m_currentProgram = 0;
+
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
+                .withNonParameterStateChanged(true));
+            return true;
+        }
+
+        // OpenB3: .fxp presets set the device parameters directly.
+        if(m_synthType == SynthType::OpenB3 && hasSuffix(filePath, ".fxp"))
+        {
+            auto* dev = getOpenB3Device();
+            if(!dev || !dev->loadPreset(filePath)) return false;
+
+            m_sysexFilePath  = filePath;
+            m_patchName      = patchName.empty() ? dev->getPatchName() : patchName;
+            m_sysexData.clear();
+            m_bankMessages.clear();
+            m_programNames.clear();
+            m_bankStride     = 1;
+            m_currentProgram = 0;
+
+            if(m_paramPool)
+                m_paramPool->syncFromCcValues(dev->getCcValues());
+
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
+                .withNonParameterStateChanged(true));
+            return true;
+        }
+
+        // CA-72: .fxp presets set the panel parameters directly.
+        if(m_synthType == SynthType::CA72 && hasSuffix(filePath, ".fxp"))
+        {
+            auto* dev = getCA72Device();
+            if(!dev || !dev->loadPreset(filePath)) return false;
+
+            m_sysexFilePath  = filePath;
+            m_patchName      = patchName.empty() ? dev->getPatchName() : patchName;
+            m_sysexData.clear();
+            m_bankMessages.clear();
+            m_programNames.clear();
+            m_bankStride     = 1;
+            m_currentProgram = 0;
+
+            if(m_paramPool)
+                m_paramPool->syncFromCcValues(dev->getCcValues());
 
             updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
                 .withNonParameterStateChanged(true));
@@ -3636,6 +3710,82 @@ namespace retromulator
         return dynamic_cast<ayumiLib::Device*>(m_device.get());
     }
 
+    openB3Lib::Device* HeadlessProcessor::getOpenB3Device() const
+    {
+        if(m_synthType != SynthType::OpenB3)
+            return nullptr;
+        return dynamic_cast<openB3Lib::Device*>(m_device.get());
+    }
+
+    ca72Lib::Device* HeadlessProcessor::getCA72Device() const
+    {
+        if(m_synthType != SynthType::CA72)
+            return nullptr;
+        return dynamic_cast<ca72Lib::Device*>(m_device.get());
+    }
+
+    void HeadlessProcessor::syncCA72PanelEdits()
+    {
+        if(m_isBooting.load()) return;
+        auto* dev = getCA72Device();
+        if(!dev || !m_paramPool) return;
+        for(const auto& [cc, value] : dev->takePanelEdits())
+            m_paramPool->setCcFromEditor(cc, value);
+    }
+
+    void HeadlessProcessor::updateFxpProgramList(const std::string& bankFolder)
+    {
+        std::vector<std::string> paths;
+        juce::Array<juce::File> files;
+        juce::File(bankFolder).findChildFiles(files, juce::File::findFiles, false, "*.fxp");
+        files.sort();
+        for(const auto& f : files)
+            paths.push_back(f.getFullPathName().toStdString());
+
+        if(auto* b3 = getOpenB3Device())
+            b3->setProgramList(std::move(paths));
+        else if(auto* ca = getCA72Device())
+            ca->setProgramList(std::move(paths));
+    }
+
+    void HeadlessProcessor::pollFxpProgramChange()
+    {
+        int idx = -1;
+        std::vector<std::string> list;
+        if(auto* b3 = getOpenB3Device())
+        {
+            idx = b3->takePendingProgramChange();
+            if(idx >= 0) list = b3->getProgramList();
+        }
+        else if(auto* ca = getCA72Device())
+        {
+            idx = ca->takePendingProgramChange();
+            if(idx >= 0) list = ca->getProgramList();
+        }
+        if(idx < 0 || idx >= static_cast<int>(list.size())) return;
+
+        const juce::File f(list[static_cast<size_t>(idx)]);
+        loadPresetFromFile(f.getFullPathName().toStdString(),
+                           f.getFileNameWithoutExtension().toStdString());
+    }
+
+    std::string HeadlessProcessor::saveFxpPreset(const std::string& name)
+    {
+        const auto clean = juce::File::createLegalFileName(juce::String::fromUTF8(name.c_str())).trim();
+        auto* b3 = getOpenB3Device();
+        auto* ca = getCA72Device();
+        if((!b3 && !ca) || clean.isEmpty()) return {};
+
+        const auto file = juce::File(getSynthDataFolder(m_synthType))
+            .getChildFile("User").getChildFile(clean + ".fxp");
+        const auto path = file.getFullPathName().toStdString();
+        if(!(b3 ? b3->savePreset(path, clean.toStdString()) : ca->savePreset(path, clean.toStdString())))
+            return {};
+
+        loadPresetFromFile(path, clean.toStdString());
+        return path;
+    }
+
     int HeadlessProcessor::getAyumiEngine() const
     {
         auto* dev = getAyumiDevice();
@@ -3906,6 +4056,10 @@ namespace retromulator
 
     void HeadlessProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
     {
+        if(m_synthType == SynthType::CA72)
+            if(auto* dev = getCA72Device())
+                dev->setNonRealtime(isNonRealtime());
+
         if(m_synthType == SynthType::Emu88)
         {
             // A MIDI file or external gear can set every part's tone, so the cached
@@ -4141,6 +4295,24 @@ namespace retromulator
             if(auto* dev = getAyumiDevice())
                 dev->getState(ayState, synthLib::StateTypeGlobal);
             appendBytes(destData, ayState);
+        }
+
+        // OpenB3: every parameter, so edits made after loading the preset are recalled
+        if(m_synthType == SynthType::OpenB3)
+        {
+            std::vector<uint8_t> b3State;
+            if(auto* dev = getOpenB3Device())
+                dev->getState(b3State, synthLib::StateTypeGlobal);
+            appendBytes(destData, b3State);
+        }
+
+        // CA-72: every panel parameter, so edits made after loading the preset are recalled
+        if(m_synthType == SynthType::CA72)
+        {
+            std::vector<uint8_t> caState;
+            if(auto* dev = getCA72Device())
+                dev->getState(caState, synthLib::StateTypeGlobal);
+            appendBytes(destData, caState);
         }
 
         // Akai browse folder path (optional, backwards compatible)
@@ -4428,6 +4600,15 @@ namespace retromulator
             else
                 m_sysexFilePath = sysexFilePath; // path lost; keep for display
         }
+        else if(newType == SynthType::OpenB3 || newType == SynthType::CA72)
+        {
+            // OpenB3 / CA-72: reload the .fxp by path (folder/bank UI); the state blob below
+            // then restores edits made since.
+            if(!sysexFilePath.empty() && juce::File(sysexFilePath).existsAsFile())
+                loadPresetFromFile(sysexFilePath, patchName);
+            else
+                m_sysexFilePath = sysexFilePath;
+        }
         else if(newType == SynthType::OPL3)
         {
             // OPL3: patch lives in the .sbi file (no embedded sysex). Reload it so
@@ -4467,6 +4648,32 @@ namespace retromulator
             if(!ayState.empty())
                 if(auto* dev = getAyumiDevice())
                     dev->setState(ayState, synthLib::StateTypeGlobal);
+        }
+
+        if(newType == SynthType::OpenB3)
+        {
+            std::vector<uint8_t> b3State;
+            readBytes(bytes, sizeInBytes, offset, b3State);
+            if(!b3State.empty())
+                if(auto* dev = getOpenB3Device())
+                {
+                    dev->setState(b3State, synthLib::StateTypeGlobal);
+                    if(m_paramPool)
+                        m_paramPool->syncFromCcValues(dev->getCcValues());
+                }
+        }
+
+        if(newType == SynthType::CA72)
+        {
+            std::vector<uint8_t> caState;
+            readBytes(bytes, sizeInBytes, offset, caState);
+            if(!caState.empty())
+                if(auto* dev = getCA72Device())
+                {
+                    dev->setState(caState, synthLib::StateTypeGlobal);
+                    if(m_paramPool)
+                        m_paramPool->syncFromCcValues(dev->getCcValues());
+                }
         }
 
         // Restore Akai browse folder path (optional, backwards compatible)

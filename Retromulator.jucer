@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.9.1"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="1.11.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -44,6 +44,7 @@
         <MODULEPATH id="juce_core" path="../Modules"/>
         <MODULEPATH id="juce_cryptography" path="../Modules"/>
         <MODULEPATH id="juce_data_structures" path="../Modules"/>
+        <MODULEPATH id="juce_dsp" path="../Modules"/>
         <MODULEPATH id="juce_events" path="../Modules"/>
         <MODULEPATH id="juce_graphics" path="../Modules"/>
         <MODULEPATH id="juce_gui_basics" path="../Modules"/>
@@ -54,6 +55,15 @@
   </EXPORTFORMATS>
   <MAINGROUP id="JCS7L" name="Retromulator">
     <GROUP id="{9A1F2C40-0000-4000-8000-524D50415241}" name="Assets">
+      <FILE id="ob3r0" name="openb3_plate_ir.wav" compile="0" resource="1" file="Assets/OpenB3/openb3_plate_ir.wav"/>
+      <FILE id="ob3r1" name="openb3_cab_122.wav" compile="0" resource="1" file="Assets/OpenB3/openb3_cab_122.wav"/>
+      <FILE id="ob3r2" name="openb3_cab_145.wav" compile="0" resource="1" file="Assets/OpenB3/openb3_cab_145.wav"/>
+      <FILE id="ob3r3" name="openb3_cab_16.wav" compile="0" resource="1" file="Assets/OpenB3/openb3_cab_16.wav"/>
+      <FILE id="ca72pj" name="parameterDescriptions_ca72.json" compile="0"
+            resource="1" file="Assets/Params/parameterDescriptions_ca72.json"/>
+      <FILE id="ca72ft" name="URWGothic-Demi.otf" compile="0" resource="1" file="Assets/CA72/URWGothic-Demi.otf"/>
+      <FILE id="ob3pj" name="parameterDescriptions_openb3.json" compile="0"
+            resource="1" file="Assets/Params/parameterDescriptions_openb3.json"/>
       <FILE id="pj0000" name="parameterDescriptions_akai.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_akai.json"/>
       <FILE id="pj0001" name="parameterDescriptions_ayumi.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_ayumi.json"/>
       <FILE id="pj0002" name="parameterDescriptions_dx7.json" compile="0" resource="1" file="Assets/Params/parameterDescriptions_dx7.json"/>
@@ -475,6 +485,125 @@
       <FILE id="si026" name="spline.h" compile="0" resource="0" file="source/sidLib/resid/spline.h"/>
       <FILE id="si027" name="version.cc" compile="1" resource="0" file="source/sidLib/resid/version.cc"/>
     </GROUP>
+    <GROUP id="ca72Lib" name="ca72Lib">
+      <FILE id="ca0001" name="device.h" compile="0" resource="0" file="source/ca72Lib/device.h"/>
+      <FILE id="ca0002" name="device.cpp" compile="1" resource="0" file="source/ca72Lib/device.cpp"/>
+      <FILE id="ca0003" name="synth.h" compile="0" resource="0" file="source/ca72Lib/synth.h"/>
+      <FILE id="ca0004" name="synth.cpp" compile="1" resource="0" file="source/ca72Lib/synth.cpp"/>
+      <FILE id="ca0005" name="PolyEngine.h" compile="0" resource="0" file="source/ca72Lib/PolyEngine.h"/>
+      <FILE id="ca0006" name="PolyEngine.cpp" compile="1" resource="0" file="source/ca72Lib/PolyEngine.cpp"/>
+      <FILE id="ca0007" name="Presets.h" compile="0" resource="0" file="source/ca72Lib/Presets.h"/>
+      <GROUP id="ca72dsp" name="dsp">
+        <FILE id="ca0008" name="a440.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/a440.cpp"/>
+        <FILE id="ca0009" name="a440.h" compile="0" resource="0" file="source/ca72Lib/dsp/a440.h"/>
+        <FILE id="ca0010" name="a440_table.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/a440_table.cpp"/>
+        <FILE id="ca0011" name="a440_table.h" compile="0" resource="0" file="source/ca72Lib/dsp/a440_table.h"/>
+        <FILE id="ca0012" name="common.h" compile="0" resource="0" file="source/ca72Lib/dsp/common.h"/>
+        <FILE id="ca0013" name="contour.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/contour.cpp"/>
+        <FILE id="ca0014" name="contour.h" compile="0" resource="0" file="source/ca72Lib/dsp/contour.h"/>
+        <FILE id="ca0015" name="devices.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/devices.cpp"/>
+        <FILE id="ca0016" name="devices.h" compile="0" resource="0" file="source/ca72Lib/dsp/devices.h"/>
+        <FILE id="ca0017" name="expo.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/expo.cpp"/>
+        <FILE id="ca0018" name="expo.h" compile="0" resource="0" file="source/ca72Lib/dsp/expo.h"/>
+        <FILE id="ca0019" name="fast.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/fast.cpp"/>
+        <FILE id="ca0020" name="fast.h" compile="0" resource="0" file="source/ca72Lib/dsp/fast.h"/>
+        <FILE id="ca0021" name="filter_cal.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/filter_cal.cpp"/>
+        <FILE id="ca0022" name="filter_cal.h" compile="0" resource="0" file="source/ca72Lib/dsp/filter_cal.h"/>
+        <FILE id="ca0023" name="freq_dial.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/freq_dial.cpp"/>
+        <FILE id="ca0024" name="freq_dial.h" compile="0" resource="0" file="source/ca72Lib/dsp/freq_dial.h"/>
+        <FILE id="ca0025" name="keyboard.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/keyboard.cpp"/>
+        <FILE id="ca0026" name="keyboard.h" compile="0" resource="0" file="source/ca72Lib/dsp/keyboard.h"/>
+        <FILE id="ca0027" name="light.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/light.cpp"/>
+        <FILE id="ca0028" name="light.h" compile="0" resource="0" file="source/ca72Lib/dsp/light.h"/>
+        <FILE id="ca0029" name="linear.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/linear.cpp"/>
+        <FILE id="ca0030" name="linear.h" compile="0" resource="0" file="source/ca72Lib/dsp/linear.h"/>
+        <FILE id="ca0031" name="mna.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/mna.cpp"/>
+        <FILE id="ca0032" name="mna.h" compile="0" resource="0" file="source/ca72Lib/dsp/mna.h"/>
+        <FILE id="ca0033" name="modulation.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/modulation.cpp"/>
+        <FILE id="ca0034" name="modulation.h" compile="0" resource="0" file="source/ca72Lib/dsp/modulation.h"/>
+        <FILE id="ca0035" name="noise.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/noise.cpp"/>
+        <FILE id="ca0036" name="noise.h" compile="0" resource="0" file="source/ca72Lib/dsp/noise.h"/>
+        <FILE id="ca0037" name="preamp.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/preamp.cpp"/>
+        <FILE id="ca0038" name="preamp.h" compile="0" resource="0" file="source/ca72Lib/dsp/preamp.h"/>
+        <FILE id="ca0039" name="resample.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/resample.cpp"/>
+        <FILE id="ca0040" name="resample.h" compile="0" resource="0" file="source/ca72Lib/dsp/resample.h"/>
+        <FILE id="ca0041" name="revsaw.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/revsaw.cpp"/>
+        <FILE id="ca0042" name="revsaw.h" compile="0" resource="0" file="source/ca72Lib/dsp/revsaw.h"/>
+        <FILE id="ca0043" name="shared.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/shared.cpp"/>
+        <FILE id="ca0044" name="shared.h" compile="0" resource="0" file="source/ca72Lib/dsp/shared.h"/>
+        <FILE id="ca0045" name="tables.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/tables.cpp"/>
+        <FILE id="ca0046" name="tables.h" compile="0" resource="0" file="source/ca72Lib/dsp/tables.h"/>
+        <FILE id="ca0047" name="tuning.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/tuning.cpp"/>
+        <FILE id="ca0048" name="tuning.h" compile="0" resource="0" file="source/ca72Lib/dsp/tuning.h"/>
+        <FILE id="ca0049" name="ulp.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/ulp.cpp"/>
+        <FILE id="ca0050" name="ulp.h" compile="0" resource="0" file="source/ca72Lib/dsp/ulp.h"/>
+        <FILE id="ca0051" name="unconverged.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/unconverged.cpp"/>
+        <FILE id="ca0052" name="unconverged.h" compile="0" resource="0" file="source/ca72Lib/dsp/unconverged.h"/>
+        <FILE id="ca0053" name="vca.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/vca.cpp"/>
+        <FILE id="ca0054" name="vca.h" compile="0" resource="0" file="source/ca72Lib/dsp/vca.h"/>
+        <FILE id="ca0055" name="vcf.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/vcf.cpp"/>
+        <FILE id="ca0056" name="vcf.h" compile="0" resource="0" file="source/ca72Lib/dsp/vcf.h"/>
+        <FILE id="ca0057" name="vco.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/vco.cpp"/>
+        <FILE id="ca0058" name="vco.h" compile="0" resource="0" file="source/ca72Lib/dsp/vco.h"/>
+        <FILE id="ca0059" name="voice.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/voice.cpp"/>
+        <FILE id="ca0060" name="voice.h" compile="0" resource="0" file="source/ca72Lib/dsp/voice.h"/>
+        <FILE id="ca0061" name="voice_types.cpp" compile="1" resource="0" file="source/ca72Lib/dsp/voice_types.cpp"/>
+        <FILE id="ca0062" name="voice_types.h" compile="0" resource="0" file="source/ca72Lib/dsp/voice_types.h"/>
+      </GROUP>
+      <GROUP id="ca72hiir" name="hiir">
+        <FILE id="ca0063" name="Downsampler2xF64Fpu.h" compile="0" resource="0" file="source/ca72Lib/hiir/Downsampler2xF64Fpu.h"/>
+        <FILE id="ca0064" name="Downsampler2xTpl.h" compile="0" resource="0" file="source/ca72Lib/hiir/Downsampler2xTpl.h"/>
+        <FILE id="ca0065" name="Downsampler2xTpl.hpp" compile="0" resource="0" file="source/ca72Lib/hiir/Downsampler2xTpl.hpp"/>
+        <FILE id="ca0066" name="StageDataTpl.h" compile="0" resource="0" file="source/ca72Lib/hiir/StageDataTpl.h"/>
+        <FILE id="ca0067" name="StageProcTpl.h" compile="0" resource="0" file="source/ca72Lib/hiir/StageProcTpl.h"/>
+        <FILE id="ca0068" name="StageProcTpl.hpp" compile="0" resource="0" file="source/ca72Lib/hiir/StageProcTpl.hpp"/>
+        <FILE id="ca0069" name="Upsampler2xF64Fpu.h" compile="0" resource="0" file="source/ca72Lib/hiir/Upsampler2xF64Fpu.h"/>
+        <FILE id="ca0070" name="Upsampler2xTpl.h" compile="0" resource="0" file="source/ca72Lib/hiir/Upsampler2xTpl.h"/>
+        <FILE id="ca0071" name="Upsampler2xTpl.hpp" compile="0" resource="0" file="source/ca72Lib/hiir/Upsampler2xTpl.hpp"/>
+        <FILE id="ca0072" name="def.h" compile="0" resource="0" file="source/ca72Lib/hiir/def.h"/>
+      </GROUP>
+      <GROUP id="ca72gui" name="gui">
+        <FILE id="ca0073" name="Panel.h" compile="0" resource="0" file="source/ca72Lib/gui/Panel.h"/>
+        <FILE id="ca0074" name="Panel.cpp" compile="1" resource="0" file="source/ca72Lib/gui/Panel.cpp"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="openB3Lib" name="openB3Lib">
+      <FILE id="ob3000" name="device.h" compile="0" resource="0" file="source/openB3Lib/device.h"/>
+      <FILE id="ob3001" name="device.cpp" compile="1" resource="0" file="source/openB3Lib/device.cpp"/>
+      <FILE id="ob3002" name="beatrix.hpp" compile="0" resource="0" file="source/openB3Lib/beatrix.hpp"/>
+      <FILE id="ob3003" name="global_definitions.h" compile="0" resource="0" file="source/openB3Lib/global_definitions.h"/>
+      <FILE id="ob3004" name="global_definitions.c" compile="1" resource="0" file="source/openB3Lib/global_definitions.c"/>
+      <FILE id="ob3005" name="global_inst.h" compile="0" resource="0" file="source/openB3Lib/global_inst.h"/>
+      <FILE id="ob3006" name="main.h" compile="0" resource="0" file="source/openB3Lib/main.h"/>
+      <FILE id="ob3007" name="cfgParser.h" compile="0" resource="0" file="source/openB3Lib/cfgParser.h"/>
+      <FILE id="ob3008" name="cfgParser.c" compile="1" resource="0" file="source/openB3Lib/cfgParser.c"/>
+      <FILE id="ob3009" name="midi.h" compile="0" resource="0" file="source/openB3Lib/midi.h"/>
+      <FILE id="ob3010" name="midi.c" compile="1" resource="0" file="source/openB3Lib/midi.c"/>
+      <FILE id="ob3011" name="midi_types.h" compile="0" resource="0" file="source/openB3Lib/midi_types.h"/>
+      <FILE id="ob3012" name="midnam.c" compile="1" resource="0" file="source/openB3Lib/midnam.c"/>
+      <FILE id="ob3013" name="overdrive.h" compile="0" resource="0" file="source/openB3Lib/overdrive.h"/>
+      <FILE id="ob3014" name="overdrive.c" compile="1" resource="0" file="source/openB3Lib/overdrive.c"/>
+      <FILE id="ob3015" name="filterTools.h" compile="0" resource="0" file="source/openB3Lib/filterTools.h"/>
+      <FILE id="ob3016" name="filterTools.c" compile="1" resource="0" file="source/openB3Lib/filterTools.c"/>
+      <FILE id="ob3017" name="program.h" compile="0" resource="0" file="source/openB3Lib/program.h"/>
+      <FILE id="ob3018" name="program.c" compile="1" resource="0" file="source/openB3Lib/program.c"/>
+      <FILE id="ob3019" name="pgmParser.h" compile="0" resource="0" file="source/openB3Lib/pgmParser.h"/>
+      <FILE id="ob3020" name="pgmParser.c" compile="1" resource="0" file="source/openB3Lib/pgmParser.c"/>
+      <FILE id="ob3021" name="defaultpgm.h" compile="0" resource="0" file="source/openB3Lib/defaultpgm.h"/>
+      <FILE id="ob3022" name="reverb.h" compile="0" resource="0" file="source/openB3Lib/reverb.h"/>
+      <FILE id="ob3023" name="reverb.c" compile="1" resource="0" file="source/openB3Lib/reverb.c"/>
+      <FILE id="ob3024" name="state.h" compile="0" resource="0" file="source/openB3Lib/state.h"/>
+      <FILE id="ob3025" name="state.c" compile="1" resource="0" file="source/openB3Lib/state.c"/>
+      <FILE id="ob3026" name="tonegen.h" compile="0" resource="0" file="source/openB3Lib/tonegen.h"/>
+      <FILE id="ob3027" name="tonegen.c" compile="1" resource="0" file="source/openB3Lib/tonegen.c"/>
+      <FILE id="ob3028" name="vibrato.h" compile="0" resource="0" file="source/openB3Lib/vibrato.h"/>
+      <FILE id="ob3029" name="vibrato.c" compile="1" resource="0" file="source/openB3Lib/vibrato.c"/>
+      <FILE id="ob3030" name="whirl.h" compile="0" resource="0" file="source/openB3Lib/whirl.h"/>
+      <FILE id="ob3031" name="whirl.c" compile="1" resource="0" file="source/openB3Lib/whirl.c"/>
+      <FILE id="ob3032" name="b_whirl.h" compile="0" resource="0" file="source/openB3Lib/b_whirl.h"/>
+      <FILE id="ob3033" name="eqcomp.h" compile="0" resource="0" file="source/openB3Lib/eqcomp.h"/>
+      <FILE id="ob3034" name="eqcomp.c" compile="1" resource="0" file="source/openB3Lib/eqcomp.c"/>
+    </GROUP>
     <GROUP id="ayumiLib" name="ayumiLib">
       <FILE id="ay001" name="ayumi.h" compile="0" resource="0" file="source/ayumiLib/ayumi.h"/>
       <FILE id="ay002" name="ayumi.c" compile="1" resource="0" file="source/ayumiLib/ayumi.c"/>
@@ -816,6 +945,7 @@
     <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_cryptography" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>

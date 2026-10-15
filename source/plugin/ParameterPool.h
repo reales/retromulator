@@ -143,6 +143,14 @@ namespace retromulator
         // defaults. Touched slots keep their edits. Nothing goes back to the device.
         void syncFromPatch(const synthLib::SysexBufferList& messages);
 
+        // Message thread. Cores driven by plain CCs (OpenB3): point the slots at the
+        // (cc, value) pairs of a preset the device just loaded. Clears the touched flags.
+        void syncFromCcValues(const std::vector<std::pair<uint8_t, uint8_t>>& values);
+
+        // Message thread. An edit made on a core's own panel (CA-72): the slot bound to the CC
+        // takes the value and tells the host, nothing goes back to the device. Not touched.
+        void setCcFromEditor(uint8_t cc, uint8_t value);
+
         static const char* coreFileName(SynthType type);
 
         // Message thread. The core's MIDI CC table as text. grid: several tab separated

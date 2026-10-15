@@ -4,6 +4,7 @@
 #include "synthLib/midiToSysex.h"
 #include "ronaldo/88emu/88lib/deviceModel.h"
 #include "ronaldo/88emu/88lib/romloader.h"
+#include "ca72Lib/device.h"
 #include <climits>
 #include <fstream>
 
@@ -12,6 +13,9 @@ namespace retromulator
     static constexpr const char* kSoundFilePattern = "*.sfz;*.sf2;*.wav;*.aif;*.aiff;*.flac;*.ogg;*.zbp;*.zbb";
 
     static bool isAkaiSampler(SynthType type) { return type == SynthType::AkaiS1000; }
+
+    // OpenB3 and CA-72: .fxp presets in Factory and User folders.
+    static bool isFxpCore(SynthType type) { return type == SynthType::OpenB3 || type == SynthType::CA72; }
 
     static void findSysexFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
     {
@@ -37,6 +41,10 @@ namespace retromulator
         else if(type == SynthType::OPL3)
         {
             folder.findChildFiles(out, juce::File::findFiles, true, "*.sbi");
+        }
+        else if(isFxpCore(type))
+        {
+            folder.findChildFiles(out, juce::File::findFiles, true, "*.fxp");
         }
         else findSysexFiles(folder, out, recursive);
     }
@@ -69,7 +77,7 @@ namespace retromulator
     BasicEditor::BasicEditor(HeadlessProcessor& p)
         : AudioProcessorEditor(p), m_proc(p)
     {
-        setSize(640, 80);
+        setSize(kBarWidth, kBarHeight);
         setResizable(false, false);
 
         // ── Synth combo ──────────────────────────────────────────────────────
@@ -153,7 +161,10 @@ namespace retromulator
             if(id == kExportPresetId)
             {
                 m_bankCombo.setSelectedId(0, juce::dontSendNotification);
-                onExportPreset();
+                if(isFxpCore(m_proc.getSynthType()))
+                    onSaveFxpPreset();
+                else
+                    onExportPreset();
                 return;
             }
             if(id == kExportBankId)
@@ -238,8 +249,7 @@ namespace retromulator
                 if(isAkaiSampler(type))
                     findSoundFiles(synthFolder, files);
                 else
-                    synthFolder.findChildFiles(files, juce::File::findFiles, false,
-                                               "*.syx;*.mid;*.bin;*.pfm");
+                    findBankFiles(type, synthFolder, files);
                 files.sort();
 
                 if(idx < files.size())
@@ -272,13 +282,13 @@ namespace retromulator
         g.fillAll(juce::Colour(0xff222222));
         g.setColour(juce::Colours::white);
         g.setFont(14.f);
-        g.drawText("Retromulator", 29, 0, 120, getHeight(),
+        g.drawText("Retromulator", 29, 0, 120, kBarHeight,
                    juce::Justification::centredLeft, false);
     }
 
     void BasicEditor::resized()
     {
-        const int h   = getHeight();
+        const int h   = kBarHeight;
         const int ctH = 28;
         const int y   = (h - ctH) / 2;
         const int pad = 4;
@@ -295,7 +305,10 @@ namespace retromulator
         m_progCombo .setBounds(x, y, 160, ctH); x += 160 + pad;
         m_bankCombo.setEnabled(!isOpenWurli);
         m_bankCombo .setBounds(x, y, 160, ctH); x += 160 + pad;
-        m_statusLabel.setBounds(x, y, getWidth() - x - 4, ctH);
+        m_statusLabel.setBounds(x, y, kBarWidth - x - 4, ctH);
+
+        if(m_corePanel)
+            m_corePanel->setBounds(0, kBarHeight, getWidth(), getHeight() - kBarHeight);
     }
 
     void BasicEditor::refreshBankCombo()
@@ -413,7 +426,7 @@ namespace retromulator
                 m_bankCombo.addItem(akai ? "[ + Load... ]" : "[ + Import... ]", kImportId);
                 if(!akai)
                 {
-                    m_bankCombo.addItem("[ Export Preset... ]", kExportPresetId);
+                    m_bankCombo.addItem(isFxpCore(type) ? "[ Save Preset... ]" : "[ Export Preset... ]", kExportPresetId);
                     m_bankCombo.addItem("[ Export Bank... ]",   kExportBankId);
                     if(virusABC)
                     {
@@ -456,14 +469,53 @@ namespace retromulator
         }
     }
 
+    void BasicEditor::updateCorePanel()
+    {
+        if(m_proc.isBooting())
+            return;
+
+        auto* dev = m_proc.getCA72Device();
+        const auto synth = dev ? dev->getSynth() : nullptr;
+
+        bool changed = false;
+        if(m_corePanel && m_corePanel->getSynth() != synth.get())
+        {
+            removeChildComponent(m_corePanel.get());
+            m_corePanel.reset();
+            changed = true;
+        }
+        if(!m_corePanel && synth)
+        {
+            m_corePanel = std::make_unique<ca72ui::Panel>(synth);
+            m_corePanel->onEdited = [this] { m_proc.syncCA72PanelEdits(); };
+            addAndMakeVisible(*m_corePanel);
+            changed = true;
+        }
+        if(changed)
+        {
+            if(m_corePanel)
+                setSize(kPanelWidth, kBarHeight + juce::roundToInt(kPanelWidth * ca72ui::H / ca72ui::W));
+            else
+                setSize(kBarWidth, kBarHeight);
+        }
+    }
+
     void BasicEditor::updateStatus()
     {
-        if(m_proc.consumeEditorSizeDirty())
+        // The bar has a fixed size; the core panel decides the height.
+        m_proc.consumeEditorSizeDirty();
+        updateCorePanel();
+
+        // OpenB3 / CA-72: MIDI Program Change picks a preset from the folder of the current one
+        if(isFxpCore(m_proc.getSynthType()))
         {
-            const int w = m_proc.getSavedEditorWidth();
-            const int h = m_proc.getSavedEditorHeight();
-            if(w > 0 && h > 0)
-                setSize(w, h);
+            const juce::String folder = juce::File(m_proc.getSysexFilePath()).getParentDirectory().getFullPathName();
+            if(m_proc.getSysexFilePath().empty() == false && folder != m_fxpProgramFolder)
+            {
+                m_fxpProgramFolder = folder;
+                m_proc.updateFxpProgramList(folder.toStdString());
+            }
+            m_proc.pollFxpProgramChange();
         }
 
         if(m_proc.isFirmwareMissing() || !m_proc.getPlugin().isValid())
@@ -596,6 +648,8 @@ namespace retromulator
               isAkaiSampler(type)        ? juce::String(kSoundFilePattern)
             : type == SynthType::Ayumi   ? juce::String("*.ay")
             : type == SynthType::OPL3    ? juce::String("*.sbi")
+            : type == SynthType::OpenB3  ? juce::String("*.fxp")
+            : type == SynthType::CA72    ? juce::String("*.fxp;*.fxb")
             : type == SynthType::SID     ? juce::String("*.sng;*.ins;*.sid")
                                          : juce::String("*.syx;*.mid;*.bin;*.pfm");
 
@@ -603,6 +657,7 @@ namespace retromulator
               isAkaiSampler(type)        ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
             : type == SynthType::Ayumi   ? "Select AY preset file"
             : type == SynthType::OPL3    ? "Select OPL SBI instrument file"
+            : isFxpCore(type)            ? "Select FXP preset or FXB bank"
                                          : "Select SysEx patch file";
 
         m_fileChooser = std::make_shared<juce::FileChooser>(title, destFolder, filter);
@@ -618,6 +673,27 @@ namespace retromulator
                 if(isAkaiSampler(type))
                 {
                     m_proc.loadSoundFile(chosen.getFullPathName().toStdString());
+                    updateStatus();
+                    return;
+                }
+
+                // OpenB3 / CA-72: imports go to the User bank, so Factory's Program Change numbers stay put
+                if(isFxpCore(type))
+                {
+                    const auto userDir = juce::File(HeadlessProcessor::getSynthDataFolder(type)).getChildFile("User");
+                    userDir.createDirectory();
+                    juce::File dest = userDir.getChildFile(chosen.getFileName());
+                    if(type == SynthType::CA72 && chosen.hasFileExtension("fxb"))
+                    {
+                        const auto written = ca72Lib::Device::extractBank(chosen.getFullPathName().toStdString(),
+                                                                          userDir.getFullPathName().toStdString());
+                        if(written.empty()) return;
+                        dest = juce::File(juce::String::fromUTF8(written.front().c_str()));
+                    }
+                    else if(!dest.exists())
+                        chosen.copyFileTo(dest);
+                    m_proc.loadPresetFromFile(dest.getFullPathName().toStdString(),
+                                              dest.getFileNameWithoutExtension().toStdString());
                     updateStatus();
                     return;
                 }
@@ -659,6 +735,26 @@ namespace retromulator
                                           chosen.getFileNameWithoutExtension().toStdString());
                 updateStatus();
             });
+    }
+
+    void BasicEditor::onSaveFxpPreset()
+    {
+        auto* aw = new juce::AlertWindow("Save Preset", "Name for the new User preset:",
+                                         juce::MessageBoxIconType::NoIcon, this);
+        aw->addTextEditor("name", juce::String::fromUTF8(m_proc.getPatchName().c_str()));
+        aw->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        aw->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+        juce::Component::SafePointer<BasicEditor> safe(this);
+        aw->enterModalState(true, juce::ModalCallbackFunction::create([safe, aw](int result)
+        {
+            const auto name = aw->getTextEditorContents("name").trim();
+            if(!safe || result != 1 || name.isEmpty()) return;
+            if(safe->m_proc.saveFxpPreset(name.toStdString()).empty())
+                juce::NativeMessageBox::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                    "Save Preset", "The preset could not be saved.");
+            safe->updateStatus();
+        }), true);
     }
 
     void BasicEditor::onExportPreset()
