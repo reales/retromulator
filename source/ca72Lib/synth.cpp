@@ -180,6 +180,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout Synth::createLayout()
     choice ("priority", "Note priority", { "LOW", "LAST", "HIGH" }, 0);
     sw ("retrigger", "Retrigger", false);
 
+    sw ("poly", "Poly", false);
+    sw ("unison", "Unison", false);
     sw ("doubled", "Double", false);
     add ("detune", "Double detune", { 0.0f, (float) ca72poly::DOUBLE_CENTS, 1.0f }, 0.0f, num (0, "cents"));
     percent ("spread", "Spread", 0.0f);
@@ -242,6 +244,10 @@ ca72poly::Settings Synth::readSettings() const
 {
     auto v = [this] (const char* pid) { return (double) apvts.getRawParameterValue (pid)->load(); };
     ca72poly::Settings s;
+    // UNISON stacks the mono voice; POLY plays without it.
+    s.poly = v ("poly") > 0.5;
+    s.unison = ! s.poly && v ("unison") > 0.5;
+    s.voices = s.unison ? ca72poly::UNISON_VOICES : ca72poly::POLY_VOICES;
     s.doubled = v ("doubled") > 0.5;
     s.detune = v ("detune") / ca72poly::DOUBLE_CENTS;
     s.spread = v ("spread") / 100.0;
@@ -273,7 +279,34 @@ std::unique_ptr<ca72poly::Engine> Synth::buildEngine (QualityMode mode, double r
         case qualityUltra4x: e->build (rate, 4, false, voice::Quality::NoCompromises, 4, true, seed); break;
     }
     e->mode = (int) mode;
+    // Slot threads join the host's audio workgroup (AU, standalone) to run with the audio thread.
+    e->startThreads ([this]
+    {
+        thread_local juce::WorkgroupToken token;
+        juce::AudioWorkgroup wg;
+        {
+            const juce::SpinLock::ScopedLockType sl (workgroupLock);
+            wg = workgroup;
+        }
+        if (wg)
+            wg.join (token);
+        else
+            token.reset();
+        return (bool) wg;
+    });
     return e;
+}
+
+void Synth::audioWorkgroupContextChanged (const juce::AudioWorkgroup& wg)
+{
+    {
+        const juce::SpinLock::ScopedLockType sl (workgroupLock);
+        workgroup = wg;
+    }
+    const juce::SpinLock::ScopedLockType sl (swapLock);
+    for (auto* e : { engine.get(), pending.get() })
+        if (e != nullptr)
+            e->rejoinThreads();
 }
 
 Synth::QualityMode Synth::modeNow() const
@@ -332,6 +365,7 @@ bool Synth::isBusesLayoutSupported (const BusesLayout& layouts) const
 void Synth::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    const auto started = ca72poly::Workers::Clock::now();
     buffer.clear();
     const int total = buffer.getNumSamples();
     if (scratch.getNumSamples() < total)
@@ -357,18 +391,10 @@ void Synth::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
     const auto settings = readSettings();
     auto* l = scratch.getWritePointer (0);
     auto* r = scratch.getWritePointer (1);
-    int pos = 0;
-
-    auto render = [&] (int until)
-    {
-        if (until > pos)
-            e.render (l + pos, r + pos, until - pos, panel, settings);
-        pos = std::max (pos, until);
-    };
-
+    e.begin (total, settings);
     for (const auto meta : midi)
     {
-        render (std::min (meta.samplePosition, total));
+        e.advance (std::min (meta.samplePosition, total), panel);
         const auto m = meta.getMessage();
         if (m.isNoteOn())
             e.noteOn (m.getNoteNumber());
@@ -384,10 +410,23 @@ void Synth::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
             modWheel = (float) m.getControllerValue() / 127.0f;
             panel = readPanel();
         }
-        else if (m.isAllNotesOff() || m.isAllSoundOff())
+        else if (m.isAllSoundOff())
+            e.allSoundOff();
+        else if (m.isAllNotesOff())
             e.allNotesOff();
+        else if (m.isResetAllControllers())
+        {
+            bend = 0.0f;
+            modWheel = 0.0f;
+            panel = readPanel();
+        }
     }
-    render (total);
+    e.advance (total, panel);
+    // Workers' voices are waited for until 75 % of the block's period (upstream's DEADLINE); offline, for all.
+    std::optional<ca72poly::Workers::Clock::time_point> deadline;
+    if (! isNonRealtime())
+        deadline = started + std::chrono::nanoseconds ((int64_t) (0.75e9 * total / hostRate));
+    e.finish (l, r, deadline);
 
     const float gain = (float) (outputGain (apvts.getRawParameterValue ("volume")->load() / 10.0, true)
                                 * juce::Decibels::decibelsToGain ((double) apvts.getRawParameterValue ("level")->load()
@@ -410,8 +449,9 @@ void Synth::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
 void Synth::applyPreset (const std::map<juce::String, float>& values)
 {
     applyingPreset = true;
+    // QUALITY, POLY and UNISON are how it is played: a preset leaves them unless it sets them.
     for (auto* p : getParameters())
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p); rp != nullptr && rp->paramID != "quality")
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p); rp != nullptr && rp->paramID != "quality" && rp->paramID != "poly" && rp->paramID != "unison")
             rp->setValueNotifyingHost (rp->getDefaultValue());
     for (const auto& [pid, value] : values)
         if (pid != "quality")

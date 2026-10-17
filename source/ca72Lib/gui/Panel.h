@@ -140,6 +140,8 @@ private:
 
     juce::Image background;
     int rebuildTicks = 0; // timer ticks until the background is redrawn at the new size
+    float backgroundScale = 0.0f; // device pixels per point the background was drawn at
+    float paintScale = 0.0f;
     float texelUnits = 1.0f; // drawing units per texture texel (half a point)
 };
 } // namespace ca72ui

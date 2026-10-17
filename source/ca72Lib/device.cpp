@@ -36,7 +36,7 @@ namespace
 		{ "lAttack", 73 }, { "lDecay", 75 }, { "lSustain", 76 },
 		{ "volume", 7 }, { "a440", 49 }, { "feedback", 50 }, { "drive", 51 }, { "level", 52 },
 		{ "priority", 53 }, { "retrigger", 54 }, { "doubled", 55 }, { "detune", 56 },
-		{ "spread", 57 }, { "entropy", 58 }, { "quality", 59 },
+		{ "spread", 57 }, { "entropy", 58 }, { "quality", 59 }, { "poly", 60 }, { "unison", 61 },
 	};
 
 	const CcDef* ccDefFor(const juce::String& _id)
@@ -182,6 +182,14 @@ void Device::setNonRealtime(const bool _offline)
 		m_synth->setNonRealtime(_offline);
 }
 
+void Device::setAudioWorkgroup(const juce::AudioWorkgroup& _wg)
+{
+	if(_wg == m_workgroup)
+		return;
+	m_workgroup = _wg;
+	m_synth->audioWorkgroupContextChanged(_wg);
+}
+
 void Device::processAudio(const synthLib::TAudioInputs&, const synthLib::TAudioOutputs& _outputs, const size_t _samples)
 {
 	size_t done = 0;
@@ -220,7 +228,7 @@ bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMi
 		return true;
 	}
 
-	if(_ev.b == 1 || _ev.b == 120 || _ev.b == 123)
+	if(_ev.b == 1 || _ev.b == 120 || _ev.b == 121 || _ev.b == 123)
 	{
 		m_midi.addEvent(juce::MidiMessage(_ev.a, _ev.b, _ev.c), offset);
 		return true;
@@ -418,12 +426,14 @@ void Device::writeFactoryPresets(const std::string& _folder)
 	for(const auto& p : ca72Presets)
 	{
 		const auto file = dir.getChildFile(juce::File::createLegalFileName(p.name) + ".fxp");
-		if(file.existsAsFile())
-			continue;
 		std::map<juce::String, float> values;
 		for(const auto& [id, value] : p.values)
 			values[id] = value;
 		const auto data = fxpData(p.name, presetChunk(values));
+		// Rewritten when an update changes a built-in preset
+		juce::MemoryBlock existing;
+		if(file.loadFileAsData(existing) && existing == data)
+			continue;
 		file.replaceWithData(data.getData(), data.getSize());
 	}
 }

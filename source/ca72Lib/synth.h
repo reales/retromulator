@@ -29,6 +29,7 @@ public:
     void releaseResources() override {}
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void audioWorkgroupContextChanged (const juce::AudioWorkgroup& wg) override;
 
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
     bool hasEditor() const override { return false; }
@@ -48,7 +49,7 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Every parameter back to its default except QUALITY, then the given values (a preset).
+    // Every parameter back to its default except QUALITY, POLY and UNISON, then the given values (a preset).
     void applyPreset (const std::map<juce::String, float>& values);
     // Every sound parameter (QUALITY left out) as id -> value.
     std::map<juce::String, float> getPresetValues() const;
@@ -80,6 +81,8 @@ private:
     std::atomic<int> wantedMode { -1 };
     std::atomic<bool> fresh { false };
     juce::AudioBuffer<float> scratch;
+    juce::AudioWorkgroup workgroup;
+    juce::SpinLock workgroupLock;
 
     std::atomic<uint64_t> edited { 0 };
     std::atomic<bool> applyingPreset { false };

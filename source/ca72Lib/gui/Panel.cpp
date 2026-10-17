@@ -162,12 +162,17 @@ void shadowed (juce::Graphics& g, const juce::String& t, juce::Rectangle<float> 
     g.setFont (gothic (size));
     if (shadow && size <= 20.0f)
     {
+        // Below a pixel the halo copies pile up under the glyphs and thicken them,
+        // so keep the offsets at one device pixel and fade the halo instead
+        const float pxPerUnit = g.getInternalContext().getPhysicalPixelScaleFactor();
+        const float unit = std::max (1.1f, 1.0f / pxPerUnit);
+        const float fade = juce::jlimit (0.4f, 1.0f, pxPerUnit * 1.1f);
         juce::Graphics::ScopedSaveState keep (g);
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.setColour (juce::Colours::black.withAlpha (0.35f * fade));
         for (auto d : { juce::Point<float> (-1, 0), { 1, 0 }, { 0, -1 }, { 0, 1 }, { -0.7f, -0.7f }, { 0.7f, -0.7f }, { -0.7f, 0.7f }, { 0.7f, 0.7f } })
-            g.drawText (t, r.translated (d.x * 1.1f, d.y * 1.1f), j, false);
-        g.setColour (juce::Colours::black.withAlpha (0.6f));
-        g.drawText (t, r.translated (0.8f, 1.9f), j, false);
+            g.drawText (t, r.translated (d.x * unit, d.y * unit), j, false);
+        g.setColour (juce::Colours::black.withAlpha (0.6f * fade));
+        g.drawText (t, r.translated (std::max (0.8f, 0.5f / pxPerUnit), std::max (1.9f, 1.0f / pxPerUnit)), j, false);
     }
     g.drawText (t, r, j, false);
 }
@@ -751,10 +756,13 @@ Panel::Panel (std::shared_ptr<ca72Lib::Synth> s) : synth (std::move (s)), apvts 
     placed.push_back ({ pw, 424, S + 230, 70, 300 });
     placed.push_back ({ mw, 534, S + 230, 70, 300 });
 
-    addRocker ("doubled", 868.5, S + 248, 108, 50, RockerColour::Red);
-    addKnob ("detune", 1069.5, S + 248, Dial::Detune);
-    addKnob ("spread", 1270.5, S + 248, Dial::Percent);
-    addKnob ("entropy", 1471.5, S + 248, Dial::Percent);
+    // VOICES: the switches stacked as MODIFIERS' are; the knobs' dials with equal margins to them and to the line.
+    addRocker ("poly", 772, S + 112, 108, 48, RockerColour::Red);
+    addRocker ("unison", 772, S + 232, 108, 48, RockerColour::Red);
+    addRocker ("doubled", 772, S + 352, 108, 48, RockerColour::Red);
+    addKnob ("detune", 1000, S + 248, Dial::Detune);
+    addKnob ("spread", 1263, S + 248, Dial::Percent);
+    addKnob ("entropy", 1526, S + 248, Dial::Percent);
     addSelector ("quality", 1938, S + 248, Legends::Quality);
     addKnob ("drive", 2139, S + 248, Dial::Drive);
     addKnob ("level", 2340, S + 248, Dial::Level);
@@ -788,7 +796,9 @@ Panel::Panel (std::shared_ptr<ca72Lib::Synth> s) : synth (std::move (s)), apvts 
         { rockers["retrigger"], 303, S + 199, 15 },
         { rockers["glideOn"], 303, S + 279, 15 },
         { rockers["decay"], 303, S + 359, 15 },
-        { rockers["doubled"], 920.5, S + 288, 19 },
+        { rockers["poly"], 824, S + 150, 19 },
+        { rockers["unison"], 824, S + 270, 19 },
+        { rockers["doubled"], 824, S + 390, 19 },
         // The noise switch: WHITE lit when it is off, PINK when on.
         { rockers["noisePink"], 1764, T + 407, 19, "WHITE", false, false },
         { rockers["noisePink"], 1764, T + 558, 19, "PINK", false, true },
@@ -874,10 +884,13 @@ void Panel::resized()
 void Panel::rebuildBackground()
 {
     const float s = (float) getWidth() / W;
-    const float scale = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay() != nullptr
-                            ? (float) juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->scale
-                            : 1.0f;
-    background = juce::Image (juce::Image::ARGB, std::max (1, (int) (getWidth() * scale)), std::max (1, (int) (getHeight() * scale)), true);
+    // the scale the panel is painted at, which on Windows and Linux includes the host's plugin scale
+    // before the first paint, the display's scale too, so a Retina panel is not built at 1x and then again
+    float firstScale = juce::Component::getApproximateScaleFactorForComponent (this);
+    if (const auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        firstScale *= (float) d->scale;
+    const float scale = backgroundScale = paintScale > 0.0f ? paintScale : firstScale;
+    background = juce::Image (juce::Image::ARGB, std::max (1, juce::roundToInt (getWidth() * scale)), std::max (1, juce::roundToInt (getHeight() * scale)), true);
     juce::Graphics g (background);
     // One texel is half a point on any display, so the grain looks the same at 1x and on Retina.
     texelUnits = 0.5f / s;
@@ -888,13 +901,27 @@ void Panel::rebuildBackground()
 
 void Panel::paint (juce::Graphics& g)
 {
-    g.drawImage (background, getLocalBounds().toFloat());
+    paintScale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (background.isValid() && rebuildTicks == 0 && std::abs (paintScale - backgroundScale) > 0.01f)
+        rebuildBackground();
+    if (background.isValid())
+    {
+        // one image pixel per device pixel, so the cached lettering is not resampled
+        juce::Graphics::ScopedSaveState keep (g);
+        g.drawImageTransformed (background, juce::AffineTransform::scale ((float) getWidth() / (float) background.getWidth(),
+                                                                          (float) getHeight() / (float) background.getHeight()));
+    }
     g.addTransform (juce::AffineTransform::scale ((float) getWidth() / W));
 
     for (const auto& l : onLabels)
     {
         const bool lit = l.toggle != nullptr ? l.toggle->getIndex() == l.position
                                              : l.rocker->getToggleState() == l.litWhenOn;
+        // Most repaints are a knob or a switch; the labels elsewhere are skipped.
+        const auto area = l.alignRight ? juce::Rectangle<float> (l.x - 200.0f, l.y - l.size, 204.0f, l.size * 2.0f)
+                                       : juce::Rectangle<float> (l.x - 300.0f, l.y - l.size, 600.0f, l.size * 2.0f);
+        if (! g.clipRegionIntersects (area.toNearestInt()))
+            continue;
         auto draw = [&] (float x, float y, bool shadow)
         {
             if (l.alignRight)
@@ -935,6 +962,8 @@ void Panel::paint (juce::Graphics& g)
         const auto body = juce::Rectangle<float> (p.w - 2.0f * p.pad, p.h - 2.0f * p.pad).withCentre ({ p.x, p.y });
         const bool on = rk->getToggleState();
         const float depth = std::max (p.w, p.h) * 0.3f;
+        if (! g.clipRegionIntersects (body.withHeight (body.getHeight() + depth + 3.0f).toNearestInt()))
+            continue;
 
         // Flush contact shadow along the whole bottom edge.
         g.setColour (juce::Colours::black.withAlpha (0.5f));
@@ -1186,10 +1215,12 @@ void Panel::drawPanel (juce::Graphics& g) const
     legend (g, 124, S + 325, "DECAY");
     legend (g, 424, S + 410, "PITCH");
     legend (g, 534, S + 410, "MOD.");
-    legend (g, 868.5, S + 133, "DOUBLE");
-    legend (g, 1069.5, S + 133, "DETUNE");
-    legend (g, 1270.5, S + 133, "WIDTH");
-    legend (g, 1471.5, S + 133, "ENTROPY");
+    legend (g, 775, S + 72, "POLY");
+    legend (g, 775, S + 192, "UNISON");
+    legend (g, 775, S + 312, "DOUBLE");
+    legend (g, 1000, S + 133, "DETUNE");
+    legend (g, 1263, S + 133, "WIDTH");
+    legend (g, 1526, S + 133, "ENTROPY");
     legend (g, 1938, S + 133, "QUALITY");
     legend (g, 2139, S + 133, "DRIVE");
     legend (g, 2340, S + 133, "LEVEL");

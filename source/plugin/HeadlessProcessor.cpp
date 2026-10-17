@@ -4054,11 +4054,22 @@ namespace retromulator
 
     // ── Track program changes so cached per-part programs follow the board ──
 
+    void HeadlessProcessor::audioWorkgroupContextChanged(const juce::AudioWorkgroup& _wg)
+    {
+        const juce::SpinLock::ScopedLockType sl(m_audioWorkgroupLock);
+        m_audioWorkgroup = _wg;
+    }
+
     void HeadlessProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
     {
         if(m_synthType == SynthType::CA72)
             if(auto* dev = getCA72Device())
+            {
                 dev->setNonRealtime(isNonRealtime());
+                const juce::SpinLock::ScopedTryLockType sl(m_audioWorkgroupLock);
+                if(sl.isLocked())
+                    dev->setAudioWorkgroup(m_audioWorkgroup);
+            }
 
         if(m_synthType == SynthType::Emu88)
         {
@@ -4251,6 +4262,7 @@ namespace retromulator
     static constexpr int32_t kTrackerOptionsMagic = 0x4F4B5254;
     static constexpr int32_t kMatrixLfoSyncMagic = 0x534C584D;   // 'MXLS'
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
+    static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -4459,6 +4471,13 @@ namespace retromulator
                 appendInt32(destData, static_cast<int32_t>(model));
             }
         }
+
+        // ['C72P':int32][panel hidden:int32]
+        if(m_synthType == SynthType::CA72)
+        {
+            appendInt32(destData, kCorePanelMagic);
+            appendInt32(destData, m_corePanelHidden ? 1 : 0);
+        }
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -4568,6 +4587,16 @@ namespace retromulator
                     m_dx7Ctrl[n][0] = juce::jlimit(0, 99, static_cast<int>(v[n + 1] & 0xff));
                     m_dx7Ctrl[n][1] = (v[n + 1] >> 8) & 7;
                 }
+        }
+
+        // CA-72 panel visibility sits in the last eight bytes; per instance, shown by default
+        m_corePanelHidden = false;
+        if(newType == SynthType::CA72 && sizeInBytes >= 8)
+        {
+            int32_t magic = 0, hidden = 0;
+            std::memcpy(&magic, bytes + sizeInBytes - 8, 4);
+            std::memcpy(&hidden, bytes + sizeInBytes - 4, 4);
+            m_corePanelHidden = magic == kCorePanelMagic && hidden != 0;
         }
 
         setSynthType(newType, romPath);

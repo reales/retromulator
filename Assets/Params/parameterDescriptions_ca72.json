@@ -1238,6 +1238,14 @@
       "125": "ULTRA",
       "126": "ULTRA",
       "127": "ULTRA"
+    },
+    "vl_poly": {
+      "0": "Off",
+      "1": "On"
+    },
+    "vl_unison": {
+      "0": "Off",
+      "1": "On"
     }
   },
   "parameterdescriptions": [
@@ -2120,31 +2128,33 @@
     },
     {
       "name": "slot_059",
-      "displayName": "",
+      "displayName": "Poly",
       "min": 0,
-      "max": 127,
-      "toText": "vl_int_127",
-      "isPublic": false,
-      "isDiscrete": false,
-      "isBool": false,
+      "max": 1,
+      "toText": "vl_poly",
+      "isPublic": true,
+      "isDiscrete": true,
+      "isBool": true,
       "isBipolar": false,
       "page": 0,
       "index": 59,
-      "class": "MultiOrSingle"
+      "class": "MultiOrSingle",
+      "default": 0
     },
     {
       "name": "slot_060",
-      "displayName": "",
+      "displayName": "Unison",
       "min": 0,
-      "max": 127,
-      "toText": "vl_int_127",
-      "isPublic": false,
-      "isDiscrete": false,
-      "isBool": false,
+      "max": 1,
+      "toText": "vl_unison",
+      "isPublic": true,
+      "isDiscrete": true,
+      "isBool": true,
       "isBipolar": false,
       "page": 0,
       "index": 60,
-      "class": "MultiOrSingle"
+      "class": "MultiOrSingle",
+      "default": 0
     },
     {
       "name": "slot_061",
@@ -3293,6 +3303,14 @@
     {
       "param": "slot_058",
       "cc": "59"
+    },
+    {
+      "param": "slot_059",
+      "cc": "60"
+    },
+    {
+      "param": "slot_060",
+      "cc": "61"
     }
   ]
 }

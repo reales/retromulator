@@ -407,6 +407,9 @@ namespace retromulator
         void setTrackerShuffle(bool enabled);
         // On: a position key jumps when the playing pattern ends. Saved like Stop at End.
         bool getTrackerWaitPatternEnd() const { return m_trackerWaitPatternEnd; }
+        // A core's own panel below the rack (CA-72) can be hidden per instance, leaving only the rack.
+        bool isCorePanelHidden() const { return m_corePanelHidden.load(); }
+        void setCorePanelHidden(bool hidden) { m_corePanelHidden.store(hidden); }
         void setTrackerWaitPatternEnd(bool enabled);
         // Same thread, progress and cancel as the MIDI render. 512 tap sinc, song end stops it.
         bool startTrackerRender(const juce::URL& destUrl, RenderFormat format);
@@ -431,6 +434,8 @@ namespace retromulator
         void processDeferredResend();
         // Watches program changes so the cached per-part programs follow the board.
         void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
+        // Kept for the CA-72's voice threads, handed to its device in processBlock.
+        void audioWorkgroupContextChanged(const juce::AudioWorkgroup& _wg) override;
 
         bool isBooting() const { return m_isBooting.load(); }
 
@@ -564,6 +569,7 @@ namespace retromulator
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;
         bool                 m_trackerWaitPatternEnd = true;
+        std::atomic<bool>    m_corePanelHidden { false };
         void reloadTrackerModule();
         void applyTrackerStopAtEnd();
 
@@ -639,6 +645,8 @@ namespace retromulator
         // Consumed by processDeferredResend (called each audio block) after setSynthType.
         // m_deviceBooted: once true, the boot-delay resend is never re-armed.
         std::atomic<bool> m_isBooting{false};
+        juce::AudioWorkgroup m_audioWorkgroup;
+        juce::SpinLock m_audioWorkgroupLock;
         std::atomic<bool> m_shuttingDown{false};
         std::unique_ptr<std::thread> m_bootThread;
         void joinBootThread();

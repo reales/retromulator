@@ -49,6 +49,8 @@ public:
 
 	// Offline renders take the 4x engine
 	void setNonRealtime(bool _offline);
+	// The host's audio workgroup, joined by the engine's voice threads
+	void setAudioWorkgroup(const juce::AudioWorkgroup& _wg);
 
 	// .fxp presets: an opaque chunk holding the parameters as XML
 	bool loadPreset(const std::string& _path);
@@ -59,7 +61,7 @@ public:
 	static std::vector<std::string> extractBank(const std::string& _fxbPath, const std::string& _folder);
 	static bool writeBank(const std::string& _fxbPath, const std::vector<std::string>& _fxpPaths);
 
-	// Writes the built-in presets into the folder, skipping files that already exist
+	// Writes the built-in presets into the folder, rewriting files that differ
 	static void writeFactoryPresets(const std::string& _folder);
 
 	// MIDI Program Change N loads file N of the active bank, latched here and polled by the editor
@@ -85,5 +87,6 @@ private:
 	std::string m_patchName;
 	std::vector<std::string> m_programList;
 	std::atomic<int> m_pendingProgram{-1};
+	juce::AudioWorkgroup m_workgroup;
 };
 } // namespace ca72Lib
