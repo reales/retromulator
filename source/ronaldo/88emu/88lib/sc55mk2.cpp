@@ -45,7 +45,7 @@ namespace emu88Lib
 		constexpr uint16_t g_switchLevels[4] = { 0x000, 0x155, 0x2aa, 0x3ff };
 	}
 
-	Sc55Mk2::Sc55Mk2(Sc55RomSet _roms)
+	Sc55Mk2::Sc55Mk2(Sc55RomSet _roms, const bool _factoryReset)
 		: m_roms(std::move(_roms))
 	{
 		// The on-chip ROM holds the reset vector, so without it there is
@@ -84,8 +84,58 @@ namespace emu88Lib
 		m_subMcu.setHooks(hooks);
 
 		wireChip();
+		powerCycle();
+		if(_factoryReset)
+			runFactoryReset();
+	}
+
+	void Sc55Mk2::powerCycle()
+	{
+		m_gp.reset();
+		m_lcd.reset();
+		m_subMcu.reset();
 		m_machine.reset();
+
+		// The chip's state counter is monotonic across a reset, so the pacing target rebases onto it.
+		m_samplesRendered = 0;
 		m_cycleTarget = m_machine.now();
+		m_cycleFrac = 0;
+
+		m_buttons = 0;
+		m_panelColumns = 0xFF;
+		m_leds = 0;
+		m_midiOut.clear();
+		m_midiInPending.clear();
+		m_midiInCursor = 0;
+
+		m_gaInt.fill(false);
+		m_gaIntTrigger = 0;
+		m_gaIrqEnable = 0;
+		m_ioSd = 0;
+		m_lcdEnabled = true;
+		requestIrq(IrqGp, false);
+		requestIrq(IrqGateArray, false);
+	}
+
+	void Sc55Mk2::runFactoryReset()
+	{
+		if(!m_valid) return;
+		// INSTRUMENT L+R at power-on, then ALL, as the owner's manual describes. From blank battery
+		// RAM the firmware otherwise boots with garbage system settings such as master tune.
+		const auto run = [this](uint32_t _samples)
+		{
+			while(_samples--) renderSample();
+		};
+		setButton(Button::InstL, true);
+		setButton(Button::InstR, true);
+		run(8 * SampleRate);
+		setButtons(0);
+		run(SampleRate / 4);
+		setButton(Button::InstAll, true);
+		run(SampleRate / 10);
+		setButtons(0);
+		run(2 * SampleRate);
+		powerCycle();
 	}
 
 	// =====================================================================
@@ -366,10 +416,83 @@ namespace emu88Lib
 		}
 	}
 
+	namespace
+	{
+		// Key of a message whose latest value is all that counts, or -1.
+		int continuousKey(const std::vector<uint8_t>& _m)
+		{
+			if(_m.empty())
+				return -1;
+			const uint8_t status = _m[0] & 0xf0;
+			const int ch = _m[0] & 0x0f;
+			switch(status)
+			{
+			case 0xa0: return _m.size() == 3 ? (0x10000 | ch << 8 | _m[1]) : -1;
+			case 0xd0: return _m.size() == 2 ? (0x20000 | ch << 8) : -1;
+			case 0xe0: return _m.size() == 3 ? (0x30000 | ch << 8) : -1;
+			case 0xb0:
+			{
+				if(_m.size() != 3)
+					return -1;
+				const uint8_t cc = _m[1];
+				// Bank select, data entry, (N)RPN, switches and channel mode messages keep their order.
+				if(cc == 0 || cc == 32 || cc == 6 || cc == 38 || (cc >= 64 && cc <= 69) || (cc >= 96 && cc <= 101) || cc >= 120)
+					return -1;
+				return 0x40000 | ch << 8 | cc;
+			}
+			default: return -1;
+			}
+		}
+
+		bool isRealtime(const std::vector<uint8_t>& _m) { return _m.size() == 1 && _m[0] >= 0xf8; }
+	}
+
 	void Sc55Mk2::sendMidiBytes(const uint8_t* _data, const size_t _size, const MidiPort _port)
 	{
-		for(size_t i = 0; i < _size; ++i)
-			sendMidiByte(_data[i], _port);
+		if(_port != MidiInA)
+		{
+			for(size_t i = 0; i < _size; ++i)
+				sendMidiByte(_data[i], _port);
+			return;
+		}
+		if(!_size)
+			return;
+
+		std::vector<uint8_t> msg(_data, _data + _size);
+		const int key = continuousKey(msg);
+		if(key >= 0)
+		{
+			// Only past other controllers: a note or mode change in between fixes the order.
+			const size_t first = m_midiInCursor ? 1 : 0;
+			for(size_t i = m_midiInPending.size(); i-- > first;)
+			{
+				auto& pending = m_midiInPending[i];
+				const int k = continuousKey(pending);
+				if(k == key)
+				{
+					pending = std::move(msg);
+					return;
+				}
+				if(k < 0 && !isRealtime(pending))
+					break;
+			}
+		}
+		m_midiInPending.emplace_back(std::move(msg));
+	}
+
+	void Sc55Mk2::feedMidiIn()
+	{
+		// Keep the wire just ahead of the UART so the backlog stays here, where it can be merged.
+		while(!m_midiInPending.empty() && m_subMcu.midiInBacklog() < 2)
+		{
+			const auto& front = m_midiInPending.front();
+			m_subMcu.postMidiIn(front[m_midiInCursor++]);
+			if(m_midiInCursor >= front.size())
+			{
+				m_midiInPending.pop_front();
+				m_midiInCursor = 0;
+			}
+		}
 	}
 
 	void Sc55Mk2::readMidiOut(std::vector<uint8_t>& _out)
@@ -452,6 +575,8 @@ namespace emu88Lib
 		// counter (see SubMcuCyclesPerSample). It is advanced AFTER the CPU
 		// slice so a byte it delivers this sample is visible to the firmware
 		// on the next one, which is the direction the real handshake runs.
+		if(!m_midiInPending.empty())
+			feedMidiIn();
 		m_subMcu.update(subMcuCycles(m_samplesRendered));
 
 		return m_gp.renderFrame();

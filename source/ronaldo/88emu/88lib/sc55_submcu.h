@@ -155,6 +155,9 @@ public:
     void postMidiIn2(uint8_t data)  { pushInput(SRC_B, data); }
     void postComputer(uint8_t data) { pushInput(SRC_C, data); }
 
+    // Bytes still waiting on the MIDI IN wire.
+    size_t midiInBacklog() const { return (m_s.inWr[SRC_A] + kInQueue - m_s.inRd[SRC_A]) % kInQueue; }
+
 private:
 
     void    pushInput(int src, uint8_t data);

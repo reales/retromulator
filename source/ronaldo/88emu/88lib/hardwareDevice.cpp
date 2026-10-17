@@ -339,6 +339,10 @@ namespace emu88Lib
 		m_thread->processSamples(static_cast<uint32_t>(_samples), getExtraLatencySamples(),
 		                         m_midiIn, m_midiOut);
 		const bool offline = m_offlineRender.load(std::memory_order_relaxed);
+		if(offline)
+			m_thread->clearUnderrunDebt();
+		else
+			m_thread->compensateUnderruns(static_cast<uint32_t>(_samples));
 		for(size_t i = 0; i < _samples; ++i)
 		{
 			Sc88Thread::SampleFrame frame{};

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -90,13 +91,16 @@ namespace emu88Lib
 		// nonsense and rails, and notes are audible but aperiodic.
 		static void descrambleWaveRom(std::vector<uint8_t>& _rom);
 
-		explicit Sc55Mk2(Sc55RomSet _roms);
+		explicit Sc55Mk2(Sc55RomSet _roms, bool _factoryReset = true);
 		~Sc55Mk2() = default;
 
 		Sc55Mk2(const Sc55Mk2&) = delete;
 		Sc55Mk2& operator=(const Sc55Mk2&) = delete;
 
 		bool isValid() const { return m_valid; }
+
+		// Cold boot: every chip restarts, battery RAM and the rear-panel switch are kept.
+		void powerCycle();
 
 		// ---- Audio ----
 		// Advance the board by one audio frame and return the stereo output.
@@ -112,6 +116,8 @@ namespace emu88Lib
 		// really would.
 		enum MidiPort : uint8_t { MidiInA = 0, MidiInB = 1, ComputerPort = 2 };
 		void sendMidiByte (uint8_t _byte, MidiPort _port = MidiInA);
+		// MIDI IN A takes whole messages: they wait here and reach the wire as it frees up, so a
+		// controller still waiting is updated in place instead of delaying the notes behind it.
 		void sendMidiBytes(const uint8_t* _data, size_t _size, MidiPort _port = MidiInA);
 
 		// Bytes the sub-MCU has driven out of MIDI OUT since the last call.
@@ -222,6 +228,9 @@ namespace emu88Lib
 		// aliases page 0. The on-chip mask ROM and the program ROM are mapped
 		// into the bus image so the core fetches and caches from them;
 		// everything else reaches the board's page decode.
+		void runFactoryReset();
+		void feedMidiIn();
+
 		struct BoardBus final : h8500::Device
 		{
 			explicit BoardBus(Sc55Mk2& _b) : board(_b) {}
@@ -245,6 +254,8 @@ namespace emu88Lib
 		uint8_t  m_panelColumns = 0xFF;	// last value the sub-MCU's P0 was given
 		uint8_t  m_leds = 0;			// ALL / MUTE, decoded from that same write
 		std::vector<uint8_t> m_midiOut;
+		std::deque<std::vector<uint8_t>> m_midiInPending;
+		size_t m_midiInCursor = 0;	// bytes of the front message already on the wire
 
 		// ---- CPU pacing ----
 		uint64_t m_samplesRendered = 0;

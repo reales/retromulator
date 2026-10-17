@@ -100,7 +100,15 @@ namespace emu88Lib
 			_sample = output.sample;
 			return true;
 		}
+		++m_underrunDebt;
 		return false;
+	}
+
+	void Sc88Thread::compensateUnderruns(const uint32_t _needed)
+	{
+		OutputFrame output;
+		while(m_underrunDebt && m_audioOut.size() > _needed && m_audioOut.try_pop_front(output))
+			--m_underrunDebt;
 	}
 
 	void Sc88Thread::threadFunc()

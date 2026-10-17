@@ -141,27 +141,23 @@ namespace emu88Lib
 	void Sc88SubMcu::endOfSysEx(const uint8_t _source, Source& _s)
 	{
 		const auto& sx = _s.sysEx;
-		const uint8_t src = static_cast<uint8_t>(_source << 4);
 
 		if(sx.size() < 3)
 			return;
 
-		// The two universal messages skip the bulk path entirely — each is
-		// reduced to one value and posted as a plain 4-byte record.
+		// The two universal messages travel as raw transfers, like the XG one
+		// below: the CPU's handlers read the staged bytes themselves. They skip
+		// the 7E/7F, check the device ID and sub-IDs and queue the values -
+		// SC-88 00:0E52 (Master Volume) / 00:0E70 (GM), Pro 00:0F10 / 00:0F49,
+		// which also wants the exact length, 6 or 4. A bare record never
+		// reaches them: it is queued as is, and the Pro's task ignores a GM
+		// System On that lacks the 09 its handler would have added.
 		if(sx[1] == 0x7e || sx[1] == 0x7f)
 		{
-			Record u;
 			if(sx[1] == 0x7e && sx.size() >= 5 && sx[3] == 0x09)
-				u.command = OpSysExUniNonRt, u.param1 = sx[4];
+				rawTransfer(_source, OpSysExUniNonRt, sx);
 			else if(sx[1] == 0x7f && sx.size() >= 7 && sx[3] == 0x04 && sx[4] == 0x01)
-				u.command = OpSysExUniRt, u.param1 = sx[6];	// MSB; the LSB is unused
-			else
-				return;
-
-			// Non-bulk: channel bit 7 clear, so the record is taken as is.
-			u.channel   = src;
-			u.wireBytes = static_cast<uint8_t>(std::min<size_t>(sx.size() + 1, 255));
-			m_sink(std::move(u));
+				rawTransfer(_source, OpSysExUniRt, sx);
 			return;
 		}
 
@@ -191,6 +187,22 @@ namespace emu88Lib
 			return;
 
 		decodedTransfer(_source, sx);
+	}
+
+	void Sc88SubMcu::rawTransfer(const uint8_t _source, const uint8_t _command,
+	                            const std::vector<uint8_t>& _sysEx)
+	{
+		const auto length = _sysEx.size() - 1; // manufacturer through final data/checksum
+		if(length > std::min<size_t>(0x7f, m_stageCapacity))
+			return;
+		Record record;
+		record.command = _command;
+		record.channel = static_cast<uint8_t>(0x80 | (_source << 4));
+		record.param1 = static_cast<uint8_t>(length);
+		record.param2 = static_cast<uint8_t>(m_stageOffset);
+		record.payload.assign(_sysEx.begin() + 1, _sysEx.end());
+		record.wireBytes = static_cast<uint8_t>(_sysEx.size() + 1);
+		m_sink(std::move(record));
 	}
 
 	void Sc88SubMcu::decodedTransfer(const uint8_t _source, const std::vector<uint8_t>& _sysEx)
@@ -231,12 +243,16 @@ namespace emu88Lib
 		uint8_t command = _sysEx[DT1AddrOffset];	// address high byte
 		uint8_t source = src;
 
-		// System parameters use the 0x20 mailbox family. Command 0 would
-		// enter the display-only branch and discard them. Keep the staged
-		// address intact: the firmware parameter parser handles 00 00 7F
-		// (mode) and 00 01 00..1F (per-part input assignment) itself.
-		// SC-88: 00:18DE -> 00:3640; Pro: 00:1C4A -> 00:5106.
-		if(command == 0)
+		// The blocks below 0x10 use the 0x20 mailbox family. Below 0x20 the
+		// CPU's bulk task takes only its display records, 0x10 and 0x12, and
+		// drops any other opcode (SC-88 00:188F, Pro 00:1BF7); from 0x20 up it
+		// hands the staged address to the parameter parser (SC-88 00:18DE ->
+		// 00:3640, Pro 00:1C4A -> 00:5106), which handles those blocks itself:
+		// 00 system - 00 00 7F (mode) and 00 01 00..1F (per-part input
+		// assignment) - and 08 and 0C. On the Pro 0C 20 04 is the SC-88 mode
+		// that SELECT+ALL toggles (00:5517, table 01:49EC, handler 00:559D).
+		// Keep the staged address intact.
+		if(command < 0x10)
 			command = 0x20;
 
 		// The main firmware routes patch/drum parameters to the A or B part

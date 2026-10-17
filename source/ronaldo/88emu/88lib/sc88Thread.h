@@ -29,6 +29,10 @@ namespace emu88Lib
 		                    std::vector<synthLib::SMidiEvent>& _midiIn,
 		                    std::vector<synthLib::SMidiEvent>& _midiOut);
 		bool popSample(SampleFrame& _sample);
+		// Frames repeated while the ring was empty, dropped again once it holds more than the block needs,
+		// so an underrun does not add its length to the latency for good. Audio thread only.
+		void compensateUnderruns(uint32_t _needed);
+		void clearUnderrunDebt() { m_underrunDebt = 0; }
 
 		// Frames dropped because their generation predates a transport jump. Steady counting
 		// here while audio is running means the generation filter is eating good samples.
@@ -75,6 +79,7 @@ namespace emu88Lib
 		std::atomic<uint64_t> m_renderedSamples = 0;
 		std::atomic<uint64_t> m_renderNanoseconds = 0;
 		uint32_t m_currentLatency = 0;
+		uint64_t m_underrunDebt = 0;
 		dsp56k::RingBuffer<OutputFrame, 16384, true> m_audioOut;
 		std::vector<synthLib::SMidiEvent> m_midiOutput;
 		std::mutex m_outputMutex;
