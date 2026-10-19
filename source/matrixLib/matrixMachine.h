@@ -51,7 +51,7 @@ namespace matrixLib
 		double m_cycleAcc = 0.0;
 		uint64_t m_sampleCycle = 0;
 
-		static constexpr double EdgeMargin = 2.0;        // one CPU cycle in timer ticks
+		static constexpr double EdgeMargin = Hardware::TimerTicksPerCycle;   // one CPU cycle in timer ticks
 		double m_edgeTick = 0.0;
 
 		float m_dcIn = 0.0f;

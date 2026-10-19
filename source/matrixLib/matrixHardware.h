@@ -16,13 +16,14 @@ namespace matrixLib
 	{
 	public:
 		static constexpr uint32_t CpuClock = 2000000;              // E clock, 8 MHz XTAL / 4
-		static constexpr uint32_t VoiceTimerClock = 4000000;       // DCO timers count at twice the E clock
+		static constexpr uint32_t VoiceTimerClock = 2000000;       // DCO timers count the E clock
+		static constexpr uint32_t TimerTicksPerCycle = VoiceTimerClock / CpuClock;
 		static constexpr uint32_t MidiCyclesPerByte = CpuClock * 10 / 31250;
 		static constexpr uint32_t VoiceCount = 6;
 		// range 0 spans 5.42 V
 		static constexpr float DacFullScale = 5.42f * 145.0f / 159.6f;
 		static constexpr float DacReference = DacFullScale / 0.996f;
-		static constexpr uint32_t SyncPulseTicks = 14;             // 470 pF and 10 kOhm into a HC gate, about 3.5 us
+		static constexpr uint32_t SyncPulseTicks = 7;              // 470 pF and 10 kOhm into a HC gate, about 3.5 us
 		static constexpr uint32_t CvChannelCount = 64;             // 8 multiplexers x 8 sample and holds
 
 		Hardware();
@@ -62,7 +63,7 @@ namespace matrixLib
 			std::vector<uint64_t> b;
 		};
 		DcoEvents& scanDco(uint32_t _voice);
-		uint64_t getTimerTick() const { return m_cpu.getCycles() * 2; }
+		uint64_t getTimerTick() const { return m_cpu.getCycles() * TimerTicksPerCycle; }
 		Pit8254& getSystemTimer() { return m_sysTimer; }
 
 		std::vector<uint8_t>& getSram() { return m_sram; }
@@ -111,6 +112,7 @@ namespace matrixLib
 		Pit8254 m_timers[4];
 		std::array<DcoScan, VoiceCount> m_dco;
 		Pit8254 m_sysTimer;
+		Pit8254 m_calTimer;         // system timer counter 1, gated by the comparator
 		Acia6850 m_acia;
 
 		std::vector<uint8_t> m_rom;          // 32 KB system EPROM at $8000

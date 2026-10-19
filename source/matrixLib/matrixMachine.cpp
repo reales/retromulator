@@ -8,10 +8,10 @@ namespace matrixLib
 	namespace
 	{
 		// Timing resistor times capacitor per converter range (3.3 nF, 510k, 36k in parallel
-		// for the high range), taken as the firmware's waveshape calibration ($B490) leaves a
-		// real voice: a 50 % pulse with the width CV at 0.4612 of full scale, so width 31 is square
-		constexpr float RtCtLow = 7.585e-4f;
-		constexpr float RtCtHigh = 5.467e-5f;
+		// for the high range), fitted so the waveshape calibration ($B490) leaves a 50 % pulse
+		// with the width CV at 0.4612 of full scale: width 31 is square
+		constexpr float RtCtLow = 1.517e-3f;
+		constexpr float RtCtHigh = 1.0934e-4f;
 
 		constexpr float OutputGain = 0.18f;
 		// the summing amplifier clips at 10.5 V, a voice delivers up to 4 V peak to peak
@@ -42,7 +42,7 @@ namespace matrixLib
 		m_dcIn = m_dcOut = m_cmpIn = m_cmpOut = m_lastSum = 0.0f;
 		m_hw.reset();
 		m_sampleCycle = m_hw.getCycles();
-		m_edgeTick = static_cast<double>(m_sampleCycle) * 2.0 - EdgeMargin;
+		m_edgeTick = static_cast<double>(m_sampleCycle) * Hardware::TimerTicksPerCycle - EdgeMargin;
 	}
 
 	void Machine::buildDischarges(const uint32_t _voice, const double _from, const double _to, Cem3396::Discharges& _d0, Cem3396::Discharges& _d1)
@@ -131,7 +131,7 @@ namespace matrixLib
 			// the discharge pulses come from timer edges the CPU has already passed, so the
 			// converters render the previous sample's span of timer ticks
 			const double edgeFrom = m_edgeTick;
-			const double edgeTo = (static_cast<double>(start) + m_cycleAcc) * 2.0 - EdgeMargin;
+			const double edgeTo = (static_cast<double>(start) + m_cycleAcc) * Hardware::TimerTicksPerCycle - EdgeMargin;
 			m_edgeTick = edgeTo;
 			m_cycleAcc += m_cyclesPerSample;
 			const auto cycles = static_cast<uint64_t>(m_cycleAcc);

@@ -258,7 +258,7 @@ namespace matrixLib
 		// so the calibrated codes stay above 0 up to VCF 127. FM up to 2x at 4.5 V, taken from
 		// converter A's waveform shaper ahead of the wave select switch
 		const float depth = std::clamp(_c.mod * (1.0f / 4.5f), 0.0f, 1.0f) * 2.0f;
-		float fc = 2016.0f * std::exp2(-_c.freq * 1.721f) * std::max(0.0f, 1.0f + depth * slopedOutA * 0.5f);
+		float fc = 1008.0f * std::exp2(-_c.freq * 1.721f) * std::max(0.0f, 1.0f + depth * slopedOutA * 0.5f);
 		fc = std::clamp(fc, 5.0f, m_rate * 0.45f);
 
 		const float k = std::clamp(_c.resonance, 0.0f, 5.0f);

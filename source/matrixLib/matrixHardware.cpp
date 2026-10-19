@@ -40,6 +40,7 @@ namespace matrixLib
 		for(auto& t : m_timers)
 			t.reset();
 		m_sysTimer.reset();
+		m_calTimer.reset();
 		m_acia.reset();
 		m_bankLatch = 0;
 		m_cpu.reset();
@@ -169,13 +170,13 @@ namespace matrixLib
 		if(_addr < 0x1000)
 		{
 			// the timers evaluate lazily, the edges up to now have to be collected first
-			scanTimer((_addr >> 10) & 3, t * 2);
-			v = m_timers[(_addr >> 10) & 3].read(_addr & 3, t * 2);
+			scanTimer((_addr >> 10) & 3, t * TimerTicksPerCycle);
+			v = m_timers[(_addr >> 10) & 3].read(_addr & 3, t * TimerTicksPerCycle);
 		}
 		else if(_addr >= 0x1400 && _addr < 0x1800)
 		{
 			if(_addr & 0x0200)
-				v = m_sysTimer.read(_addr & 3, t);
+				v = (_addr & 3) == 1 ? m_calTimer.read(1, t / 2) : m_sysTimer.read(_addr & 3, t);
 			else
 			{
 				m_acia.advance(t);
@@ -213,8 +214,8 @@ namespace matrixLib
 
 		if(_addr < 0x1000)
 		{
-			scanTimer((_addr >> 10) & 3, t * 2);
-			m_timers[(_addr >> 10) & 3].write(_addr & 3, _val, t * 2);
+			scanTimer((_addr >> 10) & 3, t * TimerTicksPerCycle);
+			m_timers[(_addr >> 10) & 3].write(_addr & 3, _val, t * TimerTicksPerCycle);
 		}
 		else if(_addr < 0x1400)
 		{
@@ -259,7 +260,14 @@ namespace matrixLib
 		else if(_addr < 0x1800)
 		{
 			if(_addr & 0x0200)
-				m_sysTimer.write(_addr & 3, _val, t);
+			{
+				// Counter 1 times comparator cycles for the boot calibration. Its GATE is the
+				// comparator, so at 50 % duty it counts half the E clock
+				if((_addr & 3) == 1 || ((_addr & 3) == 3 && (_val >> 6) == 1))
+					m_calTimer.write(_addr & 3, _val, t / 2);
+				else
+					m_sysTimer.write(_addr & 3, _val, t);
+			}
 			else
 			{
 				m_acia.advance(t);
@@ -272,7 +280,7 @@ namespace matrixLib
 			{
 				// the sync gates change
 				for(uint32_t v = 0; v < VoiceCount; ++v)
-					scanDco(v, t * 2);
+					scanDco(v, t * TimerTicksPerCycle);
 			}
 			m_latches[_addr & 0x3ff] = _val;
 			if(_addr == 0x1d80)
