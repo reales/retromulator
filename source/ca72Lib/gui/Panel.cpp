@@ -78,10 +78,9 @@ juce::Image makePanelTexture()
     return img;
 }
 
-const juce::Image& panelTexture()
+juce::Image panelTexture()
 {
-    static const juce::Image tex = makePanelTexture();
-    return tex;
+    return juce::SharedResourcePointer<PanelTexture>()->image;
 }
 
 // A silk-screened line: cream paint with a little thickness (a shadow below, a catch of light
@@ -683,6 +682,8 @@ void Wheel::mouseUp (const juce::MouseEvent&)
         attachment.setValueAsPartOfGesture (param.convertFrom0to1 (0.5f));
     attachment.endGesture();
 }
+PanelTexture::PanelTexture() : image (makePanelTexture()) {}
+
 Panel::Panel (std::shared_ptr<ca72Lib::Synth> s) : synth (std::move (s)), apvts (synth->apvts), look (std::make_unique<Look>())
 {
     setLookAndFeel (look.get());

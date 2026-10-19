@@ -83,6 +83,13 @@ private:
     float value = 0.0f, startValue = 0.0f;
 };
 // The CA-72 front panel, drawn at any width with the panel's proportions (H / W).
+// Owned by the live panels, so its GPU image is freed with the editor and not at DLL unload.
+struct PanelTexture
+{
+    PanelTexture();
+    juce::Image image;
+};
+
 class Panel : public juce::Component, private juce::Timer
 {
 public:
@@ -112,6 +119,7 @@ private:
     void drawPanel (juce::Graphics&) const;
     void rebuildBackground();
 
+    juce::SharedResourcePointer<PanelTexture> texture;
     std::shared_ptr<ca72Lib::Synth> synth;
     juce::AudioProcessorValueTreeState& apvts;
     std::unique_ptr<Look> look;
