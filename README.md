@@ -4,7 +4,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 
 [![Retromulator](https://www.discodsp.com/img/retromulator.webp)](https://www.discodsp.com/retromulator/)
 
-[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $29](https://img.shields.io/badge/Buy_License-$29-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
+[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $99](https://img.shields.io/badge/Buy_License-$99-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
 
 ## Hardware Cores
 
@@ -85,4 +85,18 @@ JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 
 ## License
 
-The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** — see [LICENSE.txt](LICENSE.txt). The SFZero module is licensed under the **MIT License** — see [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE). The Nuked OPL3 engine is licensed under the **GNU Lesser General Public License v2.1**. The reSID engine is licensed under the **GNU General Public License v2.0**. The Ayumi engine is licensed under the **MIT License** — see [source/ayumiLib/AYUMI_LICENSE.txt](source/ayumiLib/AYUMI_LICENSE.txt). The Fasttracker 2 replayer is licensed under the **BSD 3-Clause License** — see [source/trackerLib/ft2/LICENSE](source/trackerLib/ft2/LICENSE). The Schism Tracker player is licensed under the **GNU General Public License v2.0** — see [source/trackerLib/schism/COPYING](source/trackerLib/schism/COPYING). The libresample engine is licensed under the **BSD 3-Clause License** — see [source/libresample/LICENSE-BSD.txt](source/libresample/LICENSE-BSD.txt). The Speex resampler is licensed under the **BSD 3-Clause License**. The LAME MP3 encoder is licensed under the **GNU Lesser General Public License v2** — see [source/lameLib/COPYING](source/lameLib/COPYING).
+The emulation engine source code in this repository is licensed under the **GNU General Public License v3.0** (see [LICENSE.txt](LICENSE.txt)). Bundled third-party components keep their own licenses:
+
+| Component | License | File |
+|---|---|---|
+| Ayumi | MIT | [source/ayumiLib/AYUMI_LICENSE.txt](source/ayumiLib/AYUMI_LICENSE.txt) |
+| CA-72 | GPL v3 or later | [source/ca72Lib/LICENSE](source/ca72Lib/LICENSE) |
+| Fasttracker 2 replayer | BSD 3-Clause | [source/trackerLib/ft2/LICENSE](source/trackerLib/ft2/LICENSE) |
+| LAME MP3 encoder | LGPL v2 | [source/lameLib/COPYING](source/lameLib/COPYING) |
+| libresample | BSD 3-Clause | [source/libresample/LICENSE-BSD.txt](source/libresample/LICENSE-BSD.txt) |
+| Nuked OPL3 | LGPL v2.1 | |
+| OpenB3 | AGPL v3 | [source/openB3Lib/LICENSE](source/openB3Lib/LICENSE) |
+| reSID | GPL v2 | |
+| Schism Tracker player | GPL v2 | [source/trackerLib/schism/COPYING](source/trackerLib/schism/COPYING) |
+| SFZero | MIT | [Modules/SFZero/LICENSE](Modules/SFZero/LICENSE) |
+| Speex resampler | BSD 3-Clause | |
