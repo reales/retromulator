@@ -914,12 +914,7 @@ namespace retromulator
             }
         }
 
-        // JE-8086, Akai, OpenWurli, OPL3, SID, Ayumi run synchronously — no extra latency block needed.
-        setLatencyBlocks((type == SynthType::JE8086 || type == SynthType::AkaiS1000
-                       || type == SynthType::OpenWurli || type == SynthType::OPL3
-                       || type == SynthType::SID || type == SynthType::Ayumi
-                       || type == SynthType::Trackermeister || type == SynthType::Matrix
-                       || type == SynthType::OpenB3 || type == SynthType::CA72) ? 0 : 1);
+        setLatencyBlocks(latencyBlocksFor(type));
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -930,6 +925,22 @@ namespace retromulator
         if(m_bootThread && m_bootThread->joinable())
             m_bootThread->join();
         m_bootThread.reset();
+    }
+
+    // Cores that render synchronously need no extra latency block. Shared by both boot paths
+    // so a core reports the same latency however it was selected.
+    int HeadlessProcessor::latencyBlocksFor(const SynthType type)
+    {
+        switch(type)
+        {
+        case SynthType::JE8086: case SynthType::AkaiS1000: case SynthType::OpenWurli:
+        case SynthType::OPL3: case SynthType::SID: case SynthType::Ayumi:
+        case SynthType::Trackermeister: case SynthType::Matrix: case SynthType::OpenB3:
+        case SynthType::CA72: case SynthType::None:
+            return 0;
+        default:
+            return 1;
+        }
     }
 
     void HeadlessProcessor::setSynthTypeAsync(SynthType type, const std::string& romPath,
@@ -1029,15 +1040,7 @@ namespace retromulator
 
             // Set latency blocks AFTER rebootDevice so the new device's
             // samplerate is used for the latency calculation.
-            {
-                const bool isSynchronous = (type == SynthType::JE8086 || type == SynthType::AkaiS1000
-                                         || type == SynthType::OpenWurli || type == SynthType::OPL3
-                                         || type == SynthType::Ayumi || type == SynthType::Trackermeister
-                                         || type == SynthType::Matrix || type == SynthType::OpenB3
-                                         || type == SynthType::CA72 || type == SynthType::None);
-                const bool isN2X = (type == SynthType::NordN2X);
-                setLatencyBlocks(isSynchronous ? 0 : (isN2X ? 1 : 3));
-            }
+            setLatencyBlocks(latencyBlocksFor(type));
             if(!ok)
                 m_deviceError = synthLib::DeviceError::FirmwareMissing;
 

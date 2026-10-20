@@ -47,6 +47,7 @@ namespace retromulator
         void setSynthType(SynthType type, const std::string& romPath = {});
         // Async version: boots the device on a background thread, then calls
         // onComplete on the message thread. GUI stays responsive during boot.
+        static int latencyBlocksFor(SynthType type);
         void setSynthTypeAsync(SynthType type, const std::string& romPath,
                                std::function<void()> onComplete);
 
