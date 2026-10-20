@@ -57,6 +57,13 @@ namespace retromulator
         void syncOpenWurliSlots();
         void setSynthTypeAsync(SynthType type, const std::string& romPath,
                                std::function<void()> onComplete);
+        // Editor only: the core's board and parameters with no sound engine, for editing the
+        // real synth over MIDI out. Saved per core in settings.xml; the setSynthType calls
+        // select a saved core this way.
+        void setSynthTypeEditorOnly(SynthType type);
+        bool isEditorOnly() const { return m_editorOnly.load(); }
+        static bool isEditorOnlySaved(SynthType type);
+        static void setEditorOnlySaved(SynthType type, bool enabled);
 
         // Standalone only: 56k cores need a 512 sample buffer minimum, others use the device default.
         void applyStandaloneBufferSize();
@@ -474,6 +481,7 @@ namespace retromulator
         std::string m_romPath;
         std::unique_ptr<ParameterPool> m_paramPool;
         bool m_midiOutCore = false;
+        std::atomic<bool> m_editorOnly{false};
 #ifdef CUSTOM
         std::unique_ptr<board::Board> m_board;
         std::unique_ptr<board::MidiInParser> m_midiInParser;

@@ -54,6 +54,8 @@ The standalone app opens modules, .m3u playlists and .mid files handed over by t
 
 The plugin has a MIDI output that can pass on what the emulated core sends (SysEx dumps, parameter changes), switched on with `midiOutCoreOutput="1"` in settings.xml.
 
+A core can also run without its sound engine, as an editor for the real synth, with `editorOnly_<core name>="1"` in settings.xml (spaces in the name become underscores).
+
 ## How it differs from Gearmulator
 
 Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.

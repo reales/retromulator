@@ -853,6 +853,12 @@ namespace retromulator
 
     void HeadlessProcessor::setSynthType(SynthType type, const std::string& romPath)
     {
+        if(type != SynthType::None && isEditorOnlySaved(type))
+        {
+            setSynthTypeEditorOnly(type);
+            return;
+        }
+        m_editorOnly  = false;
         m_synthType   = type;
         m_romPath     = romPath;
         m_deviceError = synthLib::DeviceError::None;
@@ -962,6 +968,42 @@ namespace retromulator
 
     // Cores that render synchronously need no extra latency block. Shared by both boot paths
     // so a core reports the same latency however it was selected.
+    void HeadlessProcessor::setSynthTypeEditorOnly(const SynthType type)
+    {
+        joinBootThread();
+        // the None core's silent device stays in place of the sound engine
+        setSynthType(SynthType::None);
+        m_synthType = type;
+        if(m_paramPool)
+            m_paramPool->setCore(type);
+#ifdef CUSTOM
+        if(m_midiInParser)
+        {
+            m_midiInParser->setCore(type);
+            m_board->setMap(m_midiInParser->currentMap());
+            if(m_paramPool)
+                board::applySlotLinks(type, *m_board, *m_paramPool);
+        }
+#endif
+        m_editorOnly = true;
+        updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+    }
+
+    static juce::String editorOnlyKey(const SynthType type)
+    {
+        return ("editorOnly_" + juce::String(synthTypeName(type))).replaceCharacter(' ', '_');
+    }
+
+    bool HeadlessProcessor::isEditorOnlySaved(const SynthType type)
+    {
+        return type != SynthType::None && readSettingsBool(editorOnlyKey(type).toRawUTF8(), false);
+    }
+
+    void HeadlessProcessor::setEditorOnlySaved(const SynthType type, const bool enabled)
+    {
+        writeSettingsBool(editorOnlyKey(type).toRawUTF8(), enabled);
+    }
+
     void HeadlessProcessor::setMidiOutCore(const bool enabled, const bool save)
     {
         // what the emulated core sends (SysEx dumps, parameter echoes) also goes to the host
@@ -992,7 +1034,7 @@ namespace retromulator
         // Wait for any previous async boot to finish.
         joinBootThread();
 
-        if(type == SynthType::None)
+        if(type == SynthType::None || isEditorOnlySaved(type))
         {
             // SynthType::None is instant — no need for a background thread.
             setSynthType(type, romPath);
