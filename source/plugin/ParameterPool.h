@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -30,6 +31,7 @@ namespace retromulator
             int cc = -1;      // control change number
             int pp = -1;      // poly pressure index (Virus page B)
             int native = -1;  // core-specific parameter index (JSON "nrpn"), N2X multi params
+            int board = -1;   // board parameter sent through the board's own message (slot links)
         };
 
         SlotParameter(ParameterPool& pool, int slot);
@@ -65,6 +67,9 @@ namespace retromulator
         ParameterPool& m_pool;
         const int m_slot;
 
+    public:
+        static const Binding& unboundBinding() { return s_unbound; }
+    private:
         static const Binding s_unbound;
         std::atomic<const Binding*> m_binding{&s_unbound};
         std::atomic<float> m_value{0.0f};
@@ -133,6 +138,29 @@ namespace retromulator
         // must be in the descriptions before that, not produced on demand.
         void refreshFor(SynthType type);
 
+        // Slot links: any slot can be rebound to a board parameter, replacing its default.
+        // Message thread; setCore restores the defaults.
+        struct LinkTarget
+        {
+            std::string name;
+            int min = 0;
+            int max = 127;
+            bool bipolar = false;
+            std::vector<std::string> values;   // display texts from min upwards
+            int cc = -1;
+            int native = -1;
+            int board = -1;
+        };
+        void linkSlot(int slot, const LinkTarget& target);
+        // Sets a slot to what the device already has, without sending it.
+        void setSlotMirrored(int slot, int value);
+        void clearSlot(int slot);
+        juce::String getSlotName(int slot) const;
+        // tells the host the slot names and ranges changed
+        void announceLinks();
+        // Called from sendSlot (any thread) for slots linked to a board parameter.
+        void setBoardSender(std::function<void(int boardParam, int value)> sender) { m_boardSend = std::move(sender); }
+
         // Message thread. Mirrors a value the device was just sent by other means.
         void setSlotFromMidi(int slot, int value);
         // The slot's value in MIDI units, -1 when the slot is unused.
@@ -151,7 +179,8 @@ namespace retromulator
 
         // Board support for cores whose edits and dumps are core specific (DX7, Matrix,
         // JE-8086): send one native parameter, decode dumps into native / value pairs.
-        void sendNative(int native, int value);
+        // captured, when given, receives the messages sent (for MIDI out)
+        void sendNative(int native, int value, std::vector<synthLib::SMidiEvent>* captured = nullptr);
         void readNatives(const std::vector<std::vector<uint8_t>>& messages,
                          const std::function<void(int, int)>& out) const;
 
@@ -171,6 +200,17 @@ namespace retromulator
 
     private:
         static bool readNative(SynthType type, const std::vector<uint8_t>& m, const std::function<void(int, int)>& out);
+        void emit(const synthLib::SMidiEvent& ev);
+        void unmapCc(int slot);
+
+        // links replace the map's bindings slot by slot; descriptions are never freed, as the
+        // host may still be reading one from another thread
+        std::array<SlotParameter::Binding, NumSlots> m_linkBindings{};
+        std::deque<pluginLib::Description> m_linkDescs;
+        std::array<int8_t, 128> m_ccToSlot{};
+        std::array<bool, NumSlots> m_linked{};   // syncFromPatch's dump layouts address the default slots
+        std::function<void(int, int)> m_boardSend;
+        std::vector<synthLib::SMidiEvent>* m_capture = nullptr;
         struct CoreMap
         {
             std::unique_ptr<pluginLib::ParameterDescriptions> descriptions;

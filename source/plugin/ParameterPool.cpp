@@ -525,6 +525,8 @@ namespace retromulator
     {
         const auto& map = mapFor(type);
         m_core = type;
+        m_ccToSlot = map.ccToSlot;
+        m_linked.fill(false);
         m_current.store(&map, std::memory_order_release);
 
         for(int i = 0; i < NumSlots; ++i)
@@ -555,7 +557,7 @@ namespace retromulator
         // OpenB3 mod wheel / sustain switch the Leslie, so the Rotary slot follows the engine
         if(map->type == SynthType::OpenB3 && status == synthLib::M_CONTROLCHANGE && (ev.b == 1 || ev.b == 64))
         {
-            const int rotSlot = map->ccToSlot[openB3Lib::Device::rotaryCc()];
+            const int rotSlot = m_ccToSlot[openB3Lib::Device::rotaryCc()];
             if(rotSlot < 0)
                 return false;
             auto* rs = m_slots[static_cast<size_t>(rotSlot)];
@@ -565,7 +567,7 @@ namespace retromulator
             return false;
         }
 
-        const int slot = status == synthLib::M_CONTROLCHANGE ? map->ccToSlot[ev.b] : map->ppToSlot[ev.b];
+        const int slot = status == synthLib::M_CONTROLCHANGE ? m_ccToSlot[ev.b] : map->ppToSlot[ev.b];
         if(slot < 0)
             return false;
         auto* s = m_slots[static_cast<size_t>(slot)];
@@ -593,6 +595,12 @@ namespace retromulator
 
     void ParameterPool::sendSlot(const SlotParameter&, const SlotParameter::Binding& b, int midiValue)
     {
+        if(b.board >= 0)
+        {
+            if(m_boardSend && !isMirroring())
+                m_boardSend(b.board, midiValue);
+            return;
+        }
         if(b.cc < 0 && b.pp < 0 && b.native < 0)
             return;
 
@@ -694,7 +702,7 @@ namespace retromulator
             ev.c = isSwitchSlot(b) && value ? uint8_t(127) : value;
         }
 
-        m_processor.addMidiEvent(ev);
+        emit(ev);
     }
 
     void ParameterPool::markNativeTouched(const int native)
@@ -744,7 +752,7 @@ namespace retromulator
             synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
             ev.sysex = {0xf0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, data, chk, 0xf7};
             ev.a = 0xf0;
-            m_processor.addMidiEvent(ev);
+            emit(ev);
             return;
         }
 
@@ -863,6 +871,92 @@ namespace retromulator
         if(slot < 0 || slot >= NumSlots || !m_slots[static_cast<size_t>(slot)]->binding().desc)
             return -1;
         return m_slots[static_cast<size_t>(slot)]->getMidiValue();
+    }
+
+    void ParameterPool::unmapCc(const int slot)
+    {
+        for(auto& s : m_ccToSlot)
+            if(s == slot)
+                s = -1;
+    }
+
+    void ParameterPool::linkSlot(const int slot, const LinkTarget& t)
+    {
+        if(slot < 0 || slot >= NumSlots)
+            return;
+
+        auto& d = m_linkDescs.emplace_back();
+        d.name = "slot_" + juce::String(slot).paddedLeft('0', 3).toStdString();
+        d.displayName = t.name;
+        d.range = juce::Range<int>(t.min, t.max);
+        d.isPublic = true;
+        d.isBool = t.max - t.min == 1 && t.values.empty();
+        d.isDiscrete = !t.values.empty() || t.max - t.min < 32;
+        d.isBipolar = t.bipolar;
+        d.page = 0;
+        d.index = static_cast<uint8_t>(slot);
+        d.classFlags = 0;
+        // texts are looked up by value, so they start at 0 even when the range does not
+        const int centre = (t.min + t.max + 1) / 2;
+        for(int v = 0; v <= t.max; ++v)
+        {
+            const int i = v - t.min;
+            std::string text;
+            if(i >= 0 && i < static_cast<int>(t.values.size()))
+                text = t.values[static_cast<size_t>(i)];
+            else if(t.bipolar)
+                text = (v > centre ? "+" : "") + std::to_string(v - centre);
+            else
+                text = std::to_string(v);
+            d.valueList.texts.push_back(text);
+        }
+
+        SlotParameter::Binding b;
+        b.desc = &d;
+        b.range = juce::NormalisableRange<float>(static_cast<float>(t.min), static_cast<float>(t.max), 1.0f);
+        b.cc = t.cc;
+        b.native = t.native;
+        b.board = t.board;
+
+        auto* s = m_slots[static_cast<size_t>(slot)];
+        s->rebind(&SlotParameter::unboundBinding());
+        m_linked[static_cast<size_t>(slot)] = true;
+        m_linkBindings[static_cast<size_t>(slot)] = b;
+        unmapCc(slot);
+        if(t.cc >= 0 && t.cc < 128)
+            m_ccToSlot[static_cast<size_t>(t.cc)] = static_cast<int8_t>(slot);
+        s->rebind(&m_linkBindings[static_cast<size_t>(slot)]);
+    }
+
+    void ParameterPool::clearSlot(const int slot)
+    {
+        if(slot < 0 || slot >= NumSlots)
+            return;
+        unmapCc(slot);
+        m_linked[static_cast<size_t>(slot)] = true;
+        m_slots[static_cast<size_t>(slot)]->rebind(&SlotParameter::unboundBinding());
+    }
+
+    void ParameterPool::setSlotMirrored(const int slot, const int value)
+    {
+        if(slot < 0 || slot >= NumSlots)
+            return;
+        m_mirroring.store(true, std::memory_order_release);
+        m_slots[static_cast<size_t>(slot)]->setFromMidi(value, true);
+        m_mirroring.store(false, std::memory_order_release);
+    }
+
+    void ParameterPool::announceLinks()
+    {
+        m_processor.updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withParameterInfoChanged(true));
+    }
+
+    juce::String ParameterPool::getSlotName(const int slot) const
+    {
+        if(slot < 0 || slot >= NumSlots)
+            return {};
+        const auto& b = m_slots[static_cast<size_t>(slot)]->binding();
+        return b.desc ? juce::String(b.desc->displayName) : juce::String();
     }
 
     void ParameterPool::clearTouched()
@@ -986,8 +1080,16 @@ namespace retromulator
             readNative(m_core, m, out);
     }
 
-    void ParameterPool::sendNative(const int native, const int value)
+    void ParameterPool::emit(const synthLib::SMidiEvent& ev)
     {
+        m_processor.addMidiEvent(ev);
+        if(m_capture)
+            m_capture->push_back(ev);
+    }
+
+    void ParameterPool::sendNative(const int native, const int value, std::vector<synthLib::SMidiEvent>* captured)
+    {
+        const juce::ScopedValueSetter<std::vector<synthLib::SMidiEvent>*> capture(m_capture, captured);
         const auto* map = m_current.load(std::memory_order_acquire);
         if(!map)
             return;
@@ -1049,7 +1151,7 @@ namespace retromulator
         for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
         {
             auto* s = m_slots[i];
-            if(values[i] < 0 || s->isTouched() || !s->binding().desc)
+            if(values[i] < 0 || s->isTouched() || !s->binding().desc || m_linked[i])
                 continue;
             if(s->getMidiValue() != values[i])
                 s->setFromMidi(values[i], true);
@@ -1067,7 +1169,7 @@ namespace retromulator
         m_mirroring.store(true, std::memory_order_release);
         for(const auto& [cc, value] : values)
         {
-            const int slot = map->ccToSlot[cc & 0x7f];
+            const int slot = m_ccToSlot[cc & 0x7f];
             if(slot < 0)
                 continue;
             auto* s = m_slots[static_cast<size_t>(slot)];
@@ -1087,7 +1189,7 @@ namespace retromulator
         const auto* map = m_current.load(std::memory_order_acquire);
         if(!map)
             return;
-        const int slot = map->ccToSlot[cc & 0x7f];
+        const int slot = m_ccToSlot[cc & 0x7f];
         if(slot < 0)
             return;
         auto* s = m_slots[static_cast<size_t>(slot)];

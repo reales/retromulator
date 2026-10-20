@@ -43,6 +43,7 @@
 #include "virusLib/presetConverter.h"
 #include "board/MidiInParser.h"
 #include "board/Board.h"
+#include "board/SlotLinks.h"
 #endif
 #include "synthLib/romLoader.h"
 
@@ -691,7 +692,7 @@ namespace retromulator
                 "discoDSP",       // vendor
                 true,             // isSynth
                 true,             // wantsMidiInput
-                false,            // producesMidiOut
+                true,             // producesMidiOut: board echo and core output, both opt-in
                 false,            // isMidiEffect
                 "RtMU",           // plugin4CC
                 "",               // lv2Uri
@@ -704,6 +705,8 @@ namespace retromulator
             })
     {
         getController();
+
+        setMidiOutCore(readSettingsBool("midiOutCoreOutput", false), false);
 
         // Host parameters must exist before the host queries the tree.
         m_paramPool = std::make_unique<ParameterPool>(*this);
@@ -725,11 +728,14 @@ namespace retromulator
                     ev.c = bytes[2];
                 }
                 addMidiEvent(ev);
+                if(m_midiInParser)
+                    m_midiInParser->queueEcho(ev.sysex.empty() ? &ev.a : ev.sysex.data(),
+                                              ev.sysex.empty() ? 3 : ev.sysex.size());
             },
             [this](const int slot, const int value)
             {
                 if(m_paramPool)
-                    m_paramPool->setSlotFromMidi(slot, value);
+                    m_paramPool->setSlotMirrored(slot, value);
             },
             [this](const int slot)
             {
@@ -737,14 +743,39 @@ namespace retromulator
             },
             [this](const int native, const int value)
             {
-                if(m_paramPool)
-                    m_paramPool->sendNative(native, value);
+                if(!m_paramPool)
+                    return;
+                std::vector<synthLib::SMidiEvent> sent;
+                m_paramPool->sendNative(native, value, &sent);
+                if(m_midiInParser)
+                    for(const auto& ev : sent)
+                    {
+                        const uint8_t shortMsg[3] = {ev.a, ev.b, ev.c};
+                        m_midiInParser->queueEcho(ev.sysex.empty() ? shortMsg : ev.sysex.data(),
+                                                  ev.sysex.empty() ? 3 : ev.sysex.size());
+                    }
             },
             [this](const std::vector<std::vector<uint8_t>>& messages, const std::function<void(int, int)>& out)
             {
                 if(m_paramPool)
                     m_paramPool->readNatives(messages, out);
             });
+        // host automation on a slot linked to a SysEx board parameter: any thread, so it
+        // only encodes from the (immutable) map and queues the message
+        m_paramPool->setBoardSender([this](const int param, const int value)
+        {
+            const auto* map = m_board->map();
+            if(!map || param < 0 || param >= static_cast<int>(map->params().size()))
+                return;
+            uint8_t bytes[64];
+            const auto size = map->encode(map->params()[static_cast<size_t>(param)], value, 0, bytes, sizeof(bytes));
+            if(!size)
+                return;
+            synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+            ev.sysex.assign(bytes, bytes + size);
+            ev.a = 0xf0;
+            addMidiEvent(ev);
+        });
         m_midiInParser = std::make_unique<board::MidiInParser>(
             [this](const std::string& name) -> std::string
             {
@@ -847,6 +878,8 @@ namespace retromulator
         {
             m_midiInParser->setCore(type);
             m_board->setMap(m_midiInParser->currentMap());
+            if(m_paramPool)
+                board::applySlotLinks(type, *m_board, *m_paramPool);
         }
 #endif
 
@@ -929,6 +962,16 @@ namespace retromulator
 
     // Cores that render synchronously need no extra latency block. Shared by both boot paths
     // so a core reports the same latency however it was selected.
+    void HeadlessProcessor::setMidiOutCore(const bool enabled, const bool save)
+    {
+        // what the emulated core sends (SysEx dumps, parameter echoes) also goes to the host
+        getMidiRoutingMatrix().setEnabled(synthLib::MidiEventSource::Device, synthLib::MidiEventSource::Host,
+                                          synthLib::MidiRoutingMatrix::EventType::All, enabled);
+        m_midiOutCore = enabled;
+        if(save)
+            writeSettingsBool("midiOutCoreOutput", enabled);
+    }
+
     int HeadlessProcessor::latencyBlocksFor(const SynthType type)
     {
         switch(type)
@@ -982,6 +1025,8 @@ namespace retromulator
         {
             m_midiInParser->setCore(type);
             m_board->setMap(m_midiInParser->currentMap());
+            if(m_paramPool)
+                board::applySlotLinks(type, *m_board, *m_paramPool);
         }
 #endif
 
@@ -3822,6 +3867,20 @@ namespace retromulator
             m_paramPool->setCcFromEditor(cc, value);
     }
 
+    void HeadlessProcessor::syncOpenWurliSlots()
+    {
+        // The program combo edits the engine directly; its CC slots (and the board) follow.
+        if(m_isBooting.load()) return;
+        auto* ow = getOpenWurliDevice();
+        if(!ow || !m_paramPool) return;
+        const auto cc = [](const float v) { return static_cast<uint8_t>(juce::roundToInt(juce::jlimit(0.0f, 1.0f, v) * 127.0f)); };
+        m_paramPool->setCcFromEditor(7, cc(ow->getVolume()));
+        m_paramPool->setCcFromEditor(1, cc(ow->getTremoloDepth()));
+        m_paramPool->setCcFromEditor(71, cc(ow->getSpeakerCharacter()));
+        m_paramPool->setCcFromEditor(70, ow->getMlpEnabled() ? 127 : 0);
+        m_paramPool->setCcFromEditor(75, static_cast<uint8_t>(ow->getVelocityCurve()));
+    }
+
     void HeadlessProcessor::updateFxpProgramList(const std::string& bankFolder)
     {
         std::vector<std::string> paths;
@@ -4239,6 +4298,10 @@ namespace retromulator
 #endif
 
         Processor::processBlock(buffer, midi);
+#ifdef CUSTOM
+        if(m_midiInParser)
+            m_midiInParser->appendEcho(midi);
+#endif
 
         if(trackerLoopKey && m_coreAsync)
             m_coreAsync->triggerAsyncUpdate();
@@ -4357,6 +4420,7 @@ namespace retromulator
     static constexpr int32_t kMatrixLfoSyncMagic = 0x534C584D;   // 'MXLS'
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
     static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
+    static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -4536,6 +4600,17 @@ namespace retromulator
             appendInt32(destData, (m_trackerStopAtEnd ? 1 : 0) | (m_trackerShuffle ? 2 : 0)
                                   | (m_trackerWaitPatternEnd ? 0 : 4));
         }
+
+#ifdef CUSTOM
+        // ['SLNK':int32][links:string] host parameters relinked to board parameters, so a
+        // project keeps its own automation targets. Before the tail blocks, which are read
+        // from the end.
+        if(m_board && m_board->map())
+        {
+            appendInt32(destData, kSlotLinksMagic);
+            appendString(destData, board::slotLinkRecords(*m_board));
+        }
+#endif
 
         // ['MXLS':int32][lfo1 division:int32][lfo2 division:int32]
         if(m_synthType == SynthType::Matrix)
@@ -4853,6 +4928,8 @@ namespace retromulator
 
         // Restore host parameter slot edits (optional, appended after the Akai block).
         // Read the header unconditionally so offset stays usable for the blocks after it.
+        // Applied at the end, once the session's slot links are in place.
+        std::vector<std::pair<uint8_t, uint8_t>> restoredSlots;
         int32_t magic = 0, count = 0;
         const int paramsStart = offset;
         if(readInt32(bytes, sizeInBytes, offset, magic) && magic == 0x534d5250
@@ -4861,11 +4938,9 @@ namespace retromulator
         {
             if(m_paramPool && count > 0)
             {
-                std::vector<std::pair<uint8_t, uint8_t>> values;
-                values.reserve(static_cast<size_t>(count));
+                restoredSlots.reserve(static_cast<size_t>(count));
                 for(int32_t i = 0; i < count; ++i)
-                    values.emplace_back(bytes[offset + i * 2], bytes[offset + i * 2 + 1]);
-                m_paramPool->restoreValues(values);
+                    restoredSlots.emplace_back(bytes[offset + i * 2], bytes[offset + i * 2 + 1]);
             }
             offset += count * 2;
         }
@@ -5081,5 +5156,25 @@ namespace retromulator
                 dev->unloadModule();
             reloadTrackerModule();
         }
+
+#ifdef CUSTOM
+        // optional slot links block; sessions without one keep the settings.xml links
+        {
+            const int linksStart = offset;
+            int32_t linksMagic = 0;
+            std::string links;
+            if(readInt32(bytes, sizeInBytes, offset, linksMagic) && linksMagic == kSlotLinksMagic
+               && readString(bytes, sizeInBytes, offset, links))
+            {
+                if(m_board && m_paramPool && m_board->map())
+                    board::applySlotLinkRecords(m_synthType, *m_board, *m_paramPool, links);
+            }
+            else
+                offset = linksStart;
+        }
+#endif
+
+        if(m_paramPool && !restoredSlots.empty())
+            m_paramPool->restoreValues(restoredSlots);
     }
 }

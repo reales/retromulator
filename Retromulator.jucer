@@ -4,13 +4,13 @@
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
-              pluginWantsMidiIn="1" pluginProducesMidiOut="0" pluginSilenceInIsSilenceOut="0"
+              pluginWantsMidiIn="1" pluginProducesMidiOut="1" pluginSilenceInIsSilenceOut="0"
               pluginTailLength="0" pluginEditorRequiresKeys="0" pluginAUExportPrefix="RetromulatorAU"
               pluginAUViewClass="RetromulatorAU_V1" bundleIdentifier="com.discodsp.retromulator"
               aaxIdentifier="com.discodsp.retromulator" pluginAAXCategory="2048"
               companyName="discoDSP" buildVST3="1" buildAU="1" buildStandalone="1"
               buildVST="0" buildRTAS="0" buildAAX="0" buildAUv3="0" pluginFormats="buildAU,buildStandalone,buildVST3"
-              pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
+              pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn,pluginProducesMidiOut"
               enableIAA="0" jucerFormatVersion="1" displaySplashScreen="0"
               cppLanguageStandard="20">
   <EXPORTFORMATS>

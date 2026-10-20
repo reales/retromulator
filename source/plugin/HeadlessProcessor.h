@@ -48,6 +48,13 @@ namespace retromulator
         // Async version: boots the device on a background thread, then calls
         // onComplete on the message thread. GUI stays responsive during boot.
         static int latencyBlocksFor(SynthType type);
+
+        // MIDI out: pass the core's own output to the host. Saved in settings.xml.
+        bool isMidiOutCore() const { return m_midiOutCore; }
+        void setMidiOutCore(bool enabled, bool save = true);
+
+        // OpenWurli's program combo edits the engine directly: copy its values to the slots.
+        void syncOpenWurliSlots();
         void setSynthTypeAsync(SynthType type, const std::string& romPath,
                                std::function<void()> onComplete);
 
@@ -466,6 +473,7 @@ namespace retromulator
         SynthType   m_synthType = SynthType::None;
         std::string m_romPath;
         std::unique_ptr<ParameterPool> m_paramPool;
+        bool m_midiOutCore = false;
 #ifdef CUSTOM
         std::unique_ptr<board::Board> m_board;
         std::unique_ptr<board::MidiInParser> m_midiInParser;
