@@ -928,6 +928,81 @@ namespace retromulator
         }
     }
 
+    bool ParameterPool::readNative(const SynthType type, const std::vector<uint8_t>& m,
+                                   const std::function<void(int, int)>& out)
+    {
+        if(type == SynthType::DX7)
+        {
+            // a bank entry is one packed voice; a single voice dump carries VCED as is
+            std::array<int, 155> vced{};
+            if(m.size() == 128)
+                unpackDx7Voice(m.data(), vced);
+            else if(m.size() == 163 && m[0] == 0xf0 && m[1] == 0x43 && m[3] == 0x00)
+                for(size_t i = 0; i < vced.size(); ++i)
+                    vced[i] = m[6 + i];
+            else
+                return true;
+            for(size_t i = 0; i < vced.size(); ++i)
+                out(static_cast<int>(i), vced[i]);
+            return true;
+        }
+
+        if(type == SynthType::Matrix)
+        {
+            // signed parameters sit around the middle of the slot, as the host shows them
+            if(const auto data = matrixLib::patch::decode(m.data(), m.size()))
+                for(const auto& p : matrixLib::patch::getParams())
+                {
+                    const int v = matrixLib::patch::getParamValue(*data, p);
+                    out(p.number, p.min < 0 ? v - p.min : v);
+                }
+            return true;
+        }
+
+        if(type == SynthType::JE8086)
+        {
+            // Roland DT1. Patch data starts at a user patch (02 bb pp oo) or at the
+            // Upper patch of a performance (01/03 xx 40 oo); the offset is the native.
+            if(m.size() < 12 || m[0] != 0xf0 || m[1] != 0x41 || m[5] != 0x12)
+                return true;
+            int offset;
+            if(m[6] == 0x02)
+                offset = ((m[8] & 1) << 7) | m[9];
+            else if((m[6] == 0x01 || m[6] == 0x03) && m[8] == 0x40)
+                offset = m[9];
+            else
+                return true;
+            for(size_t i = 10; i + 2 < m.size(); ++i)
+                out(offset + static_cast<int>(i - 10), m[i]);
+            return true;
+        }
+        return false;
+    }
+
+    void ParameterPool::readNatives(const std::vector<std::vector<uint8_t>>& messages,
+                                    const std::function<void(int, int)>& out) const
+    {
+        for(const auto& m : messages)
+            readNative(m_core, m, out);
+    }
+
+    void ParameterPool::sendNative(const int native, const int value)
+    {
+        const auto* map = m_current.load(std::memory_order_acquire);
+        if(!map)
+            return;
+        // a slot bound to the native carries its description (Matrix needs the bipolar flag)
+        for(int i = 0; i < NumSlots; ++i)
+            if(map->bindings[static_cast<size_t>(i)].native == native)
+            {
+                sendSlot(*m_slots[static_cast<size_t>(i)], map->bindings[static_cast<size_t>(i)], value);
+                return;
+            }
+        SlotParameter::Binding b;
+        b.native = native;
+        sendSlot(*m_slots[0], b, value);
+    }
+
     void ParameterPool::syncFromPatch(const synthLib::SysexBufferList& messages)
     {
         const auto* map = m_current.load(std::memory_order_acquire);
@@ -946,58 +1021,8 @@ namespace retromulator
 
         for(const auto& m : messages)
         {
-            if(map->type == SynthType::DX7)
-            {
-                // a bank entry is one packed voice; a single voice dump carries VCED as is
-                std::array<int, 155> vced{};
-                if(m.size() == 128)
-                    unpackDx7Voice(m.data(), vced);
-                else if(m.size() == 163 && m[0] == 0xf0 && m[1] == 0x43 && m[3] == 0x00)
-                    for(size_t i = 0; i < vced.size(); ++i)
-                        vced[i] = m[6 + i];
-                else
-                    continue;
-                for(size_t i = 0; i < vced.size(); ++i)
-                    setNative(static_cast<int>(i), vced[i]);
+            if(readNative(map->type, m, setNative))
                 continue;
-            }
-
-            if(map->type == SynthType::Matrix)
-            {
-                const auto data = matrixLib::patch::decode(m.data(), m.size());
-                if(!data)
-                    continue;
-                for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
-                {
-                    const auto& b = map->bindings[i];
-                    if(!b.desc || b.native < 0)
-                        continue;
-                    if(const auto* p = matrixLib::patch::findParam(static_cast<uint8_t>(b.native)))
-                    {
-                        const int v = matrixLib::patch::getParamValue(*data, *p);
-                        values[i] = b.desc->isBipolar ? v - p->min : v;
-                    }
-                }
-                continue;
-            }
-
-            if(map->type == SynthType::JE8086)
-            {
-                // Roland DT1. Patch data starts at a user patch (02 bb pp oo) or at the
-                // Upper patch of a performance (01/03 xx 40 oo); the offset is the native.
-                if(m.size() < 12 || m[0] != 0xf0 || m[1] != 0x41 || m[5] != 0x12)
-                    continue;
-                int offset;
-                if(m[6] == 0x02)
-                    offset = ((m[8] & 1) << 7) | m[9];
-                else if((m[6] == 0x01 || m[6] == 0x03) && m[8] == 0x40)
-                    offset = m[9];
-                else
-                    continue;
-                for(size_t i = 10; i + 2 < m.size(); ++i)
-                    setNative(offset + static_cast<int>(i - 10), m[i]);
-                continue;
-            }
 
             // Cores with an upstream single dump layout. Firmware versions add or drop bytes
             // at the end (names, padding), so the header decides and only shared bytes are read.

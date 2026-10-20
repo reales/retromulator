@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -148,6 +149,12 @@ namespace retromulator
         // defaults. Touched slots keep their edits. Nothing goes back to the device.
         void syncFromPatch(const synthLib::SysexBufferList& messages);
 
+        // Board support for cores whose edits and dumps are core specific (DX7, Matrix,
+        // JE-8086): send one native parameter, decode dumps into native / value pairs.
+        void sendNative(int native, int value);
+        void readNatives(const std::vector<std::vector<uint8_t>>& messages,
+                         const std::function<void(int, int)>& out) const;
+
         // Message thread. Cores driven by plain CCs (OpenB3): point the slots at the
         // (cc, value) pairs of a preset the device just loaded. Clears the touched flags.
         void syncFromCcValues(const std::vector<std::pair<uint8_t, uint8_t>>& values);
@@ -163,6 +170,7 @@ namespace retromulator
         juce::String getCcTableText(SynthType type, bool grid = false);
 
     private:
+        static bool readNative(SynthType type, const std::vector<uint8_t>& m, const std::function<void(int, int)>& out);
         struct CoreMap
         {
             std::unique_ptr<pluginLib::ParameterDescriptions> descriptions;

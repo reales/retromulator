@@ -710,11 +710,20 @@ namespace retromulator
         m_paramPool->setCore(SynthType::None);
 #ifdef CUSTOM
         m_board = std::make_unique<board::Board>(
-            [this](std::vector<uint8_t> sysex)
+            [this](std::vector<uint8_t> bytes)
             {
                 synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
-                ev.sysex = std::move(sysex);
-                ev.a = 0xf0;
+                if(!bytes.empty() && bytes.front() == 0xf0)
+                {
+                    ev.sysex = std::move(bytes);
+                    ev.a = 0xf0;
+                }
+                else if(bytes.size() == 3)
+                {
+                    ev.a = bytes[0];
+                    ev.b = bytes[1];
+                    ev.c = bytes[2];
+                }
                 addMidiEvent(ev);
             },
             [this](const int slot, const int value)
@@ -725,6 +734,16 @@ namespace retromulator
             [this](const int slot)
             {
                 return m_paramPool ? m_paramPool->getSlotMidiValue(slot) : -1;
+            },
+            [this](const int native, const int value)
+            {
+                if(m_paramPool)
+                    m_paramPool->sendNative(native, value);
+            },
+            [this](const std::vector<std::vector<uint8_t>>& messages, const std::function<void(int, int)>& out)
+            {
+                if(m_paramPool)
+                    m_paramPool->readNatives(messages, out);
             });
         m_midiInParser = std::make_unique<board::MidiInParser>(
             [this](const std::string& name) -> std::string
@@ -744,6 +763,11 @@ namespace retromulator
                     editor->selectCoreFromMidi(type);
                 else if(type != m_synthType)
                     setSynthType(type, {});
+            },
+            [this](const int native, const int value)
+            {
+                if(m_paramPool)
+                    m_paramPool->sendNative(native, value);
             });
 #endif
 
