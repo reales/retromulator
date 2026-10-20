@@ -52,6 +52,8 @@ The **Oberheim Matrix-1000** runs the original firmware on an emulated 6809 boar
 
 The standalone app opens modules, .m3u playlists and .mid files handed over by the OS (double click, Open With, or a drop on the dock icon) and switches to the matching core.
 
+The plugin has a MIDI output that can pass on what the emulated core sends (SysEx dumps, parameter changes), switched on with `midiOutCoreOutput="1"` in settings.xml.
+
 ## How it differs from Gearmulator
 
 Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
