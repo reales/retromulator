@@ -29,7 +29,7 @@ namespace emu88Lib { class HardwareDevice; }
 namespace trackerLib { class Device; }
 namespace matrixLib { class Device; }
 #ifdef CUSTOM
-namespace retromulator::board { class MidiInParser; }
+namespace retromulator::board { class MidiInParser; class Board; }
 #endif
 
 namespace retromulator
@@ -295,6 +295,8 @@ namespace retromulator
 #ifdef CUSTOM
         // NRPN / 14-bit CC to the core's own messages. Null until the constructor finishes.
         board::MidiInParser* getMidiInParser() const { return m_midiInParser.get(); }
+        // Every parameter of the current core's map, for the board view. Message thread.
+        board::Board* getBoard() const { return m_board.get(); }
 #endif
 
         // ── Data folder helpers ─────────────────────────────────────────────
@@ -464,6 +466,7 @@ namespace retromulator
         std::string m_romPath;
         std::unique_ptr<ParameterPool> m_paramPool;
 #ifdef CUSTOM
+        std::unique_ptr<board::Board> m_board;
         std::unique_ptr<board::MidiInParser> m_midiInParser;
 #endif
 

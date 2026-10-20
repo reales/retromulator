@@ -858,6 +858,13 @@ namespace retromulator
             m_slots[static_cast<size_t>(slot)]->setFromMidi(value, true);
     }
 
+    int ParameterPool::getSlotMidiValue(const int slot) const
+    {
+        if(slot < 0 || slot >= NumSlots || !m_slots[static_cast<size_t>(slot)]->binding().desc)
+            return -1;
+        return m_slots[static_cast<size_t>(slot)]->getMidiValue();
+    }
+
     void ParameterPool::clearTouched()
     {
         for(auto* s : m_slots)

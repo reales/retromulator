@@ -42,6 +42,7 @@
 #ifdef CUSTOM
 #include "virusLib/presetConverter.h"
 #include "board/MidiInParser.h"
+#include "board/Board.h"
 #endif
 #include "synthLib/romLoader.h"
 
@@ -708,6 +709,23 @@ namespace retromulator
         m_paramPool = std::make_unique<ParameterPool>(*this);
         m_paramPool->setCore(SynthType::None);
 #ifdef CUSTOM
+        m_board = std::make_unique<board::Board>(
+            [this](std::vector<uint8_t> sysex)
+            {
+                synthLib::SMidiEvent ev(synthLib::MidiEventSource::Editor);
+                ev.sysex = std::move(sysex);
+                ev.a = 0xf0;
+                addMidiEvent(ev);
+            },
+            [this](const int slot, const int value)
+            {
+                if(m_paramPool)
+                    m_paramPool->setSlotFromMidi(slot, value);
+            },
+            [this](const int slot)
+            {
+                return m_paramPool ? m_paramPool->getSlotMidiValue(slot) : -1;
+            });
         m_midiInParser = std::make_unique<board::MidiInParser>(
             [this](const std::string& name) -> std::string
             {
@@ -715,10 +733,9 @@ namespace retromulator
                     return {res->first, res->second};
                 return {};
             },
-            [this](const int slot, const int value)
+            [this](const int param, const int value)
             {
-                if(m_paramPool)
-                    m_paramPool->setSlotFromMidi(slot, value);
+                m_board->setFromMidi(param, value);
             },
             [this](const SynthType type)
             {
@@ -803,7 +820,10 @@ namespace retromulator
             m_paramPool->setCore(type);
 #ifdef CUSTOM
         if(m_midiInParser)
+        {
             m_midiInParser->setCore(type);
+            m_board->setMap(m_midiInParser->currentMap());
+        }
 #endif
 
         suspendProcessing(true);
@@ -924,7 +944,10 @@ namespace retromulator
             m_paramPool->setCore(type);
 #ifdef CUSTOM
         if(m_midiInParser)
+        {
             m_midiInParser->setCore(type);
+            m_board->setMap(m_midiInParser->currentMap());
+        }
 #endif
 
         suspendProcessing(true);
@@ -1259,6 +1282,14 @@ namespace retromulator
             const auto end = std::min(rawStart + std::max(1, m_bankStride), static_cast<int>(m_bankMessages.size()));
             m_paramPool->syncFromPatch(synthLib::SysexBufferList(m_bankMessages.begin() + rawStart,
                                                                  m_bankMessages.begin() + end));
+#ifdef CUSTOM
+            // The deferred resend calls this from the audio thread; the board lives on the message thread.
+            std::vector<std::vector<uint8_t>> patch(m_bankMessages.begin() + rawStart, m_bankMessages.begin() + end);
+            if(juce::MessageManager::existsAndIsCurrentThread())
+                m_board->applyDump(patch);
+            else
+                juce::MessageManager::callAsync([this, patch = std::move(patch)] { m_board->applyDump(patch); });
+#endif
         }
 
         // If prepareToPlay has not been called yet (AU XPC: UI fires before the audio

@@ -134,6 +134,8 @@ namespace retromulator
 
         // Message thread. Mirrors a value the device was just sent by other means.
         void setSlotFromMidi(int slot, int value);
+        // The slot's value in MIDI units, -1 when the slot is unused.
+        int getSlotMidiValue(int slot) const;
 
         void clearTouched();
         void resendTouched();
