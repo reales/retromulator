@@ -28,6 +28,9 @@ namespace ca72Lib { class Device; }
 namespace emu88Lib { class HardwareDevice; }
 namespace trackerLib { class Device; }
 namespace matrixLib { class Device; }
+#ifdef CUSTOM
+namespace retromulator::board { class MidiInParser; }
+#endif
 
 namespace retromulator
 {
@@ -289,6 +292,10 @@ namespace retromulator
 
         // 128 fixed host parameters, rebound per core. Null until the constructor finishes.
         ParameterPool* getParameterPool() const { return m_paramPool.get(); }
+#ifdef CUSTOM
+        // NRPN / 14-bit CC to the core's own messages. Null until the constructor finishes.
+        board::MidiInParser* getMidiInParser() const { return m_midiInParser.get(); }
+#endif
 
         // ── Data folder helpers ─────────────────────────────────────────────
         static std::string getDataFolder();
@@ -456,6 +463,9 @@ namespace retromulator
         SynthType   m_synthType = SynthType::None;
         std::string m_romPath;
         std::unique_ptr<ParameterPool> m_paramPool;
+#ifdef CUSTOM
+        std::unique_ptr<board::MidiInParser> m_midiInParser;
+#endif
 
         // GUI size saved/restored across DAW sessions and settings.xml
         int  m_savedEditorWidth  = 0;

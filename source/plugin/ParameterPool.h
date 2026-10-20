@@ -132,6 +132,9 @@ namespace retromulator
         // must be in the descriptions before that, not produced on demand.
         void refreshFor(SynthType type);
 
+        // Message thread. Mirrors a value the device was just sent by other means.
+        void setSlotFromMidi(int slot, int value);
+
         void clearTouched();
         void resendTouched();
 

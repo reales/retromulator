@@ -41,6 +41,7 @@
 #include "virusLib/microcontrollerTypes.h"
 #ifdef CUSTOM
 #include "virusLib/presetConverter.h"
+#include "board/MidiInParser.h"
 #endif
 #include "synthLib/romLoader.h"
 
@@ -706,6 +707,28 @@ namespace retromulator
         // Host parameters must exist before the host queries the tree.
         m_paramPool = std::make_unique<ParameterPool>(*this);
         m_paramPool->setCore(SynthType::None);
+#ifdef CUSTOM
+        m_midiInParser = std::make_unique<board::MidiInParser>(
+            [this](const std::string& name) -> std::string
+            {
+                if(const auto res = findResource(name))
+                    return {res->first, res->second};
+                return {};
+            },
+            [this](const int slot, const int value)
+            {
+                if(m_paramPool)
+                    m_paramPool->setSlotFromMidi(slot, value);
+            },
+            [this](const SynthType type)
+            {
+                // The editor also loads the first bank, as when the core is picked by hand.
+                if(auto* editor = dynamic_cast<RetroEditor*>(getActiveEditor()))
+                    editor->selectCoreFromMidi(type);
+                else if(type != m_synthType)
+                    setSynthType(type, {});
+            });
+#endif
 
         // Seed the ROM search path with the shared data folder so all loaders
         // can find firmware files placed there.
@@ -778,6 +801,10 @@ namespace retromulator
 
         if(m_paramPool)
             m_paramPool->setCore(type);
+#ifdef CUSTOM
+        if(m_midiInParser)
+            m_midiInParser->setCore(type);
+#endif
 
         suspendProcessing(true);
 
@@ -895,6 +922,10 @@ namespace retromulator
 
         if(m_paramPool)
             m_paramPool->setCore(type);
+#ifdef CUSTOM
+        if(m_midiInParser)
+            m_midiInParser->setCore(type);
+#endif
 
         suspendProcessing(true);
 
@@ -4143,6 +4174,11 @@ namespace retromulator
         // Runs for every core, and from the audio path rather than a host callback that
         // only fires when a playhead offers a BPM.
         processDeferredResend();
+
+#ifdef CUSTOM
+        if(m_midiInParser)
+            m_midiInParser->process(midi);
+#endif
 
         Processor::processBlock(buffer, midi);
 
