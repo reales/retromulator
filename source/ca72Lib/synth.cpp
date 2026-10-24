@@ -422,10 +422,11 @@ void Synth::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
         }
     }
     e.advance (total, panel);
-    // Workers' voices are waited for until 75 % of the block's period (upstream's DEADLINE); offline, for all.
+    // Workers' voices are waited for until the block's period is used up, not muted at 75 % (upstream's DEADLINE),
+    // so a slow core costs a glitch instead of a dropped note; offline, for all.
     std::optional<ca72poly::Workers::Clock::time_point> deadline;
     if (! isNonRealtime())
-        deadline = started + std::chrono::nanoseconds ((int64_t) (0.75e9 * total / hostRate));
+        deadline = started + std::chrono::nanoseconds ((int64_t) (1e9 * total / hostRate));
     e.finish (l, r, deadline);
 
     const float gain = (float) (outputGain (apvts.getRawParameterValue ("volume")->load() / 10.0, true)
