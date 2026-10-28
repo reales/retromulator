@@ -28,7 +28,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OpenB3, CA-72, OPL3, AY-3-8910, and Tracker cores are ROM-free.
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OpenB3, CA-72, OPL3, AY-3-8910, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
@@ -55,6 +55,48 @@ The standalone app opens modules, .m3u playlists and .mid files handed over by t
 The plugin has a MIDI output that can pass on what the emulated core sends (SysEx dumps, parameter changes), switched on with `midiOutCoreOutput="1"` in settings.xml.
 
 A core can also run without its sound engine, as an editor for the real synth, with `editorOnly_<core name>="1"` in settings.xml (spaces in the name become underscores).
+
+## ROM Files
+
+Required ROM files per hardware core. The filename is not checked: any file of the correct size and content is accepted.
+
+ROMs go in the `ROM` folder inside the Retromulator data folder, and the Roland SC-88 family sets (SC-55mkII, SC-88, SC-88VL, SC-88Pro, SC-8850) in its `88emu` folder:
+
+- macOS: `~/Library/Application Support/discoDSP/Retromulator/`
+- Windows: `Documents\discoDSP\Retromulator\`
+- Linux: `~/Documents/discoDSP/Retromulator/`
+
+The hashes are those of the images Retromulator is tested with. The Virus TI firmware varies in size between versions, so its hash is that of the 8,569,757 byte image tested; other versions may also work. The DX7 needs only its 16 KB firmware.
+
+| Hardware Core | ROM File | Size | SHA-1 | MD5 |
+|---|---|---|---|---|
+| Access Virus A, B & C | `virus_c.bin` | 512 KB | `4c34546889d90522a8d85300c471f18339f88f72` | `e499bb4f988d18d22bbfd0343928380a` |
+| Access Virus TI | `firmware.bin` | 6–9 MB | `fb60f58212f72047b46c72767b887397dd77264a` | `5d853f2ca304045a5458812504d5db95` |
+| Clavia Nord Lead 2X | `nord_lead_2x.bin` | 512 KB | `549394349f7371e48ead57d8a0ec6b4010014d12` | `61f58146de0b566adf6d1acf6355718b` |
+| Oberheim Matrix-1000 | `mtrx1kv120.bin` | 32 KB | `4c39f955e9bed110e25805cf076537634ff1ac7a` | `a8092cfa56189c5bb7c1775e7b4ca09b` |
+|  | `m1000_patchrom.bin` | 64 KB | `20f413653f597313766f24d4e369c6b7768b6872` | `fa081871ed9120468577eefab72330b1` |
+| Roland JP-8000 | `jp8000.bin` | 512 KB | `492c98abdeef078afd0f6a5e00fd5d4a858a8242` | `6a3b6a45817a0b038aa63d6277ea7d51` |
+| Roland SC-55mkII | `rom1.bin` | 32 KB | `b91bb1d9dccffe831b7cfde7800a3fe32b2fbda6` | `4ca058f7db05f51e97bb30a162e9610a` |
+|  | `rom2.bin` | 512 KB | `078cb5feea05e80bb9a1bb857a2163ee434fd053` | `63b24c7193ce34afefce9cec32ac39f0` |
+|  | `waverom1.bin` | 2 MB | `96708cb21381c2fd03de4babbf7aea301c7594a6` | `30df645acf7f1b621d5f2891ea53e00b` |
+|  | `waverom2.bin` | 1 MB | `4d91cdeaed048d653dbf846a221003c3a3f08279` | `f86e0433a11707a048a8a79e8d98a3be` |
+| Roland SC-88 / SC-88VL | `ControlROMSC88.bin` | 512 KB | `3bc9a68703bd09459283b6b45d01d08feaffb744` | `0ac771782ea58a53af590ebdf140d517` |
+|  | `ControlROMSC88VL.bin` | 512 KB | `3a20f8f8cefd0d5e1edb103046f6fe94bb73ac7a` | `e3c8e8e644534f2390958c6f9d553da5` |
+|  | `PCM_IC_325.bin` | 2 MB | `860dcd9804ded4cd46aab38bfc3764a1ad7a6b65` | `6a92b7de3ac7b8205d29ec4497644beb` |
+|  | `PCM_IC_326.bin` | 2 MB | `ac95c26c46c40aacb944f5d45634c93bee9e6d90` | `d98f4b255d3a7dc830d92c71c25ce2eb` |
+|  | `PCM_IC_327.bin` | 2 MB | `d88bf13c3d74097991b783295d95ccfae2c9282d` | `c05b103d4db110b3962431173cc72967` |
+|  | `PCM_IC_328.bin` | 2 MB | `03e70ae2efd190f41af24be01b1abaa84bfa93d9` | `bccc26c34cac0d5509e8efb645043b5b` |
+| Roland SC-88Pro | `sc88pro_valid.bin` | 1 MB | `6d06f00a1f8195a76b3af600ca708003f9a3abdc` | `9d4c2f123b4451d8ee75c3b982760f28` |
+|  | `Roland VE-GSPro_Sample_ROM_A_R01567167 301_Roland XP-GS_v1.01.BIN` | 8 MB | `5cc1700b3f41921ed81fe3b92ba9ec28bd6649c9` | `bd33b20bb5e8f51e436e141f81a75c14` |
+|  | `Roland VE-GSPro_Sample_ROM_B_R01567178 302_Roland SC-GS_v1.00.BIN` | 8 MB | `78b37ce0e735ad2c3e51338e74219a103d7fadba` | `125ea2056dc208f04a141b3dcdffdb1b` |
+|  | `Roland VE-GSPro_Sample_ROM_C_R01233667 314_Roland SC-GS_v1.00.BIN` | 4 MB | `e2ad5f0b2e5bdad84e42d080fc2e2fad523cb84b` | `48c3887c9a2a574b907242640fa0a320` |
+| Roland SC-8850 | `8850CPU.bin` | 64 KB | `99b414c5129960e3e58af1fb147a1474ccccca84` | `efe1ffb0ccbe1b2ec454692c522494fc` |
+|  | `8850.bin` | 1 MB | `e594de1f5be17c11ef4f4d7efd142053bbf44085` | `554d5997dcd9ce6fa0777092ff48f6fa` |
+|  | `8850Flash.bin` | 2 MB | `d9af1c75b277de2258ed74982d7a754f60c0826e` | `06eee65647b66109efb01eabd6d71248` |
+|  | `SC8850WaveROMUnscrambled.bin` | 32 MB | `f3ff7b1f57f6c1a393d0a22e6bd08554dc325573` | `e8eb6ac0e394997dfbc17064f9f4a70e` |
+| Waldorf microQ | `micro_q.bin` | 512 KB | `2b5d3f57b8a43802f36a53ced4173285f70d5ae0` | `216d13d7222a9f6a548ab19d419aa101` |
+| Waldorf Microwave XT | `xt.bin` | 256 KB | `781ceb74e15d48017bf327091729f3e127ec2a3a` | `b676e922e04841e304676f9b7f55fa41` |
+| Yamaha DX7 | `dx7.bin` | 16 KB | `715dbb8e96a4df2a7f096b368334a7654860bb26` | `6580f668fa67e63c22ad2617a0aaebd7` |
 
 ## How it differs from Gearmulator
 
