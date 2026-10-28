@@ -98,12 +98,6 @@ The hashes are those of the images Retromulator is tested with. The Virus TI fir
 | Waldorf Microwave XT | `xt.bin` | 256 KB | `781ceb74e15d48017bf327091729f3e127ec2a3a` | `b676e922e04841e304676f9b7f55fa41` |
 | Yamaha DX7 | `dx7.bin` | 16 KB | `715dbb8e96a4df2a7f096b368334a7654860bb26` | `6580f668fa67e63c22ad2617a0aaebd7` |
 
-## How it differs from Gearmulator
-
-Retromulator is built on top of the open-source emulation engines from [Gearmulator](https://github.com/dsp56300/gearmulator) by dsp56300. Gearmulator ships as standalone applications and open-source plugins built with CMake. Retromulator packages the same engines into a polished single-plugin experience using JUCE, with a unified rack-style UI, DAW state persistence, bank/patch browsing, focused on preset playing.
-
-The emulation cores (dsp56300, mc68k, h8s, synthLib and all synth-specific libraries) are from Gearmulator. The DX7 emulation is ported from VDX7, a separate project (see Credits below). The OPL3 emulation uses Nuked OPL3 by Nuke.YKT. The SID emulation uses reSID by Dag Lem. The AY-3-8910 / YM2149 emulation uses Ayumi by Peter Sovietov. The JE-8086 and SC-88 family emulations are by Giulio Zausa. The Tracker core uses the Fasttracker 2 clone replayer by Olav Sorensen and the Schism Tracker player. The Akai S1000 sampler uses the SFZero module, an MIT-licensed JUCE sample engine maintained by discoDSP. The Wurlitzer 200A (OpenWurli) is a physical model fully ported by discoDSP. The Matrix-1000 emulation (6809 board and CEM3396 voice model) is by discoDSP. The synthLib device adapters that wrap each engine (SID, AY-3-8910, OpenWurli, OPL3 and Tracker), the bank and patch handling, the offline WAV / MP3 renderer and the host parameter pool are by discoDSP.
-
 ## Credits
 
 - **[dsp56300](https://github.com/dsp56300)** — DSP56300 emulator, Virus TI / microQ / XT / Nord N2X engines, GPL v3
