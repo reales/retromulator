@@ -22,6 +22,10 @@ namespace retromulator
         Matrix    = 14, // Oberheim Matrix-1000 (6809 firmware + CEM3396 voice model)
         OpenB3    = 15, // Hammond B3 + Leslie (OpenB3 / setBfree Beatrix engine)
         CA72      = 16, // Minimoog Model D (CA-72 circuit model by Idle Foundry)
+        OPL       = 17, // discoDSP OPL, hosted from ROM/OPL.vst3 (commercial builds only)
+        Discovery = 18, // discoDSP Discovery player, hosted from ROM/Discovery.vst3 (commercial builds only)
+        OBXd      = 19, // discoDSP OB-Xd 2, hosted from ROM/OB-Xd.vst3 (commercial builds only)
+        NordLead1 = 20, // Nordic (Nord Lead 1), hosted from ROM/Nordic.vst3 (commercial builds only)
 
         Count
     };
@@ -38,6 +42,9 @@ namespace retromulator
             SynthType::JE8086,
             SynthType::Matrix,
             SynthType::MicroQ,
+#ifdef CUSTOM
+            SynthType::NordLead1,
+#endif
             SynthType::NordN2X,
             SynthType::OPL3,
             SynthType::OpenB3,
@@ -61,6 +68,7 @@ namespace retromulator
             case SynthType::MicroQ:   return "MicroQ";
             case SynthType::XT:       return "XT";
             case SynthType::NordN2X:  return "Nord N2X";
+            case SynthType::NordLead1: return "Nordic";
             case SynthType::JE8086:   return "JE-8086";
             case SynthType::DX7:       return "DX7";
             case SynthType::AkaiS1000: return "Akai S1000";
@@ -73,7 +81,27 @@ namespace retromulator
             case SynthType::Matrix:    return "Matrix";
             case SynthType::OpenB3:    return "OpenB3";
             case SynthType::CA72:      return "CA-72";
+            case SynthType::OPL:       return "OPL3";
+            case SynthType::Discovery: return "Discovery";
+            case SynthType::OBXd:      return "OB-Xd 2";
             default:                   return "None";
+        }
+    }
+
+    // A discoDSP plugin run from ROM/<name>.vst3 rather than an emulator built in.
+    inline bool isHostedCore(SynthType t)
+    {
+        return t == SynthType::NordLead1;
+    }
+
+    // Name of the core's data folder and settings keys. Fixed once shipped, so a core can be
+    // renamed in the menu without moving anyone's files.
+    inline const char* synthFolderName(SynthType t)
+    {
+        switch(t)
+        {
+            case SynthType::OPL3: return "OPL3";
+            default:              return synthTypeName(t);
         }
     }
 }

@@ -163,9 +163,10 @@ namespace pluginLib
 	protected:
 		void destroyController();
 
-	private:
 		void prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock) override;
 		void releaseResources() override;
+
+	private:
 
 		//==============================================================================
 		bool isBusesLayoutSupported(const BusesLayout&) const override;

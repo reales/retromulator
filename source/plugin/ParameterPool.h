@@ -32,6 +32,7 @@ namespace retromulator
             int pp = -1;      // poly pressure index (Virus page B)
             int native = -1;  // core-specific parameter index (JSON "nrpn"), N2X multi params
             int board = -1;   // board parameter sent through the board's own message (slot links)
+            juce::AudioProcessorParameter* hosted = nullptr;   // a hosted plugin's own parameter (OPL)
         };
 
         SlotParameter(ParameterPool& pool, int slot);
@@ -41,14 +42,15 @@ namespace retromulator
         float getDefaultValue() const override;
 
         juce::String getName(int maximumStringLength) const override;
-        juce::String getLabel() const override { return {}; }
+        juce::String getLabel() const override;
         juce::String getText(float normalisedValue, int) const override;
         float getValueForText(const juce::String& text) const override;
 
         const juce::NormalisableRange<float>& getNormalisableRange() const override { return binding().range; }
         bool isDiscrete() const override;
         bool isBoolean() const override;
-        bool isAutomatable() const override { return binding().desc != nullptr; }
+        int  getNumSteps() const override;
+        bool isAutomatable() const override;
 
         int  getSlot() const { return m_slot; }
         int  getMidiValue() const;
@@ -78,12 +80,18 @@ namespace retromulator
     };
 
     // Owns the per-core description sets and the 128 slots registered with the host.
-    class ParameterPool
+    class ParameterPool : private juce::AudioProcessorParameter::Listener
     {
     public:
         static constexpr int NumSlots = 128;
 
         explicit ParameterPool(pluginLib::Processor& processor);
+        ~ParameterPool() override;
+
+        // Message thread. Points the slots at a hosted plugin's parameters, in order, so the
+        // host automates them directly and edits on the plugin's own editor come back.
+        // setCore drops the binding, as must happen before the plugin is destroyed.
+        void bindHosted(juce::AudioProcessor* plugin);
 
         // Message thread. Rebinds every slot and asks the host to re-read the tree.
         void setCore(SynthType type);
@@ -199,6 +207,14 @@ namespace retromulator
         juce::String getCcTableText(SynthType type, bool grid = false);
 
     private:
+        void parameterValueChanged(int index, float value) override;
+        void parameterGestureChanged(int index, bool starting) override;
+        void unbindHosted();
+
+        std::array<SlotParameter::Binding, NumSlots> m_hostedBindings{};
+        juce::Array<juce::AudioProcessorParameter*> m_hosted;
+        std::vector<int> m_hostedSlotOf;   // hosted parameter index -> slot
+
         static bool readNative(SynthType type, const std::vector<uint8_t>& m, const std::function<void(int, int)>& out);
         void emit(const synthLib::SMidiEvent& ev);
         void unmapCc(int slot);

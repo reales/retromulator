@@ -10,14 +10,11 @@ namespace retromulator
     {
     }
 
-    bool MinimalController::parseSysexMessage(const pluginLib::SysEx& sysex,
-                                              synthLib::MidiEventSource source)
+    bool MinimalController::parseSysexMessage(const pluginLib::SysEx& /*sysex*/,
+                                              synthLib::MidiEventSource /*source*/)
     {
-        // Forward SysEx directly to the device via the plugin
-        synthLib::SMidiEvent ev(source);
-        ev.sysex = sysex;
-        ev.a = 0xf0;
-        getProcessor().addMidiEvent(ev);
+        // Host and physical sysex reach the device through the routing matrix already.
+        // Sending it on from here handed it back to the editor, which looped it forever.
         return true;
     }
 

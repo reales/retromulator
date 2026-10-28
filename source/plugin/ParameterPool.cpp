@@ -45,6 +45,13 @@ namespace retromulator
         {
             return b.desc && b.desc->isBool && b.cc >= 64 && b.cc <= 69;
         }
+
+        // A hosted parameter in whole steps, as boards and MIDI address it: its own steps when
+        // discrete, else 0-126 so that a bipolar control has an exact centre.
+        int hostedSteps(const juce::AudioProcessorParameter& p)
+        {
+            return p.isDiscrete() || p.isBoolean() ? juce::jmax(2, p.getNumSteps()) : 127;
+        }
     }
 
     SlotParameter::SlotParameter(ParameterPool& pool, int slot)
@@ -59,7 +66,8 @@ namespace retromulator
         m_binding.store(b ? b : &s_unbound, std::memory_order_release);
         m_lastSent.store(-1, std::memory_order_relaxed);
         m_touched.store(false, std::memory_order_relaxed);
-        m_value.store(getDefaultValue(), std::memory_order_relaxed);
+        const auto* hosted = binding().hosted;
+        m_value.store(hosted ? hosted->getValue() : getDefaultValue(), std::memory_order_relaxed);
     }
 
     void SlotParameter::setValue(float newValue)
@@ -68,6 +76,12 @@ namespace retromulator
         m_value.store(newValue, std::memory_order_relaxed);
 
         const auto& b = binding();
+        if(b.hosted)
+        {
+            if(b.hosted->getValue() != newValue)
+                b.hosted->setValue(newValue);
+            return;
+        }
         if(!b.desc)
             return;
 
@@ -82,6 +96,8 @@ namespace retromulator
     float SlotParameter::getDefaultValue() const
     {
         const auto& b = binding();
+        if(b.hosted)
+            return b.hosted->getDefaultValue();
         if(!b.desc)
             return 0.0f;
         return b.range.convertTo0to1(static_cast<float>(b.desc->defaultValue));
@@ -90,14 +106,24 @@ namespace retromulator
     juce::String SlotParameter::getName(int maximumStringLength) const
     {
         const auto& b = binding();
+        if(b.hosted)
+            return b.hosted->getName(maximumStringLength);
         if(!b.desc)
             return {};
         return juce::String(b.desc->displayName).substring(0, maximumStringLength);
     }
 
-    juce::String SlotParameter::getText(float normalisedValue, int) const
+    juce::String SlotParameter::getLabel() const
+    {
+        const auto* hosted = binding().hosted;
+        return hosted ? hosted->getLabel() : juce::String();
+    }
+
+    juce::String SlotParameter::getText(float normalisedValue, int maximumStringLength) const
     {
         const auto& b = binding();
+        if(b.hosted)
+            return b.hosted->getText(normalisedValue, maximumStringLength);
         const int v = juce::roundToInt(b.range.convertFrom0to1(juce::jlimit(0.0f, 1.0f, normalisedValue)));
         if(!b.desc)
             return juce::String(v);
@@ -107,6 +133,8 @@ namespace retromulator
     float SlotParameter::getValueForText(const juce::String& text) const
     {
         const auto& b = binding();
+        if(b.hosted)
+            return b.hosted->getValueForText(text);
         if(!b.desc)
             return b.range.convertTo0to1(static_cast<float>(text.getIntValue()));
 
@@ -118,24 +146,60 @@ namespace retromulator
 
     bool SlotParameter::isDiscrete() const
     {
+        if(const auto* hosted = binding().hosted)
+            return hosted->isDiscrete();
         const auto* d = binding().desc;
         return d && (d->isDiscrete || d->isBool);
     }
 
     bool SlotParameter::isBoolean() const
     {
+        if(const auto* hosted = binding().hosted)
+            return hosted->isBoolean();
         const auto* d = binding().desc;
         return d && d->isBool;
     }
 
+    int SlotParameter::getNumSteps() const
+    {
+        if(const auto* hosted = binding().hosted)
+            return hosted->getNumSteps();
+        return juce::RangedAudioParameter::getNumSteps();
+    }
+
+    bool SlotParameter::isAutomatable() const
+    {
+        const auto& b = binding();
+        return b.desc != nullptr || (b.hosted && b.hosted->isAutomatable());
+    }
+
     int SlotParameter::getMidiValue() const
     {
+        if(const auto* hosted = binding().hosted)
+            return juce::roundToInt(getValue() * static_cast<float>(hostedSteps(*hosted) - 1));
         return juce::roundToInt(binding().range.convertFrom0to1(getValue()));
     }
 
     void SlotParameter::setFromMidi(int midiValue, bool notifyHost)
     {
         const auto& b = binding();
+        if(b.hosted)
+        {
+            const int last = hostedSteps(*b.hosted) - 1;
+            const float n = static_cast<float>(juce::jlimit(0, last, midiValue)) / static_cast<float>(last);
+            if(notifyHost)
+            {
+                beginChangeGesture();
+                setValueNotifyingHost(n);
+                endChangeGesture();
+            }
+            else
+            {
+                setValue(n);
+                sendValueChangedMessageToListeners(n);
+            }
+            return;
+        }
         if(!b.desc)
             return;
 
@@ -521,8 +585,88 @@ namespace retromulator
             setCore(type);
     }
 
+    ParameterPool::~ParameterPool()
+    {
+        // the hosted plugin is gone by now, its parameters must not be touched
+        m_hosted.clear();
+    }
+
+    void ParameterPool::bindHosted(juce::AudioProcessor* plugin)
+    {
+        unbindHosted();
+        if(!plugin)
+            return;
+
+        juce::AudioProcessorParameter* bypass = nullptr;
+        if(auto* instance = dynamic_cast<juce::AudioPluginInstance*>(plugin))
+            bypass = instance->getBypassParameter();
+
+        const auto& params = plugin->getParameters();
+        m_hostedSlotOf.assign(static_cast<size_t>(params.size()), -1);
+
+        int slot = 0;
+        for(auto* p : params)
+        {
+            if(slot >= NumSlots)
+                break;
+            // JUCE's VST3 wrapper adds a "Program" parameter; programs go through the combos
+            if(p == bypass || !p->isAutomatable() || p->getName(64).isEmpty() || p->getName(64) == "Program")
+                continue;
+
+            auto& b = m_hostedBindings[static_cast<size_t>(slot)];
+            b = {};
+            b.range = juce::NormalisableRange<float>(0.0f, 1.0f);
+            b.hosted = p;
+            m_hostedSlotOf[static_cast<size_t>(p->getParameterIndex())] = slot;
+            m_hosted.add(p);
+            m_slots[static_cast<size_t>(slot)]->rebind(&b);
+            p->addListener(this);
+            ++slot;
+        }
+
+        for(; slot < NumSlots; ++slot)
+            m_slots[static_cast<size_t>(slot)]->rebind(&SlotParameter::unboundBinding());
+
+        // MIDI goes to the plugin as it is, no CC is a slot
+        m_ccToSlot.fill(-1);
+        m_linked.fill(false);
+        m_processor.updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withParameterInfoChanged(true));
+    }
+
+    void ParameterPool::unbindHosted()
+    {
+        for(auto* p : m_hosted)
+            p->removeListener(this);
+        m_hosted.clear();
+        m_hostedSlotOf.clear();
+    }
+
+    void ParameterPool::parameterValueChanged(const int index, const float value)
+    {
+        if(!juce::isPositiveAndBelow(index, static_cast<int>(m_hostedSlotOf.size())))
+            return;
+        const int slot = m_hostedSlotOf[static_cast<size_t>(index)];
+        if(slot >= 0)
+            m_slots[static_cast<size_t>(slot)]->setValueNotifyingHost(value);
+    }
+
+    void ParameterPool::parameterGestureChanged(const int index, const bool starting)
+    {
+        if(!juce::isPositiveAndBelow(index, static_cast<int>(m_hostedSlotOf.size())))
+            return;
+        const int slot = m_hostedSlotOf[static_cast<size_t>(index)];
+        if(slot < 0)
+            return;
+        auto* s = m_slots[static_cast<size_t>(slot)];
+        if(starting)
+            s->beginChangeGesture();
+        else
+            s->endChangeGesture();
+    }
+
     void ParameterPool::setCore(SynthType type)
     {
+        unbindHosted();
         const auto& map = mapFor(type);
         m_core = type;
         m_ccToSlot = map.ccToSlot;
@@ -868,7 +1012,10 @@ namespace retromulator
 
     int ParameterPool::getSlotMidiValue(const int slot) const
     {
-        if(slot < 0 || slot >= NumSlots || !m_slots[static_cast<size_t>(slot)]->binding().desc)
+        if(slot < 0 || slot >= NumSlots)
+            return -1;
+        const auto& b = m_slots[static_cast<size_t>(slot)]->binding();
+        if(!b.desc && !b.hosted)
             return -1;
         return m_slots[static_cast<size_t>(slot)]->getMidiValue();
     }

@@ -44,6 +44,9 @@
 #include "board/MidiInParser.h"
 #include "board/Board.h"
 #include "board/SlotLinks.h"
+#include "hosted/HostedDevice.h"
+#include "fx/FxChain.h"
+#include "LicenseChecker.h"
 #endif
 #include "synthLib/romLoader.h"
 
@@ -112,7 +115,7 @@ namespace retromulator
 
     std::string HeadlessProcessor::getSynthDataFolder(SynthType type)
     {
-        return getDataFolder() + synthTypeName(type) + "/";
+        return getDataFolder() + synthFolderName(type) + "/";
     }
 
     static juce::File getSettingsFile()
@@ -122,7 +125,7 @@ namespace retromulator
 
     static juce::String makeSettingsKey(SynthType type)
     {
-        return juce::String("lastLoadFolder_" + juce::String(synthTypeName(type)))
+        return juce::String("lastLoadFolder_" + juce::String(synthFolderName(type)))
             .replaceCharacter(' ', '_');
     }
 
@@ -776,6 +779,7 @@ namespace retromulator
             ev.a = 0xf0;
             addMidiEvent(ev);
         });
+        m_fxChain = std::make_unique<fx::Chain>();
         m_midiInParser = std::make_unique<board::MidiInParser>(
             [this](const std::string& name) -> std::string
             {
@@ -847,6 +851,10 @@ namespace retromulator
             saveEditorSizeToSettings(m_savedEditorWidth, m_savedEditorHeight);
 
         suspendProcessing(true);
+
+        // the hosted plugin's parameters still have the pool as a listener
+        if(m_paramPool)
+            m_paramPool->bindHosted(nullptr);
     }
 
     // ── Synth hot-swap ────────────────────────────────────────────────────────
@@ -950,10 +958,21 @@ namespace retromulator
                     ca72Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
                     root.getChildFile("User").createDirectory();
                 }
+#ifdef CUSTOM
+                else if(isHostedCore(type))
+                {
+                    if(auto* dev = getHostedDevice(); dev && m_paramPool)
+                        m_paramPool->bindHosted(&dev->getPlugin());
+                    pollHostedPreset();
+                }
+#endif
             }
         }
 
         setLatencyBlocks(latencyBlocksFor(type));
+#ifdef CUSTOM
+        refreshFxLatency();
+#endif
 
         suspendProcessing(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
@@ -991,7 +1010,7 @@ namespace retromulator
 
     static juce::String editorOnlyKey(const SynthType type)
     {
-        return ("editorOnly_" + juce::String(synthTypeName(type))).replaceCharacter(' ', '_');
+        return ("editorOnly_" + juce::String(synthFolderName(type))).replaceCharacter(' ', '_');
     }
 
     bool HeadlessProcessor::isEditorOnlySaved(const SynthType type)
@@ -1021,7 +1040,7 @@ namespace retromulator
         case SynthType::JE8086: case SynthType::AkaiS1000: case SynthType::OpenWurli:
         case SynthType::OPL3: case SynthType::SID: case SynthType::Ayumi:
         case SynthType::Trackermeister: case SynthType::Matrix: case SynthType::OpenB3:
-        case SynthType::CA72: case SynthType::None:
+        case SynthType::CA72: case SynthType::NordLead1: case SynthType::None:
             return 0;
         default:
             return 1;
@@ -1034,7 +1053,9 @@ namespace retromulator
         // Wait for any previous async boot to finish.
         joinBootThread();
 
-        if(type == SynthType::None || isEditorOnlySaved(type))
+        // A hosted VST3 is created and destroyed on the message thread, and loads fast
+        // enough not to need the boot thread.
+        if(type == SynthType::None || isHostedCore(type) || isEditorOnlySaved(type))
         {
             // SynthType::None is instant — no need for a background thread.
             setSynthType(type, romPath);
@@ -1044,6 +1065,7 @@ namespace retromulator
         }
 
         // ── Prepare state on the calling (GUI) thread ────────────────────────
+        const bool wasHosted = isHostedCore(m_synthType) && !m_editorOnly;
         m_isBooting.store(true);
         m_synthType   = type;
         m_romPath     = romPath;
@@ -1078,6 +1100,8 @@ namespace retromulator
         // join DSP threads which can block for a long time. We'll delete on the boot thread.
         getPlugin().releaseDevice();
         std::unique_ptr<synthLib::Device> oldDevice(m_device.release());
+        if(wasHosted)
+            oldDevice.reset();
 
         // Install a DummyDevice so the audio callback has something safe while booting.
         auto* dummy = new pluginLib::DummyDevice({});
@@ -1128,6 +1152,8 @@ namespace retromulator
             // Set latency blocks AFTER rebootDevice so the new device's
             // samplerate is used for the latency calculation.
             setLatencyBlocks(latencyBlocksFor(type));
+            // drops the FX chain's share even when the block count is unchanged
+            updateLatencySamples();
             if(!ok)
                 m_deviceError = synthLib::DeviceError::FirmwareMissing;
 
@@ -1628,6 +1654,11 @@ namespace retromulator
         // The new patch is now the source of truth; drop stale slot edits.
         if(m_paramPool)
             m_paramPool->clearTouched();
+
+#ifdef CUSTOM
+        if(isHostedCore(m_synthType))
+            return selectHostedPreset(m_hostedBank, index);
+#endif
 
         // Akai S1000: preset switching is handled by the SFZero subsound system,
         // not by sysex bank messages. Route to the correct selector.
@@ -3900,6 +3931,70 @@ namespace retromulator
         return dynamic_cast<ca72Lib::Device*>(m_device.get());
     }
 
+#ifdef CUSTOM
+    hosted::Device* HeadlessProcessor::getHostedDevice() const
+    {
+        if(!isHostedCore(m_synthType) || m_editorOnly)
+            return nullptr;
+        return dynamic_cast<hosted::Device*>(m_device.get());
+    }
+
+    bool HeadlessProcessor::selectHostedPreset(const int bank, const int preset)
+    {
+        auto* dev = getHostedDevice();
+        if(!dev || dev->getLink().loadPreset(bank, preset) != retroHosted::kOk)
+            return false;
+        pollHostedPreset();
+        return true;
+    }
+
+    void HeadlessProcessor::rescanHostedPresets()
+    {
+        auto* dev = getHostedDevice();
+        if(!dev)
+            return;
+        dev->getLink().getBankCount();
+        m_programNames.clear();
+        pollHostedPreset();
+    }
+
+    void HeadlessProcessor::pollHostedPreset()
+    {
+        auto* dev = getHostedDevice();
+        if(!dev)
+            return;
+        m_registered.store(license::isRegistered(), std::memory_order_relaxed);
+        char name[256] = {};
+        dev->getLink().getCurrentName(name, static_cast<int32_t>(sizeof(name)));
+        int32_t bank = -1, preset = -1;
+        auto& link = dev->getLink();
+        link.getCurrentPreset(&bank, &preset);
+
+        // the host's program list is the loaded preset's folder
+        if(bank >= 0 && (bank != m_hostedBank || m_programNames.empty()))
+        {
+            m_hostedBank = bank;
+            m_programNames.clear();
+            const int count = link.getPresetCount(bank);
+            for(int i = 0; i < count; ++i)
+            {
+                char presetName[256] = {};
+                link.getPresetName(bank, i, presetName, static_cast<int32_t>(sizeof(presetName)));
+                m_programNames.emplace_back(presetName);
+            }
+        }
+
+        const std::string n(name);
+        const int program = std::max(0, static_cast<int>(preset));
+        if(n != m_patchName || program != m_currentProgram)
+        {
+            m_patchName = n;
+            m_currentProgram = program;
+            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
+        }
+    }
+#endif
+
     void HeadlessProcessor::syncCA72PanelEdits()
     {
         if(m_isBooting.load()) return;
@@ -4252,6 +4347,20 @@ namespace retromulator
 
     void HeadlessProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
     {
+#ifdef CUSTOM
+        // a hosted plugin's tempo sync follows the host
+        if(isHostedCore(m_synthType))
+            if(auto* dev = getHostedDevice())
+                dev->setHostPlayHead(getPlayHead());
+
+        if(m_synthType == SynthType::Discovery && isNonRealtime() && !m_registered.load(std::memory_order_relaxed))
+        {
+            buffer.clear();
+            midi.clear();
+            return;
+        }
+#endif
+
         if(m_synthType == SynthType::CA72)
             if(auto* dev = getCA72Device())
             {
@@ -4339,7 +4448,19 @@ namespace retromulator
             m_midiInParser->process(midi);
 #endif
 
+#ifdef CUSTOM
+        // the effect chain runs on the core's output, or on None on the audio input
+        if(m_synthType == SynthType::None)
+        {
+            for(int c = getTotalNumInputChannels(); c < buffer.getNumChannels(); ++c)
+                buffer.clear(c, 0, buffer.getNumSamples());
+        }
+        else
+            Processor::processBlock(buffer, midi);
+        m_fxChain->process(buffer, midi, getPlayHead());
+#else
         Processor::processBlock(buffer, midi);
+#endif
 #ifdef CUSTOM
         if(m_midiInParser)
             m_midiInParser->appendEcho(midi);
@@ -4348,6 +4469,33 @@ namespace retromulator
         if(trackerLoopKey && m_coreAsync)
             m_coreAsync->triggerAsyncUpdate();
     }
+
+#ifdef CUSTOM
+    void HeadlessProcessor::prepareToPlay(const double sampleRate, const int maximumExpectedSamplesPerBlock)
+    {
+        Processor::prepareToPlay(sampleRate, maximumExpectedSamplesPerBlock);
+        m_fxChain->prepare(sampleRate, maximumExpectedSamplesPerBlock);
+    }
+
+    void HeadlessProcessor::releaseResources()
+    {
+        m_fxChain->release();
+        Processor::releaseResources();
+    }
+
+    void HeadlessProcessor::updateLatencySamples()
+    {
+        Processor::updateLatencySamples();
+        if(const int fx = m_fxChain->getLatencySamples())
+            setLatencySamples(getLatencySamples() + fx);
+    }
+
+    void HeadlessProcessor::refreshFxLatency()
+    {
+        m_fxChain->refreshLatency();
+        updateLatencySamples();
+    }
+#endif
 
     // ── Deferred resend (pre-audio guard + boot delay) ─────────────────────────
 
@@ -4463,6 +4611,7 @@ namespace retromulator
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
     static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
     static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
+    static constexpr int32_t kFxChainMagic = 0x48435846;         // 'FXCH'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -4481,6 +4630,16 @@ namespace retromulator
             std::vector<uint8_t> empty;
             appendBytes(destData, empty);
         }
+#ifdef CUSTOM
+        // OPL: the hosted plugin's own state takes the sysex slot
+        else if(isHostedCore(m_synthType) && !m_editorOnly)
+        {
+            std::vector<uint8_t> chunk;
+            if(auto* dev = getHostedDevice())
+                dev->getPluginState(chunk);
+            appendBytes(destData, chunk);
+        }
+#endif
         else
         {
             appendBytes(destData, m_sysexData);
@@ -4689,6 +4848,19 @@ namespace retromulator
             appendInt32(destData, kCorePanelMagic);
             appendInt32(destData, m_corePanelHidden ? 1 : 0);
         }
+
+#ifdef CUSTOM
+        // [chain][length:int32]['FXCH':int32], after everything else. setStateInformation
+        // cuts it off first, so the tail blocks above are still read from the end.
+        std::vector<uint8_t> chain;
+        m_fxChain->getState(chain);
+        if(!chain.empty())
+        {
+            destData.append(chain.data(), chain.size());
+            appendInt32(destData, static_cast<int32_t>(chain.size()));
+            appendInt32(destData, kFxChainMagic);
+        }
+#endif
     }
 
     static bool readInt32(const uint8_t* bytes, int total, int& offset, int32_t& out)
@@ -4726,6 +4898,25 @@ namespace retromulator
 
         const auto* bytes = static_cast<const uint8_t*>(data);
         int offset = 0;
+
+#ifdef CUSTOM
+        {
+            std::vector<uint8_t> chain;
+            int32_t magic = 0, length = 0;
+            if(sizeInBytes >= 12)
+            {
+                std::memcpy(&magic, bytes + sizeInBytes - 4, 4);
+                std::memcpy(&length, bytes + sizeInBytes - 8, 4);
+            }
+            if(magic == kFxChainMagic && length > 0 && length <= sizeInBytes - 12)
+            {
+                sizeInBytes -= length + 8;
+                chain.assign(bytes + sizeInBytes, bytes + sizeInBytes + length);
+            }
+            m_fxChain->setState(chain);
+            refreshFxLatency();
+        }
+#endif
 
         int32_t synthTypeInt = 0;
         if(!readInt32(bytes, sizeInBytes, offset, synthTypeInt)) return;
@@ -4849,6 +5040,14 @@ namespace retromulator
             else
                 m_sysexFilePath = sysexFilePath;
         }
+#ifdef CUSTOM
+        else if(isHostedCore(newType))
+        {
+            if(auto* dev = getHostedDevice(); dev && !sysexData.empty())
+                dev->setPluginState(sysexData);
+            pollHostedPreset();
+        }
+#endif
         else if(newType == SynthType::OPL3)
         {
             // OPL3: patch lives in the .sbi file (no embedded sysex). Reload it so

@@ -34,6 +34,10 @@
 #include "sidLib/device.h"
 #include "ayumiLib/device.h"
 
+#ifdef CUSTOM
+#include "hosted/HostedDevice.h"
+#endif
+
 #include "synthLib/romLoader.h"
 #include "synthLib/deviceException.h"
 
@@ -220,7 +224,7 @@ namespace retromulator
                 p.romData.insert(p.romData.end(), rom.patchRom.begin(), rom.patchRom.end());
                 p.romName = rom.firmwareFile;
                 if(!romSearchPath().empty())
-                    p.homePath = romSearchPath() + synthTypeName(SynthType::Matrix) + "/";
+                    p.homePath = romSearchPath() + synthFolderName(SynthType::Matrix) + "/";
                 return new matrixLib::Device(p);
             }
 
@@ -259,6 +263,19 @@ namespace retromulator
                 synthLib::DeviceCreateParams p;
                 return new sidLib::Device(p);
             }
+
+#ifdef CUSTOM
+            case SynthType::NordLead1:
+            {
+                juce::String error;
+                auto loaded = hosted::load(type, 44100.0, 512, error);
+                if(!loaded.plugin)
+                    throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, error.toStdString());
+
+                synthLib::DeviceCreateParams p;
+                return new hosted::Device(p, std::move(loaded));
+            }
+#endif
 
             case SynthType::Trackermeister:
             {

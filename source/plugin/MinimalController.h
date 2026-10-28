@@ -7,8 +7,7 @@ namespace pluginLib { class Processor; }
 namespace retromulator
 {
     // Minimal controller: no JSON-driven parameter registration. Host parameters
-    // live in ParameterPool; this class only routes incoming CCs into it and
-    // passes SysEx through to the device.
+    // live in ParameterPool; this class only routes incoming CCs into it.
     class MinimalController final : public pluginLib::Controller
     {
     public:
@@ -19,7 +18,7 @@ namespace retromulator
                                  pluginLib::ParamValue /*value*/,
                                  pluginLib::Parameter::Origin /*origin*/) override {}
 
-        // Pass SysEx straight through to the device via the processor
+        // Incoming SysEx needs no editor handling
         bool parseSysexMessage(const pluginLib::SysEx& sysex,
                                synthLib::MidiEventSource source) override;
 

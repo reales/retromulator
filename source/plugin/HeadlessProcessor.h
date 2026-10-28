@@ -30,6 +30,8 @@ namespace trackerLib { class Device; }
 namespace matrixLib { class Device; }
 #ifdef CUSTOM
 namespace retromulator::board { class MidiInParser; class Board; }
+namespace retromulator::hosted { class Device; }
+namespace retromulator::fx { class Chain; }
 #endif
 
 namespace retromulator
@@ -141,6 +143,24 @@ namespace retromulator
 
         // Message thread. Panel edits on the CA-72 move the matching host parameters.
         void syncCA72PanelEdits();
+
+#ifdef CUSTOM
+        // The plugin hosted as the OPL core, or nullptr if another core is loaded.
+        hosted::Device* getHostedDevice() const;
+
+        // Message thread. Loads one of the hosted plugin's presets (bank = folder).
+        bool selectHostedPreset(int bank, int preset);
+        // Message thread. Takes the name of what the plugin has loaded, also from its own editor.
+        void pollHostedPreset();
+        int getHostedBank() const { return m_hostedBank; }
+        // Message thread. Reads the plugin's folders again and rebuilds the program list.
+        void rescanHostedPresets();
+
+        // The None core's VST3 effect chain, run on the audio input.
+        fx::Chain& getFxChain() const { return *m_fxChain; }
+        // Message thread. Reports the chain's latency on top of the core's when it changed.
+        void refreshFxLatency();
+#endif
 
         // 88emu (SC-88 family) device, or nullptr if another core is loaded.
         emu88Lib::HardwareDevice* getEmu88Device() const;
@@ -485,6 +505,11 @@ namespace retromulator
 #ifdef CUSTOM
         std::unique_ptr<board::Board> m_board;
         std::unique_ptr<board::MidiInParser> m_midiInParser;
+        std::unique_ptr<fx::Chain> m_fxChain;
+
+        void prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock) override;
+        void releaseResources() override;
+        void updateLatencySamples() override;
 #endif
 
         // GUI size saved/restored across DAW sessions and settings.xml
@@ -512,6 +537,12 @@ namespace retromulator
         // Split messages from the loaded bank; index into it for program selection.
         std::vector<synthLib::SysexBuffer> m_bankMessages;
         std::vector<std::string> m_programNames; // extracted name for each program slot
+#ifdef CUSTOM
+        int m_hostedBank = -1;   // OPL: the folder m_programNames lists
+        // Read on the message thread, as the license check touches files. Unregistered,
+        // Discovery plays live but does not bounce.
+        std::atomic<bool> m_registered{true};
+#endif
         int m_currentProgram = 0;
         int m_bankStride     = 1; // messages per logical program (>1 for JE-8086)
 
