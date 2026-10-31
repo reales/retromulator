@@ -109,7 +109,7 @@ namespace retromulator
         if(b.hosted)
             return b.hosted->getName(maximumStringLength);
         if(!b.desc)
-            return {};
+            return ("Slot " + juce::String(m_slot + 1)).substring(0, maximumStringLength);
         return juce::String(b.desc->displayName).substring(0, maximumStringLength);
     }
 
@@ -167,10 +167,11 @@ namespace retromulator
         return juce::RangedAudioParameter::getNumSteps();
     }
 
+    // VST3 and AAX read this flag only at instantiation (core None), so every slot must
+    // claim it for later cores to be automatable there. Unbound slots ignore writes.
     bool SlotParameter::isAutomatable() const
     {
-        const auto& b = binding();
-        return b.desc != nullptr || (b.hosted && b.hosted->isAutomatable());
+        return true;
     }
 
     int SlotParameter::getMidiValue() const
