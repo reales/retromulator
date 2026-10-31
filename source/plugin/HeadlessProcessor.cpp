@@ -1510,6 +1510,15 @@ namespace retromulator
             ev.sysex[5] = 0x00; // part 0 (edit buffer slot)
         }
 
+        // n2x performance dumps of banks A-D (31-34): n2x::State only takes the edit buffer (30)
+        if(m_synthType == SynthType::NordN2X && n2x::State::isMultiDump(ev.sysex) &&
+           ev.sysex[4] >= n2x::MultiDumpBankA && ev.sysex[4] < n2x::MultiDumpBankA + n2x::g_multiBankCount)
+        {
+            ev.sysex[2] = n2x::DefaultDeviceId;
+            ev.sysex[4] = n2x::MultiDumpBankEditBuffer;
+            ev.sysex[5] = 0x00;
+        }
+
         // Virus ABC/TI single dump: F0 00 20 33 <product> <deviceId> 0x10 <bank> <prog> ...
         // DUMP_SINGLE (0x10) with bank != 0x00 (EditBuffer) stores into RAM bank but
         // does NOT send to the DSP — the patch is silently ignored. Redirect to

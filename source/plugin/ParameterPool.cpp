@@ -394,7 +394,9 @@ namespace retromulator
                 b.native = static_cast<int>(natives.front());
         }
 
-        if(const auto* dumps = juce::JSON::parse(juce::String(json))["dumpmap"].getDynamicObject())
+        // the parsed tree must outlive dumps, which points into it
+        const auto parsed = juce::JSON::parse(juce::String(json));
+        if(const auto* dumps = parsed["dumpmap"].getDynamicObject())
         {
             for(const auto& packet : dumps->getProperties())
             {

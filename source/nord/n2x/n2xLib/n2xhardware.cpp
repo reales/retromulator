@@ -164,12 +164,11 @@ namespace n2x
 		//   m_audioOutputs[0] = Pair1 R (_tx[1][0])
 		//   m_audioOutputs[3] = Pair2 L (_tx[0][1])
 		//   m_audioOutputs[2] = Pair2 R (_tx[1][1])
-		// Sum both pairs and scale up: the firmware divides by voice count internally,
-		// so we compensate with *4 to restore unity gain.
+		// Sum both pairs at unity: a 4 voice saw chord already reaches full scale
 		for(size_t i=0; i<_frames; ++i)
 		{
-			_outputs[0][i] = 4.0f * (dsp56k::dsp2sample<float>(m_audioOutputs[1][i]) + dsp56k::dsp2sample<float>(m_audioOutputs[3][i]));
-			_outputs[1][i] = 4.0f * (dsp56k::dsp2sample<float>(m_audioOutputs[0][i]) + dsp56k::dsp2sample<float>(m_audioOutputs[2][i]));
+			_outputs[0][i] = dsp56k::dsp2sample<float>(m_audioOutputs[1][i]) + dsp56k::dsp2sample<float>(m_audioOutputs[3][i]);
+			_outputs[1][i] = dsp56k::dsp2sample<float>(m_audioOutputs[0][i]) + dsp56k::dsp2sample<float>(m_audioOutputs[2][i]);
 		}
 	}
 
