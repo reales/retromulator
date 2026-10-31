@@ -142,17 +142,21 @@ namespace matrixLib
 			m_hw.advanceCv(1.0f / m_rate);
 
 			// voices run at twice the rate, the CPU and CVs at the output rate
-			const float n0 = noise();
-			const float n1 = noise();
-			float sum0 = 0.0f, sum1 = 0.0f;
-			for(uint32_t v = 0; v < Hardware::VoiceCount; ++v)
+			float sum = 0.0f;
+			if(!m_cpuOnly || isCalibrating())
 			{
-				buildControls(v, c);
-				buildDischarges(v, edgeFrom, edgeTo, d0, d1);
-				sum0 += m_voices[v].process(c, d0, n0);
-				sum1 += m_voices[v].process(c, d1, n1);
+				const float n0 = noise();
+				const float n1 = noise();
+				float sum0 = 0.0f, sum1 = 0.0f;
+				for(uint32_t v = 0; v < Hardware::VoiceCount; ++v)
+				{
+					buildControls(v, c);
+					buildDischarges(v, edgeFrom, edgeTo, d0, d1);
+					sum0 += m_voices[v].process(c, d0, n0);
+					sum1 += m_voices[v].process(c, d1, n1);
+				}
+				sum = m_decimator.process(sum0, sum1);
 			}
-			const float sum = m_decimator.process(sum0, sum1);
 
 			// output coupling capacitor
 			const float y = sum - m_dcIn + m_dcCoeff * m_dcOut;

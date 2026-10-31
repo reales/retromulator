@@ -46,7 +46,8 @@ namespace retromulator
 
 
         // ── Synth hot-swap ──────────────────────────────────────────────────
-        void setSynthType(SynthType type, const std::string& romPath = {});
+        // keepDevice resets the core's state but leaves its running sound engine in place.
+        void setSynthType(SynthType type, const std::string& romPath = {}, bool keepDevice = false);
         // Async version: boots the device on a background thread, then calls
         // onComplete on the message thread. GUI stays responsive during boot.
         static int latencyBlocksFor(SynthType type);
@@ -689,6 +690,10 @@ namespace retromulator
 
         // Send stride messages starting at index*stride to the device.
         void sendBankMessage(int index);
+        // Points the host slots and the board at a bank program without sending it.
+        void syncParamsToProgram(int index);
+        // The loaded patch is the reference again: board edits made on top are dropped.
+        void clearBoardEdits();
 
         // Copy a sysex file to the synth data folder. Returns the destination path.
         std::string copySysexToDataFolder(const std::string& sourcePath);

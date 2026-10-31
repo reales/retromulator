@@ -859,7 +859,7 @@ namespace retromulator
 
     // ── Synth hot-swap ────────────────────────────────────────────────────────
 
-    void HeadlessProcessor::setSynthType(SynthType type, const std::string& romPath)
+    void HeadlessProcessor::setSynthType(SynthType type, const std::string& romPath, const bool keepDevice)
     {
         if(type != SynthType::None && isEditorOnlySaved(type))
         {
@@ -870,9 +870,12 @@ namespace retromulator
         m_synthType   = type;
         m_romPath     = romPath;
         m_deviceError = synthLib::DeviceError::None;
-        m_deviceBooted = false;
-        m_pendingResend.store(false);
-        m_resendBlocksRemaining = 0;
+        if(!keepDevice)
+        {
+            m_deviceBooted = false;
+            m_pendingResend.store(false);
+            m_resendBlocksRemaining = 0;
+        }
 
         // Clear preset state so the editor sees a clean slate for the new synth.
         // Without this, m_sysexFilePath etc. still hold the previous synth's values,
@@ -910,7 +913,7 @@ namespace retromulator
         }
         else
         {
-            if(!rebootDevice())
+            if(!keepDevice && !rebootDevice())
                 m_deviceError = synthLib::DeviceError::FirmwareMissing;
 
             if(m_deviceError == synthLib::DeviceError::None)
@@ -1399,6 +1402,7 @@ namespace retromulator
         // Send only the selected program, not the entire bank dump.
         if(m_paramPool)
             m_paramPool->clearTouched();
+        clearBoardEdits();
         sendBankMessage(m_currentProgram);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
                               .withNonParameterStateChanged(true)
@@ -1406,16 +1410,11 @@ namespace retromulator
         return true;
     }
 
-    void HeadlessProcessor::sendBankMessage(int index)
+    void HeadlessProcessor::syncParamsToProgram(const int index)
     {
         const int rawStart = index * m_bankStride;
-
         if(rawStart < 0 || rawStart >= static_cast<int>(m_bankMessages.size()))
             return;
-
-        // Use pre-extracted name from m_programNames (populated in loadPreset)
-        if(index >= 0 && index < static_cast<int>(m_programNames.size()))
-            m_patchName = m_programNames[static_cast<size_t>(index)];
 
         if(m_paramPool)
         {
@@ -1431,6 +1430,30 @@ namespace retromulator
                 juce::MessageManager::callAsync([this, patch = std::move(patch)] { m_board->applyDump(patch); });
 #endif
         }
+    }
+
+    void HeadlessProcessor::clearBoardEdits()
+    {
+#ifdef CUSTOM
+        if(juce::MessageManager::existsAndIsCurrentThread())
+            m_board->clearEdits();
+        else
+            juce::MessageManager::callAsync([this] { m_board->clearEdits(); });
+#endif
+    }
+
+    void HeadlessProcessor::sendBankMessage(int index)
+    {
+        const int rawStart = index * m_bankStride;
+
+        if(rawStart < 0 || rawStart >= static_cast<int>(m_bankMessages.size()))
+            return;
+
+        // Use pre-extracted name from m_programNames (populated in loadPreset)
+        if(index >= 0 && index < static_cast<int>(m_programNames.size()))
+            m_patchName = m_programNames[static_cast<size_t>(index)];
+
+        syncParamsToProgram(index);
 
         // If prepareToPlay has not been called yet (AU XPC: UI fires before the audio
         // engine starts), don't push into the DSP — the device is not ready to process
@@ -1444,8 +1467,17 @@ namespace retromulator
             const int prog = index;
             juce::MessageManager::callAsync([this, prog]()
             {
-                if(m_currentProgram >= 0 && m_currentProgram < getProgramCount())
-                    sendBankMessage(prog);
+                if(m_currentProgram < 0 || m_currentProgram >= getProgramCount())
+                    return;
+                sendBankMessage(prog);
+                // edits restored from the session go on top of the patch once it really plays
+                if(getHostSamplerate() == 0.0f)
+                    return;
+                if(m_paramPool)
+                    m_paramPool->resendTouched();
+#ifdef CUSTOM
+                m_board->resendEdits();
+#endif
             });
             return;
         }
@@ -1663,6 +1695,7 @@ namespace retromulator
         // The new patch is now the source of truth; drop stale slot edits.
         if(m_paramPool)
             m_paramPool->clearTouched();
+        clearBoardEdits();
 
 #ifdef CUSTOM
         if(isHostedCore(m_synthType))
@@ -2027,6 +2060,7 @@ namespace retromulator
         // The visible parameters belong to the new part now, so stale edits from the old
         // one must not be resent on top of it.
         m_paramPool->clearTouched();
+        clearBoardEdits();
         // Drum parts list kits, melodic parts list tones.
         loadEmu88ToneNames();
     }
@@ -4531,6 +4565,10 @@ namespace retromulator
                 // Re-apply host parameter edits the bank message just overwrote.
                 if(m_paramPool)
                     m_paramPool->resendTouched();
+#ifdef CUSTOM
+                // queued after the board's own applyDump call from sendBankMessage
+                juce::MessageManager::callAsync([this] { m_board->resendEdits(); });
+#endif
             }
         }
     }
@@ -4620,6 +4658,7 @@ namespace retromulator
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
     static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
     static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
+    static constexpr int32_t kBoardEditsMagic = 0x54444542;      // 'BEDT'
     static constexpr int32_t kFxChainMagic = 0x48435846;         // 'FXCH'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
@@ -4819,6 +4858,14 @@ namespace retromulator
         {
             appendInt32(destData, kSlotLinksMagic);
             appendString(destData, board::slotLinkRecords(*m_board));
+
+            // ['BEDT':int32][edits:string] board edits made on top of the loaded patch
+            const auto edits = m_board->editRecords();
+            if(!edits.empty())
+            {
+                appendInt32(destData, kBoardEditsMagic);
+                appendString(destData, edits);
+            }
         }
 #endif
 
@@ -5010,7 +5057,14 @@ namespace retromulator
             m_corePanelHidden = magic == kCorePanelMagic && hidden != 0;
         }
 
-        setSynthType(newType, romPath);
+        // A patch fully describes these cores, so the one already running takes the session
+        // without a reboot (a Matrix boot took seconds per preset).
+        const bool keepDevice = newType == m_synthType && romPath == m_romPath && !m_editorOnly
+            && m_deviceError == synthLib::DeviceError::None && m_device
+            && (newType == SynthType::Matrix || newType == SynthType::DX7 || newType == SynthType::OPL3
+                || newType == SynthType::Ayumi || newType == SynthType::OpenB3 || newType == SynthType::CA72
+                || newType == SynthType::OpenWurli || isHostedCore(newType));
+        setSynthType(newType, romPath, keepDevice);
         if(newType == SynthType::Matrix)
             applyMatrixLfoSync();
         else if(newType == SynthType::DX7)
@@ -5417,7 +5471,29 @@ namespace retromulator
                && readString(bytes, sizeInBytes, offset, links))
             {
                 if(m_board && m_paramPool && m_board->map())
+                {
+                    // relinking rebinds every slot to its default, so the patch is read again
                     board::applySlotLinkRecords(m_synthType, *m_board, *m_paramPool, links);
+                    syncParamsToProgram(m_currentProgram);
+                    if(isHostedCore(m_synthType))
+                        if(auto* dev = getHostedDevice())
+                            m_paramPool->bindHosted(&dev->getPlugin());
+                }
+
+                const int editsStart = offset;
+                int32_t editsMagic = 0;
+                std::string edits;
+                if(readInt32(bytes, sizeInBytes, offset, editsMagic) && editsMagic == kBoardEditsMagic
+                   && readString(bytes, sizeInBytes, offset, edits))
+                {
+                    // off the message thread, after the queued clear from loadPreset
+                    if(juce::MessageManager::existsAndIsCurrentThread())
+                        m_board->restoreEditRecords(edits);
+                    else
+                        juce::MessageManager::callAsync([this, edits] { m_board->restoreEditRecords(edits); });
+                }
+                else
+                    offset = editsStart;
             }
             else
                 offset = linksStart;

@@ -176,12 +176,15 @@ namespace matrixLib
 	{
 		std::vector<float> buf(512);
 		auto remaining = static_cast<size_t>(_seconds * m_machine.getSamplerate());
+		// nobody hears this audio, so the voices are skipped outside calibration
+		m_machine.setCpuOnly(true);
 		while(remaining)
 		{
 			const auto n = std::min(remaining, buf.size());
 			m_machine.render(buf.data(), n);
 			remaining -= n;
 		}
+		m_machine.setCpuOnly(false);
 	}
 
 	bool Device::loadSnapshot()

@@ -30,6 +30,9 @@ namespace matrixLib
 
 		Hardware& getHardware() { return m_hw; }
 
+		// boot and dump requests: the voices only run while the firmware calibrates them
+		void setCpuOnly(const bool _cpuOnly) { m_cpuOnly = _cpuOnly; }
+
 		std::function<void(float)> onComparatorSample;   // debugging
 
 		// true while $1D00 bit 1 mutes the output and routes the voice sum to the ACIA CTS pin
@@ -46,6 +49,7 @@ namespace matrixLib
 		std::array<Cem3396, Hardware::VoiceCount> m_voices;
 		Halfband2x m_decimator;
 
+		bool m_cpuOnly = false;
 		float m_rate = 48000.0f;
 		double m_cyclesPerSample = Hardware::CpuClock / 48000.0;
 		double m_cycleAcc = 0.0;
