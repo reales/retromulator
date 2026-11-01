@@ -2,7 +2,7 @@
 
 A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware synthesizers, samplers, and keyboards by running their original firmware on cycle-accurate CPU and DSP emulators.
 
-[![Retromulator](https://www.discodsp.com/img/retromulator.webp)](https://www.discodsp.com/retromulator/)
+[![Retromulator](https://www.discodsp.com/img/retromulator_nordrack.webp)](https://www.discodsp.com/retromulator/)
 
 [![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $99](https://img.shields.io/badge/Buy_License-$99-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
 
@@ -13,6 +13,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Access Virus A / B / C | Motorola DSP 56300 cycle-accurate |
 | Access Virus TI | Motorola DSP 56300 cycle-accurate |
 | Akai S1000 | SFZero v3.0.0 sample engine |
+| Clavia Nord Lead 1 (Nordic) | Bit-exact C++ reimplementation of the DSP program |
 | Clavia Nord Lead / Rack 2x | Motorola DSP 56300 cycle-accurate |
 | Commodore 64 SID 6581 / 8580 | reSID cycle-accurate |
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
@@ -28,27 +29,29 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, OpenWurli, OpenB3, CA-72, OPL3, AY-3-8910, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, AY-3-8910, CA-72, Nord Lead 1, OpenB3, OpenWurli, OPL3, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
-The **Hammond B3 (OpenB3)** is the setBfree tonewheel organ and Leslie engine by way of OpenB3, with upper, lower and pedal drawbars, percussion, vibrato and chorus, overdrive, three Leslie cabinets with convolution cabinet bodies, a plate reverb, a keyboard split and .fxp presets in Factory and User banks.
-
-The **Minimoog Model D (CA-72)** is the CA-72 circuit model by Idle Foundry: every board of a 1972 Model D transcribed into SPICE netlists, with real-time models derived from those simulations. It runs at the host sample rate in LO, HI and ULTRA quality, with a 4x engine for offline renders, and opens its own front panel below the plugin bar. Presets are .fxp files in Factory and User banks, with .fxb bank import and export, and every panel control is a host parameter with a MIDI CC.
-
-The **Wurlitzer 200A (OpenWurli)** is a physical model of the Wurlitzer 200A electric piano with 64-voice polyphony, tremolo, speaker character modeling, velocity curves, and 2x oversampling.
-
-The **Yamaha OPL3** emulates the YMF262 FM synthesis chip (18 channels, 4-operator) using the Nuked OPL3 engine. It loads SBI patch files with bank navigation via folder hierarchy, pitch bend, and voice stealing.
+The **Nord Lead 1 (Nordic)** is a clean-room C++ reimplementation of the 1995 Nord Lead 1 DSP program, bit exact to the original and checked against a real unit, so it needs no ROM. It has 48 voices, unison, morph, the arpeggiator and all four slots A-D, each on its own MIDI channel, with its own editor below the rack. Nord Lead 2 programs can be imported and exported. Nordic is hosted from `ROM/Nordic.vst3` and ships only with commercial builds.
 
 The **Commodore 64 SID** emulates the MOS 6581 / 8580 chip using the reSID engine with 3-voice polyphony, oldest-voice stealing, and a full 50 Hz macro playback engine (wavetable, pulsetable, filtertable, speedtable). It loads GoatTracker `.sng` banks and `.ins` standalone instruments, with live MIDI control via CC 1 (vibrato depth), CC 22 (pitch bend range, 1–48 semitones), CC 64 (sustain pedal), CC 71 (resonance), CC 74 (cutoff), and CC 75 (pulse width).
 
 The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
 
-The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer, and S3M and IT through the Schism Tracker player with Nuked OPL3 for Adlib instruments. The module owns the transport, driven by MIDI notes: play, stop, and step through a playlist, which can be shuffled or stop at its end. A song ends after five seconds of silence. Folders and .m3u playlists are expanded, the song tempo can follow the host, and a module or a whole playlist renders offline to WAV or MP3 320 with 512 tap sinc interpolation.
+The **Hammond B3 (OpenB3)** is the setBfree tonewheel organ and Leslie engine by way of OpenB3, with upper, lower and pedal drawbars, percussion, vibrato and chorus, overdrive, three Leslie cabinets with convolution cabinet bodies, a plate reverb, a keyboard split and .fxp presets in Factory and User banks.
+
+The **Minimoog Model D (CA-72)** is the CA-72 circuit model by Idle Foundry: every board of a 1972 Model D transcribed into SPICE netlists, with real-time models derived from those simulations. It runs at the host sample rate in LO, HI and ULTRA quality, with a 4x engine for offline renders, and opens its own front panel below the plugin bar. Presets are .fxp files in Factory and User banks, with .fxb bank import and export, and every panel control is a host parameter with a MIDI CC.
+
+The **Oberheim Matrix-1000** runs the original firmware on an emulated 6809 board (82C54 timers, 6850 UART, S&H DAC, latches) driving six CEM3396 voice models with BLEP oscillators and 2x oversampling. The firmware calibrates the voices itself at first boot, and the result is kept as a snapshot so later boots are instant. ROM banks 2 to 9 are dumped from the patch EPROM into .syx files with the factory names. Every patch parameter is exposed to the host and mapped to a MIDI CC, and both LFOs can follow the host tempo, MIDI clock or a SysEx tempo.
 
 The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file, or a playlist of them, can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
 
-The **Oberheim Matrix-1000** runs the original firmware on an emulated 6809 board (82C54 timers, 6850 UART, S&H DAC, latches) driving six CEM3396 voice models with BLEP oscillators and 2x oversampling. The firmware calibrates the voices itself at first boot, and the result is kept as a snapshot so later boots are instant. ROM banks 2 to 9 are dumped from the patch EPROM into .syx files with the factory names. Every patch parameter is exposed to the host and mapped to a MIDI CC, and both LFOs can follow the host tempo, MIDI clock or a SysEx tempo.
+The **Tracker** core plays XM and MOD modules through the Fasttracker 2 replayer, and S3M and IT through the Schism Tracker player with Nuked OPL3 for Adlib instruments. The module owns the transport, driven by MIDI notes: play, stop, and step through a playlist, which can be shuffled or stop at its end. A song ends after five seconds of silence. Folders and .m3u playlists are expanded, the song tempo can follow the host, and a module or a whole playlist renders offline to WAV or MP3 320 with 512 tap sinc interpolation.
+
+The **Wurlitzer 200A (OpenWurli)** is a physical model of the Wurlitzer 200A electric piano with 64-voice polyphony, tremolo, speaker character modeling, velocity curves, and 2x oversampling.
+
+The **Yamaha OPL3** emulates the YMF262 FM synthesis chip (18 channels, 4-operator) using the Nuked OPL3 engine. It loads SBI patch files with bank navigation via folder hierarchy, pitch bend, and voice stealing.
 
 The standalone app opens modules, .m3u playlists and .mid files handed over by the OS (double click, Open With, or a drop on the dock icon) and switches to the matching core.
 
@@ -115,7 +118,7 @@ The hashes are those of the images Retromulator is tested with. The Virus TI fir
 - **Jean-Marc Valin** — [Speex](https://www.speex.org/) arbitrary-rate resampler, BSD 3-Clause
 - **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
 - **Leo Olivers** — SFZero JUCE module port
-- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3
+- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3; [Nordic](https://www.discodsp.com/retromulator/) Nord Lead 1 DSP reimplementation, proprietary, not in this repository
 - **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
 - **Michele Perrone** — [OpenB3](https://github.com/michele-perrone/OpenB3) Hammond B3 and Leslie, AGPL v3, based on [setBfree](https://github.com/pantherb/setBfree) by Robin Gareus, GPL v2+
 - **Idle Foundry** — [CA-72](https://github.com/idlefoundry/ca-72) Minimoog Model D circuit model and front panel, GPL v3 or later; ported to C++ / JUCE by discoDSP
