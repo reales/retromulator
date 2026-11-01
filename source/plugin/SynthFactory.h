@@ -16,8 +16,10 @@ namespace retromulator
         // instance passes the board its own session saved, so two instances booting at
         // once (an AU host restores them on separate threads) cannot read each other's.
         // -1 keeps the shared value the editor sets.
+        // dx7Firmware boots the DX7 on its firmware ROM when one is installed; otherwise
+        // it runs the firmware-free controller.
         static synthLib::Device* create(SynthType type, const std::string& romPath = {},
-                                        int emu88Model = -1);
+                                        int emu88Model = -1, bool dx7Firmware = false);
 
         // Which board the 88emu core boots. Switching it means recreating the device:
         // the models differ in CPU, chipset and ROM set, so it is not a live parameter.

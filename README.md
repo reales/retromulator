@@ -26,7 +26,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | Waldorf microQ | Motorola DSP 56300 cycle-accurate |
 | Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate |
 | Wurlitzer 200A (OpenWurli) | Physical modeling synthesis |
-| Yamaha DX7 | HD6303R + YM21280 EGS + YM21290 OPS (VDX7) |
+| Yamaha DX7 | YM21280 EGS + YM21290 OPS (VDX7), firmware-free clean-room controller or the HD6303R firmware |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
 Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, AY-3-8910, CA-72, Nord Lead 1, OpenB3, OpenWurli, OPL3, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
@@ -69,7 +69,7 @@ ROMs go in the `ROM` folder inside the Retromulator data folder, and the Roland 
 - Windows: `Documents\discoDSP\Retromulator\`
 - Linux: `~/Documents/discoDSP/Retromulator/`
 
-The hashes are those of the images Retromulator is tested with. The Virus TI firmware varies in size between versions, so its hash is that of the 8,569,757 byte image tested; other versions may also work. The DX7 needs only its 16 KB firmware.
+The hashes are those of the images Retromulator is tested with. The Virus TI firmware varies in size between versions, so its hash is that of the 8,569,757 byte image tested; other versions may also work. The DX7 runs without firmware on a clean-room controller; its 16 KB firmware is optional.
 
 | Hardware Core | ROM File | Size | SHA-1 | MD5 |
 |---|---|---|---|---|
@@ -99,7 +99,7 @@ The hashes are those of the images Retromulator is tested with. The Virus TI fir
 |  | `SC8850WaveROMUnscrambled.bin` | 32 MB | `f3ff7b1f57f6c1a393d0a22e6bd08554dc325573` | `e8eb6ac0e394997dfbc17064f9f4a70e` |
 | Waldorf microQ | `micro_q.bin` | 512 KB | `2b5d3f57b8a43802f36a53ced4173285f70d5ae0` | `216d13d7222a9f6a548ab19d419aa101` |
 | Waldorf Microwave XT | `xt.bin` | 256 KB | `781ceb74e15d48017bf327091729f3e127ec2a3a` | `b676e922e04841e304676f9b7f55fa41` |
-| Yamaha DX7 | `dx7.bin` | 16 KB | `715dbb8e96a4df2a7f096b368334a7654860bb26` | `6580f668fa67e63c22ad2617a0aaebd7` |
+| Yamaha DX7 (optional) | `dx7.bin` | 16 KB | `715dbb8e96a4df2a7f096b368334a7654860bb26` | `6580f668fa67e63c22ad2617a0aaebd7` |
 
 ## Credits
 

@@ -147,6 +147,7 @@ public:
 		for(int op=0; op<6; op++) {
 			for(int voice=0; voice<16; voice++) {
 				env[op][voice].init(opEGrates[op], opEGlevels[op], &(opLevels[op][voice]), &env_clock);
+				increment[op][voice] = OPS::phaseIncrement(0);
 			}
 		}
 	}
@@ -171,6 +172,7 @@ private:
 
 	uint16_t frequency[6][16] = {0};
 	uint16_t envelope[6][16] = {0};
+	uint32_t increment[6][16] = {0};
 
 	OPS ops;
 
@@ -191,7 +193,27 @@ public:
 
 	void setAlgorithm(uint8_t mode, uint8_t algo) { ops.setAlgorithm(mode, algo); }
 
+	// One output sample: every operator of all 16 voices
+	void DX7_INLINE clockSample(float* outbuf, int &count) {
+		for(int op=0; op<6; op++) {
+			const int ampModSens = opSensScale[op]>>3;
+			for(int voice=0; voice<16; voice++) {
+				uint16_t e = env[op][voice].getsample();
+				if(ampModSens) e += ampMod<<ampModSens;
+				if(e>0xFFF) e = 0xFFF;
+				envelope[op][voice] = e;
+			}
+			ops.clockOp(op, increment[op]);
+		}
+		outbuf[count++] = filter(ops.out);
+		env_clock++;
+	}
+
 	void DX7_INLINE clock(float* outbuf, int &count, int cycles) {
+		if(currOp == 0 && currVoice == 0) {
+			for(; cycles >= 96; cycles -= 96)
+				clockSample(outbuf, count);
+		}
 		for(int i=0; i<cycles; i++) {
 
 			uint16_t e = env[currOp][currVoice].getsample();
@@ -291,6 +313,7 @@ private:
 			}
 			if(f>0x3FFF) f=0x3FFF; else if(f<0) f=0;
 			frequency[op][voice] = static_cast<uint16_t>(f);
+			increment[op][voice] = OPS::phaseIncrement(static_cast<uint16_t>(f));
 		}
 	}
 

@@ -70,6 +70,9 @@ struct DX7: public HD6303R {
 	void start();
 	void run(); // Execute one instruction and update peripherals
 
+	// Peripheral write from the firmware-free controller (dx7clean::Core)
+	void busWrite(uint16_t addr, uint8_t value);
+
 	// References set to refer back to communication pointers
 	ToSynth*& toSynth;
 	ToGui*& toGui;

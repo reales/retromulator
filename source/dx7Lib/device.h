@@ -11,8 +11,10 @@
 #include "../synthLib/device.h"
 #include "dx7.h"
 #include "Message.h"
+#include "clean/Core.h"
 
 #include <atomic>
+#include <memory>
 #include <cmath>
 #include <vector>
 #include <cstdint>
@@ -41,7 +43,10 @@ public:
 	uint32_t getDspClockPercent() const override { return 100; }
 	uint64_t getDspClockHz() const override;
 
-	void setController(int n, int range, int assign) { m_dx7.setController(n, static_cast<uint8_t>(range), static_cast<uint8_t>(assign)); }
+	void setController(int n, int range, int assign);
+
+	// true when running the firmware-free controller instead of the HD6303 firmware
+	bool isClean() const { return m_clean != nullptr; }
 
 	// DX7 patch name from internal RAM (current voice)
 	static std::string extractPatchName(const uint8_t* voiceData, size_t size);
@@ -56,6 +61,8 @@ private:
 	int fillBuffer(float* outBuffer, int maxSamples);
 	void parseMIDI(const uint8_t* data, uint32_t size);
 	bool parseMidiTx(uint32_t& size, uint8_t*& buffer);
+	void processAudioClean(const synthLib::TAudioOutputs& _outputs, size_t _samples);
+	void sendMidiClean(const synthLib::SMidiEvent& _ev);
 
 	// DX7 hardware emulator
 	ToSynth* m_toSynth = nullptr;
@@ -63,6 +70,8 @@ private:
 	App_ToSynth m_appToSynth;
 	NullToGui m_nullToGui;
 	DX7 m_dx7;
+	std::unique_ptr<dx7clean::Core> m_clean;
+	uint8_t m_cleanCtrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
 
 	// Audio generation state
 	static constexpr float kNativeSamplerate = 49096.0f;

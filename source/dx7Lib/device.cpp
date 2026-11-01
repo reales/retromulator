@@ -33,6 +33,23 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 	// Cycles per sample = 1,178,312.5 / 49,096.354 ≈ 24.0
 	m_cpuCyclesPerSample = (9.4265e6 / 2.0 / 4.0) / static_cast<double>(kNativeSamplerate);
 
+	// Without a firmware ROM the clean-room controller drives the EGS
+	if(_params.romData.empty())
+	{
+		m_dx7.midiFilter.set_f(10.6f / kNativeSamplerate);
+		m_clean = std::make_unique<dx7clean::Core>();
+		m_clean->onWrite = [this](uint16_t addr, uint8_t value, uint64_t) { m_dx7.busWrite(addr, value); };
+
+		float discard[kBufSize + 4];
+		for(int i = 0; i < 4096; i++)
+		{
+			int cnt = 0;
+			m_clean->advance(24);
+			m_dx7.egs.clock(discard, cnt, 96);
+		}
+		return;
+	}
+
 	// Load firmware ROM
 	if(!_params.romData.empty())
 	{
@@ -67,7 +84,26 @@ float Device::getSamplerate() const
 
 bool Device::isValid() const
 {
-	return m_dx7.isRomLoaded();
+	return m_clean || m_dx7.isRomLoaded();
+}
+
+void Device::setController(int n, int range, int assign)
+{
+	if(!m_clean)
+	{
+		m_dx7.setController(n, static_cast<uint8_t>(range), static_cast<uint8_t>(assign));
+		return;
+	}
+
+	// n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Only changes are sent, as a front-panel edit would be
+	static constexpr uint8_t kRangeParam[4] = { dx7clean::fn::WheelRange, dx7clean::fn::BreathRange, dx7clean::fn::FootRange, dx7clean::fn::AtRange };
+	auto& c = m_cleanCtrl[n & 3];
+	const auto r = static_cast<uint8_t>(std::clamp(range, 0, 99));
+	const auto a = static_cast<uint8_t>(assign & 7);
+	if(c[0] != r) m_clean->setFunction(kRangeParam[n & 3], r);
+	if(c[1] != a) m_clean->setFunction(static_cast<uint8_t>(kRangeParam[n & 3] + 1), a);
+	c[0] = r;
+	c[1] = a;
 }
 
 bool Device::setDspClockPercent(uint32_t)
@@ -83,6 +119,16 @@ uint64_t Device::getDspClockHz() const
 #if SYNTHLIB_DEMO_MODE == 0
 bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 {
+	if(_type == synthLib::StateTypeGlobal && m_clean)
+	{
+		_state.clear();
+		for(size_t i = 0; i < dx7clean::kVoicesPerBank; i++)
+		{
+			const auto packed = dx7clean::pack(m_clean->internal(static_cast<int>(i)));
+			_state.insert(_state.end(), packed.begin(), packed.end());
+		}
+		return true;
+	}
 	if(_type == synthLib::StateTypeGlobal)
 	{
 		m_dx7.saveRAM(_state);
@@ -93,6 +139,14 @@ bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType _type)
 
 bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _type)
 {
+	if(_type == synthLib::StateTypeGlobal && m_clean)
+	{
+		if(_state.size() != dx7clean::kVmemSize)
+			return false;
+		for(size_t i = 0; i < dx7clean::kVoicesPerBank; i++)
+			m_clean->storeInternal(static_cast<int>(i), dx7clean::unpack(_state.data() + i * 128));
+		return true;
+	}
 	if(_type == synthLib::StateTypeGlobal && _state.size() == 6144)
 	{
 		m_dx7.restoreRAM(_state);
@@ -105,7 +159,13 @@ bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _t
 
 void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synthLib::TAudioOutputs& _outputs, size_t _samples)
 {
-	if(!m_dx7.isRomLoaded() || m_shutdown.load()) return;
+	if(m_shutdown.load()) return;
+	if(m_clean)
+	{
+		processAudioClean(_outputs, _samples);
+		return;
+	}
+	if(!m_dx7.isRomLoaded()) return;
 
 	auto* outL = _outputs[0];
 	auto* outR = _outputs[1];
@@ -174,6 +234,64 @@ int Device::fillBuffer(float* outBuffer, int maxSamples)
 	return outCnt;
 }
 
+void Device::processAudioClean(const synthLib::TAudioOutputs& _outputs, size_t _samples)
+{
+	auto* outL = _outputs[0];
+	auto* outR = _outputs[1];
+
+	const float mv = m_dx7.midiVolTab[m_dx7.midiVolume] * m_midiExpression + 1e-18f;
+
+	// 24 controller cycles = 96 EGS clocks = one sample
+	for(size_t i = 0; i < _samples; i++)
+	{
+		float s = 0.0f;
+		int cnt = 0;
+		m_clean->advance(24);
+		m_dx7.egs.clock(&s, cnt, 96);
+		const float sample = s * m_volume * m_dx7.midiFilter.operate(mv);
+		outL[i] = sample;
+		outR[i] = sample;
+	}
+}
+
+void Device::sendMidiClean(const synthLib::SMidiEvent& _ev)
+{
+	// The controller listens on channel 1 only; the plugin is omni
+	if(!_ev.sysex.empty())
+	{
+		// 32-voice bulk dump goes straight to voice memory, at 31250 baud it would hold MIDI for 1.4 s
+		const auto& s = _ev.sysex;
+		if(s.size() == dx7clean::kVmemSize + 8 && s[0] == 0xF0 && s[1] == 0x43 && (s[2] & 0xF0) == 0 && s[3] == 0x09)
+		{
+			for(size_t i = 0; i < dx7clean::kVoicesPerBank; i++)
+				m_clean->storeInternal(static_cast<int>(i), dx7clean::unpack(s.data() + 6 + i * dx7clean::kVmemVoiceSize));
+			return;
+		}
+
+		auto sysex = _ev.sysex;
+		if(sysex.size() > 2 && sysex[0] == 0xF0 && sysex[1] == 0x43)
+			sysex[2] &= 0xF0;
+		m_clean->midiIn(sysex.data(), sysex.size());
+		return;
+	}
+
+	if(_ev.a >= 0xF8)
+		return;
+
+	const uint8_t status = _ev.a & 0xF0;
+	if(status == 0xB0 && _ev.b == 11)
+	{
+		m_midiExpression = _ev.c / 127.0f;
+		return;
+	}
+	if(status == 0xB0 && (_ev.b == 0 || _ev.b == 32 || _ev.b == 100 || _ev.b == 101))
+		return;
+
+	const uint8_t buf[3] = { static_cast<uint8_t>(_ev.a < 0xF0 ? status : _ev.a), _ev.b, _ev.c };
+	const size_t len = (status == 0xC0 || status == 0xD0) ? 2 : 3;
+	m_clean->midiIn(buf, len);
+}
+
 void Device::processMessage(Message msg)
 {
 	switch(Message::CtrlID(msg.byte1))
@@ -237,6 +355,12 @@ void Device::processMessage(Message msg)
 
 bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMidiEvent>& _response)
 {
+	if(m_clean)
+	{
+		sendMidiClean(_ev);
+		return true;
+	}
+
 	if(!_ev.sysex.empty())
 	{
 		// DX7 32-voice bulk dump: write directly into internal voice RAM

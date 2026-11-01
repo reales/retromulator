@@ -242,7 +242,7 @@ namespace retromulator
         case SynthType::XT:       return xt::RomLoader::findROM().isValid();
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
-        case SynthType::DX7:       return dx7Emu::RomLoader::findROM().isValid();
+        case SynthType::DX7:       return true; // runs firmware-free without a ROM
         case SynthType::Matrix:    return !matrixLib::RomLoader::findROM().firmware.empty();
         case SynthType::Emu88:
         {
@@ -1497,10 +1497,14 @@ namespace retromulator
             // Force firmware to reload voice parameters by first selecting a
             // different voice, then the target. Without this, the firmware may
             // skip reloading if the current voice number already matches.
-            const uint8_t dummy = static_cast<uint8_t>(((index & 0x1f) + 1) % 32);
-            synthLib::SMidiEvent pcDummy(synthLib::MidiEventSource::Editor,
-                0xC0, dummy, 0x00);
-            getPlugin().addMidiEvent(pcDummy);
+            const auto* dx = dynamic_cast<const dx7Emu::Device*>(m_device.get());
+            if(!dx || !dx->isClean())
+            {
+                const uint8_t dummy = static_cast<uint8_t>(((index & 0x1f) + 1) % 32);
+                synthLib::SMidiEvent pcDummy(synthLib::MidiEventSource::Editor,
+                    0xC0, dummy, 0x00);
+                getPlugin().addMidiEvent(pcDummy);
+            }
 
             synthLib::SMidiEvent pc(synthLib::MidiEventSource::Editor,
                 0xC0, static_cast<uint8_t>(index & 0x1f), 0x00);
@@ -3351,6 +3355,26 @@ namespace retromulator
             applyDx7Controllers(m_device.get());
     }
 
+    bool HeadlessProcessor::isDx7FirmwareAvailable()
+    {
+        return dx7Emu::RomLoader::findROM().isValid();
+    }
+
+    void HeadlessProcessor::setDx7Firmware(const bool on, std::function<void()> onBooted)
+    {
+        if(on == m_dx7Firmware)
+            return;
+        m_dx7Firmware = on;
+        if(m_synthType == SynthType::DX7)
+            setSynthTypeAsync(SynthType::DX7, m_romPath, [this, onBooted = std::move(onBooted)]
+            {
+                if(!m_bankMessages.empty())
+                    sendBankMessage(m_currentProgram);
+                if(onBooted)
+                    onBooted();
+            });
+    }
+
     void HeadlessProcessor::applyDx7Controllers(synthLib::Device* dev)
     {
         if(auto* dx = dynamic_cast<dx7Emu::Device*>(dev))
@@ -4597,7 +4621,7 @@ namespace retromulator
         m_restoredEmu88Model = -1;
 
         // Let DeviceException propagate — caller (rebootDevice or getPlugin) handles it.
-        auto* dev = SynthFactory::create(m_synthType, m_romPath, model);
+        auto* dev = SynthFactory::create(m_synthType, m_romPath, model, m_dx7Firmware);
         if(m_synthType == SynthType::DX7)
             applyDx7Controllers(dev);
         return dev;
@@ -4877,12 +4901,12 @@ namespace retromulator
             appendInt32(destData, m_matrixLfoSync[1]);
         }
 
-        // ['DX7C':int32][range | assign << 8 : int32 x 4]
+        // ['DX7C':int32][range | assign << 8 : int32 x 4], bit 16 of the first: firmware engine
         if(m_synthType == SynthType::DX7)
         {
             appendInt32(destData, kDx7CtrlMagic);
-            for(const auto& c : m_dx7Ctrl)
-                appendInt32(destData, c[0] | (c[1] << 8));
+            for(int n = 0; n < 4; ++n)
+                appendInt32(destData, m_dx7Ctrl[n][0] | (m_dx7Ctrl[n][1] << 8) | (n == 0 && m_dx7Firmware ? 1 << 16 : 0));
         }
 
         // Board the session was using, taken from the live device rather than the shared
@@ -5035,17 +5059,24 @@ namespace retromulator
 
         // DX7 controller setup sits in the last twenty bytes; sessions without it get the defaults
         for(auto& c : m_dx7Ctrl) { c[0] = 99; c[1] = 7; }
+        m_dx7Firmware = false;
         if(newType == SynthType::DX7 && sizeInBytes >= 20)
         {
             int32_t v[5] = {};
             std::memcpy(v, bytes + sizeInBytes - 20, 20);
             if(v[0] == kDx7CtrlMagic)
+            {
                 for(int n = 0; n < 4; ++n)
                 {
                     m_dx7Ctrl[n][0] = juce::jlimit(0, 99, static_cast<int>(v[n + 1] & 0xff));
                     m_dx7Ctrl[n][1] = (v[n + 1] >> 8) & 7;
                 }
+                m_dx7Firmware = (v[1] >> 16) & 1;
+            }
         }
+        const auto* runningDx7 = dynamic_cast<const dx7Emu::Device*>(m_device.get());
+        const bool dx7EngineMatches = newType != SynthType::DX7
+            || (runningDx7 && runningDx7->isClean() == !(m_dx7Firmware && isDx7FirmwareAvailable()));
 
         // CA-72 panel visibility sits in the last eight bytes; per instance, shown by default
         m_corePanelHidden = false;
@@ -5060,7 +5091,7 @@ namespace retromulator
         // A patch fully describes these cores, so the one already running takes the session
         // without a reboot (a Matrix boot took seconds per preset).
         const bool keepDevice = newType == m_synthType && romPath == m_romPath && !m_editorOnly
-            && m_deviceError == synthLib::DeviceError::None && m_device
+            && m_deviceError == synthLib::DeviceError::None && m_device && dx7EngineMatches
             && (newType == SynthType::Matrix || newType == SynthType::DX7 || newType == SynthType::OPL3
                 || newType == SynthType::Ayumi || newType == SynthType::OpenB3 || newType == SynthType::CA72
                 || newType == SynthType::OpenWurli || isHostedCore(newType));

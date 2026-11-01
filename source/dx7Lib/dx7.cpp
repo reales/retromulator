@@ -172,6 +172,13 @@ void DX7::run() {
 	if((ADDR&0xF000)==0x4000) saveCart = true;
 }
 
+void DX7::busWrite(uint16_t addr, uint8_t value) {
+	memory[addr] = value;
+	if((addr&0xFF00)==0x3000) egs.update(uint8_t(addr));
+	else if(addr==0x2805) egs.setAlgorithm(P_OPS_MODE, P_OPS_ALG_FDBK);
+	else if(addr==0x280A) midiVolume = P_DAC&7;
+}
+
 bool DX7::cartLoadSysex(const uint8_t* data, size_t size) {
 	if(!data || size != 4104) return false;
 

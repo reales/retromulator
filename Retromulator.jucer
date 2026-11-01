@@ -619,6 +619,25 @@
       <FILE id="dx003" name="dx7.cpp" compile="1" resource="0" file="source/dx7Lib/dx7.cpp"/>
       <FILE id="dx004" name="device.cpp" compile="1" resource="0" file="source/dx7Lib/device.cpp"/>
       <FILE id="dx005" name="romloader.cpp" compile="1" resource="0" file="source/dx7Lib/romloader.cpp"/>
+      <GROUP id="dxc000" name="clean">
+        <FILE id="dxc001" name="Alloc.cpp" compile="1" resource="0" file="source/dx7Lib/clean/Alloc.cpp"/>
+        <FILE id="dxc002" name="Alloc.h" compile="0" resource="0" file="source/dx7Lib/clean/Alloc.h"/>
+        <FILE id="dxc003" name="Controllers.h" compile="0" resource="0" file="source/dx7Lib/clean/Controllers.h"/>
+        <FILE id="dxc004" name="Core.cpp" compile="1" resource="0" file="source/dx7Lib/clean/Core.cpp"/>
+        <FILE id="dxc005" name="Core.h" compile="0" resource="0" file="source/dx7Lib/clean/Core.h"/>
+        <FILE id="dxc006" name="Eg.h" compile="0" resource="0" file="source/dx7Lib/clean/Eg.h"/>
+        <FILE id="dxc007" name="Global.h" compile="0" resource="0" file="source/dx7Lib/clean/Global.h"/>
+        <FILE id="dxc008" name="Level.h" compile="0" resource="0" file="source/dx7Lib/clean/Level.h"/>
+        <FILE id="dxc009" name="Lfo.h" compile="0" resource="0" file="source/dx7Lib/clean/Lfo.h"/>
+        <FILE id="dxc010" name="Midi.cpp" compile="1" resource="0" file="source/dx7Lib/clean/Midi.cpp"/>
+        <FILE id="dxc011" name="Midi.h" compile="0" resource="0" file="source/dx7Lib/clean/Midi.h"/>
+        <FILE id="dxc012" name="Patch.cpp" compile="1" resource="0" file="source/dx7Lib/clean/Patch.cpp"/>
+        <FILE id="dxc013" name="Patch.h" compile="0" resource="0" file="source/dx7Lib/clean/Patch.h"/>
+        <FILE id="dxc014" name="Pitch.h" compile="0" resource="0" file="source/dx7Lib/clean/Pitch.h"/>
+        <FILE id="dxc015" name="PitchEg.h" compile="0" resource="0" file="source/dx7Lib/clean/PitchEg.h"/>
+        <FILE id="dxc016" name="Portamento.h" compile="0" resource="0" file="source/dx7Lib/clean/Portamento.h"/>
+        <FILE id="dxc017" name="Regs.h" compile="0" resource="0" file="source/dx7Lib/clean/Regs.h"/>
+      </GROUP>
     </GROUP>
     <GROUP id="matrixLib" name="matrixLib">
       <FILE id="mx001" name="acia6850.cpp" compile="1" resource="0" file="source/matrixLib/acia6850.cpp"/>
