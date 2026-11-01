@@ -68,6 +68,23 @@ namespace retromulator
         m_touched.store(false, std::memory_order_relaxed);
         const auto* hosted = binding().hosted;
         m_value.store(hosted ? hosted->getValue() : getDefaultValue(), std::memory_order_relaxed);
+        {
+            const juce::SpinLock::ScopedLockType lock(m_textLock);
+            m_textValue = -1.0f;
+        }
+        cacheHostedText();
+    }
+
+    void SlotParameter::cacheHostedText() const
+    {
+        const auto* hosted = binding().hosted;
+        if(!hosted || !juce::MessageManager::existsAndIsCurrentThread())
+            return;
+        const float v = getValue();
+        auto text = hosted->getText(v, 0);
+        const juce::SpinLock::ScopedLockType lock(m_textLock);
+        m_textValue = v;
+        m_text = std::move(text);
     }
 
     void SlotParameter::setValue(float newValue)
@@ -123,7 +140,18 @@ namespace retromulator
     {
         const auto& b = binding();
         if(b.hosted)
-            return b.hosted->getText(normalisedValue, maximumStringLength);
+        {
+            if(juce::MessageManager::existsAndIsCurrentThread())
+                return b.hosted->getText(normalisedValue, maximumStringLength);
+            {
+                const juce::SpinLock::ScopedLockType lock(m_textLock);
+                if(m_textValue == normalisedValue)
+                    return maximumStringLength > 0 ? m_text.substring(0, maximumStringLength) : m_text;
+            }
+            if(b.hosted->isDiscrete() || b.hosted->isBoolean())
+                return juce::String(juce::roundToInt(normalisedValue * static_cast<float>(hostedSteps(*b.hosted) - 1)));
+            return juce::String(juce::roundToInt(normalisedValue * 100.0f)) + "%";
+        }
         const int v = juce::roundToInt(b.range.convertFrom0to1(juce::jlimit(0.0f, 1.0f, normalisedValue)));
         if(!b.desc)
             return juce::String(v);
@@ -134,7 +162,7 @@ namespace retromulator
     {
         const auto& b = binding();
         if(b.hosted)
-            return b.hosted->getValueForText(text);
+            return juce::MessageManager::existsAndIsCurrentThread() ? b.hosted->getValueForText(text) : getValue();
         if(!b.desc)
             return b.range.convertTo0to1(static_cast<float>(text.getIntValue()));
 
@@ -188,17 +216,11 @@ namespace retromulator
         {
             const int last = hostedSteps(*b.hosted) - 1;
             const float n = static_cast<float>(juce::jlimit(0, last, midiValue)) / static_cast<float>(last);
+            setValue(n);
             if(notifyHost)
-            {
-                beginChangeGesture();
-                setValueNotifyingHost(n);
-                endChangeGesture();
-            }
+                m_pool.notifyHost(m_slot);
             else
-            {
-                setValue(n);
                 sendValueChangedMessageToListeners(n);
-            }
             return;
         }
         if(!b.desc)
@@ -210,17 +232,11 @@ namespace retromulator
 
         const float n = b.range.convertTo0to1(static_cast<float>(v));
 
+        m_value.store(n, std::memory_order_relaxed);
         if(notifyHost)
-        {
-            beginChangeGesture();
-            setValueNotifyingHost(n);
-            endChangeGesture();
-        }
+            m_pool.notifyHost(m_slot);
         else
-        {
-            m_value.store(n, std::memory_order_relaxed);
             sendValueChangedMessageToListeners(n);
-        }
     }
 
     // ── ParameterPool ─────────────────────────────────────────────────────────
@@ -590,6 +606,7 @@ namespace retromulator
 
     ParameterPool::~ParameterPool()
     {
+        cancelPendingUpdate();
         // the hosted plugin is gone by now, its parameters must not be touched
         m_hosted.clear();
     }
@@ -650,7 +667,10 @@ namespace retromulator
             return;
         const int slot = m_hostedSlotOf[static_cast<size_t>(index)];
         if(slot >= 0)
-            m_slots[static_cast<size_t>(slot)]->setValueNotifyingHost(value);
+        {
+            m_slots[static_cast<size_t>(slot)]->storeValue(value);
+            notifyHost(slot);
+        }
     }
 
     void ParameterPool::parameterGestureChanged(const int index, const bool starting)
@@ -660,11 +680,66 @@ namespace retromulator
         const int slot = m_hostedSlotOf[static_cast<size_t>(index)];
         if(slot < 0)
             return;
+        // gestures from the audio thread are dropped, the values still get one of their own
+        if(!juce::MessageManager::existsAndIsCurrentThread())
+            return;
         auto* s = m_slots[static_cast<size_t>(slot)];
         if(starting)
+        {
+            flushHostNotify();
+            m_inGesture[static_cast<size_t>(slot)].store(true);
             s->beginChangeGesture();
+        }
         else
+        {
+            flushHostNotify();
+            m_inGesture[static_cast<size_t>(slot)].store(false);
             s->endChangeGesture();
+        }
+    }
+
+    void ParameterPool::notifyHost(const int slot)
+    {
+        m_hostDirty[static_cast<size_t>(slot)].store(true, std::memory_order_release);
+        if(m_holdHostNotify.load(std::memory_order_acquire) == 0)
+            flushHostNotify();
+    }
+
+    void ParameterPool::flushHostNotify()
+    {
+        if(juce::MessageManager::existsAndIsCurrentThread())
+        {
+            cancelPendingUpdate();
+            handleAsyncUpdate();
+        }
+        else
+            triggerAsyncUpdate();
+    }
+
+    void ParameterPool::handleAsyncUpdate()
+    {
+        std::array<int, NumSlots> dirty{};
+        int count = 0;
+        for(int i = 0; i < NumSlots; ++i)
+            if(m_hostDirty[static_cast<size_t>(i)].exchange(false, std::memory_order_acq_rel))
+                dirty[static_cast<size_t>(count++)] = i;
+        if(count == 0)
+            return;
+
+        // touch all, set all, release all: one gesture instead of one per slot
+        const auto inGesture = [&](const int i) { return m_inGesture[static_cast<size_t>(dirty[static_cast<size_t>(i)])].load(); };
+        for(int i = 0; i < count; ++i)
+            if(!inGesture(i))
+                m_slots[static_cast<size_t>(dirty[static_cast<size_t>(i)])]->beginChangeGesture();
+        for(int i = 0; i < count; ++i)
+        {
+            auto* s = m_slots[static_cast<size_t>(dirty[static_cast<size_t>(i)])];
+            s->cacheHostedText();
+            s->sendValueChangedMessageToListeners(s->getValue());
+        }
+        for(int i = 0; i < count; ++i)
+            if(!inGesture(i))
+                m_slots[static_cast<size_t>(dirty[static_cast<size_t>(i)])]->endChangeGesture();
     }
 
     void ParameterPool::setCore(SynthType type)
@@ -1297,6 +1372,7 @@ namespace retromulator
             }
         }
 
+        m_holdHostNotify.fetch_add(1);
         m_mirroring.store(true, std::memory_order_release);
         for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
         {
@@ -1308,6 +1384,8 @@ namespace retromulator
             s->clearTouched();
         }
         m_mirroring.store(false, std::memory_order_release);
+        m_holdHostNotify.fetch_sub(1);
+        flushHostNotify();
     }
 
     void ParameterPool::syncFromCcValues(const std::vector<std::pair<uint8_t, uint8_t>>& values)
@@ -1316,6 +1394,7 @@ namespace retromulator
         if(!map)
             return;
 
+        m_holdHostNotify.fetch_add(1);
         m_mirroring.store(true, std::memory_order_release);
         for(const auto& [cc, value] : values)
         {
@@ -1332,6 +1411,8 @@ namespace retromulator
             s->clearTouched();
         }
         m_mirroring.store(false, std::memory_order_release);
+        m_holdHostNotify.fetch_sub(1);
+        flushHostNotify();
     }
 
     void ParameterPool::setCcFromEditor(uint8_t cc, uint8_t value)

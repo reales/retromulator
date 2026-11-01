@@ -61,9 +61,11 @@ namespace retromulator
         void rebind(const Binding* b);
         const Binding& binding() const { return *m_binding.load(std::memory_order_acquire); }
 
-        // Called on the message thread for CCs coming from host/physical MIDI.
+        // Any thread. With notifyHost the host hears of it on the message thread (see notifyHost).
         void setFromMidi(int midiValue, bool notifyHost);
         void clearTouched() { m_touched.store(false, std::memory_order_relaxed); }
+        void storeValue(float n) { m_value.store(n, std::memory_order_relaxed); }
+        void cacheHostedText() const;
 
     private:
         ParameterPool& m_pool;
@@ -77,10 +79,16 @@ namespace retromulator
         std::atomic<float> m_value{0.0f};
         std::atomic<int>   m_lastSent{-1};
         std::atomic<bool>  m_touched{false};
+
+        // Hosted VST3 getText takes the MessageManagerLock. Pro Tools asks from its EUCON
+        // thread while the message thread waits on it, so other threads get this copy.
+        mutable juce::SpinLock m_textLock;
+        mutable float m_textValue = -1.0f;
+        mutable juce::String m_text;
     };
 
     // Owns the per-core description sets and the 128 slots registered with the host.
-    class ParameterPool : private juce::AudioProcessorParameter::Listener
+    class ParameterPool : private juce::AudioProcessorParameter::Listener, private juce::AsyncUpdater
     {
     public:
         static constexpr int NumSlots = 128;
@@ -202,6 +210,11 @@ namespace retromulator
 
         static const char* coreFileName(SynthType type);
 
+        // Any thread. Tells the host a slot changed. Pro Tools in Touch mode hangs when a
+        // preset dump touches and releases each slot in turn or from the audio thread, so
+        // changes are gathered and sent on the message thread as one gesture.
+        void notifyHost(int slot);
+
         // Message thread. The core's MIDI CC table as text. grid: several tab separated
         // columns sized to the list, for a native message box; otherwise one per line.
         juce::String getCcTableText(SynthType type, bool grid = false);
@@ -209,6 +222,8 @@ namespace retromulator
     private:
         void parameterValueChanged(int index, float value) override;
         void parameterGestureChanged(int index, bool starting) override;
+        void handleAsyncUpdate() override;
+        void flushHostNotify();
         void unbindHosted();
 
         std::array<SlotParameter::Binding, NumSlots> m_hostedBindings{};
@@ -268,6 +283,9 @@ namespace retromulator
         std::atomic<const CoreMap*> m_current{nullptr};
         std::atomic<uint8_t> m_partChannel{0};
         std::atomic<bool> m_mirroring{false};
+        std::array<std::atomic<bool>, NumSlots> m_hostDirty{};
+        std::array<std::atomic<bool>, NumSlots> m_inGesture{};   // a hosted editor's own gesture
+        std::atomic<int> m_holdHostNotify{0};
         SynthType m_core = SynthType::None;
     };
 }

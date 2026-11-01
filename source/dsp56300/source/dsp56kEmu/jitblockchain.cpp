@@ -15,6 +15,8 @@ namespace dsp56k
 	void funcCreate(JitDspPtr* _jit, TWord _pc) noexcept;
 	void funcRecreate(JitDspPtr* _jit, TWord _pc) noexcept;
 
+	constexpr size_t g_maxChildLinkDepth = 256;
+
 	JitBlockChain::JitBlockChain(Jit& _jit, const JitDspMode& _mode, const size_t _usedFuncSize) : m_jit(_jit), m_mode(_mode)
 	{
 		m_logger.reset(new AsmJitLogger());
@@ -299,6 +301,10 @@ namespace dsp56k
 			}
 
 			if (!_allowCreate)
+				return nullptr;
+
+			// each nested child compile adds stack frames; long uncompiled chains overflowed the DSP thread stack
+			if (m_generatingBlocks.size() >= g_maxChildLinkDepth)
 				return nullptr;
 
 			// If we jump into the middle of an existing block, this block needs to be regenerated.
