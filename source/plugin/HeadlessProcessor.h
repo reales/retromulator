@@ -406,10 +406,6 @@ namespace retromulator
         int  getDx7CtrlRange(int n) const  { return m_dx7Ctrl[n & 3][0]; }
         int  getDx7CtrlAssign(int n) const { return m_dx7Ctrl[n & 3][1]; }
         void setDx7Controller(int n, int range, int assign);
-        // DX7 engine: firmware-free controller by default, the firmware ROM when chosen and installed
-        bool getDx7Firmware() const { return m_dx7Firmware; }
-        void setDx7Firmware(bool on, std::function<void()> onBooted = {});
-        static bool isDx7FirmwareAvailable();
 
         // ── Trackermeister (tracker module player) ─────────────────────────
         // The device owns the transport: note 12 plays, 14 stops, 13 and 15 step a
@@ -631,7 +627,6 @@ namespace retromulator
         int                  m_matrixLfoSync[2] = {0, 0};
         void applyMatrixLfoSync();
         int                  m_dx7Ctrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
-        bool                 m_dx7Firmware = false;
         void applyDx7Controllers(synthLib::Device* dev);
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;

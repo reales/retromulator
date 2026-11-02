@@ -103,7 +103,7 @@ namespace retromulator
     }
 
     synthLib::Device* SynthFactory::create(SynthType type, const std::string& romPath,
-                                           const int emu88Model, const bool dx7Firmware)
+                                           const int emu88Model)
     {
         addDefaultRomSearchPaths(romPath);
 
@@ -200,13 +200,7 @@ namespace retromulator
             case SynthType::DX7:
             {
                 synthLib::DeviceCreateParams p;
-                // Without firmware the device runs its clean-room controller
-                const auto rom = dx7Firmware ? dx7Emu::RomLoader::findROM() : dx7Emu::RomData();
-                if(rom.isValid())
-                {
-                    p.romData  = rom.getData();
-                    p.romName  = rom.getFilename();
-                }
+                // the clean-room controller, never the firmware ROM
                 return new dx7Emu::Device(p);
             }
 
