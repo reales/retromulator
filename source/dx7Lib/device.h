@@ -45,6 +45,20 @@ public:
 
 	void setController(int n, int range, int assign);
 
+	// function settings: a new instance starts from defaults(), setFunctions sends only the changed values
+	static dx7clean::Global defaults();
+	const dx7clean::Global* functions() const { return m_clean ? &m_clean->global() : nullptr; }
+	void setFunctions(const dx7clean::Global& g);
+
+	// session words: range | assign << 8 per controller, function values in the top bytes.
+	// Words without them (older sessions) unpack to defaults()
+	static void packFunctions(const dx7clean::Global& g, int32_t (&w)[4]);
+	static dx7clean::Global unpackFunctions(const int32_t (&w)[4]);
+
+	// back to the state of a fresh instance (controllers, pedals, functions, voices), voice memory kept.
+	// Call with processing suspended
+	void resetPerformance();
+
 	// true when running the firmware-free controller instead of the HD6303 firmware
 	bool isClean() const { return m_clean != nullptr; }
 
@@ -58,11 +72,12 @@ protected:
 
 private:
 	void processMessage(Message msg);
-	int fillBuffer(float* outBuffer, int maxSamples);
 	void parseMIDI(const uint8_t* data, uint32_t size);
 	bool parseMidiTx(uint32_t& size, uint8_t*& buffer);
 	void processAudioClean(const synthLib::TAudioOutputs& _outputs, size_t _samples);
 	void sendMidiClean(const synthLib::SMidiEvent& _ev);
+	void cleanIn(uint8_t a, uint8_t b, uint8_t c);
+	void bootClean();
 
 	// DX7 hardware emulator
 	ToSynth* m_toSynth = nullptr;
@@ -71,16 +86,13 @@ private:
 	NullToGui m_nullToGui;
 	DX7 m_dx7;
 	std::unique_ptr<dx7clean::Core> m_clean;
-	uint8_t m_cleanCtrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
 
 	// Audio generation state
 	static constexpr float kNativeSamplerate = 49096.0f;
 	static constexpr int kBufSize = 256;
-	double m_cpuCyclesPerSample = 0.0;
-	double m_cycCount = 0.0;
-	float m_internalBuffer[kBufSize * 2] = {0};
-	float m_discardBuffer[kBufSize] = {0};
-	int m_discardCnt = 0;
+	// One CPU instruction yields at most one sample, so the overshoot past a block is carried over
+	float m_pending[kBufSize + 4] = {0};
+	int m_pendingCnt = 0;
 
 	// Volume
 	float m_volume = 1.0f;

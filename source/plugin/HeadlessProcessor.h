@@ -4,6 +4,7 @@
 #include "PlaylistOrder.h"
 #include "jucePluginLib/processor.h"
 #include "synthLib/midiTypes.h"
+#include "dx7Lib/clean/Global.h"
 #ifndef CUSTOM
 #  include "synthLib/deviceTypes.h"
 #endif
@@ -408,9 +409,11 @@ namespace retromulator
 
         // ── DX7 controller setup (Function mode) ───────────────────────────
         // n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Assign bits 1=pitch 2=amp 4=EG bias
-        int  getDx7CtrlRange(int n) const  { return m_dx7Ctrl[n & 3][0]; }
-        int  getDx7CtrlAssign(int n) const { return m_dx7Ctrl[n & 3][1]; }
+        int  getDx7CtrlRange(int n) const;
+        int  getDx7CtrlAssign(int n) const;
         void setDx7Controller(int n, int range, int assign);
+        // what the running engine holds (function sysex from MIDI included), else the restored values
+        dx7clean::Global dx7Functions() const;
 
         // ── Trackermeister (tracker module player) ─────────────────────────
         // The device owns the transport: note 12 plays, 14 stops, 13 and 15 step a
@@ -636,7 +639,7 @@ namespace retromulator
         // loads the Matrix folder bank holding a patch of that name, the one at _program first
         bool restoreMatrixPatchByName(const std::string& name, int program);
         void applyMatrixLfoSync();
-        int                  m_dx7Ctrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
+        dx7clean::Global     m_dx7Fn;
         void applyDx7Controllers(synthLib::Device* dev);
         bool                 m_trackerStopAtEnd = false;
         bool                 m_trackerShuffle = false;

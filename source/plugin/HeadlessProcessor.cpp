@@ -707,6 +707,7 @@ namespace retromulator
                 }
             })
     {
+        m_dx7Fn = dx7Emu::Device::defaults();
         getController();
 
         setMidiOutCore(readSettingsBool("midiOutCoreOutput", false), false);
@@ -941,6 +942,13 @@ namespace retromulator
                     applyMatrixLfoSync();
                     // the firmware only ever runs here, in the background, to write the ROM banks
                     matrixLib::RomBankGenerator::startOnce(getSynthDataFolder(SynthType::Matrix));
+                }
+                else if(type == SynthType::DX7)
+                {
+                    // a kept engine starts over like a new instance: CC7/11, pedals, held keys, functions
+                    if(auto* dx = dynamic_cast<dx7Emu::Device*>(m_device.get()); dx && keepDevice)
+                        dx->resetPerformance();
+                    applyDx7Controllers(m_device.get());
                 }
                 else if(type == SynthType::Ayumi)
                 {
@@ -3409,19 +3417,46 @@ namespace retromulator
 
     // ── DX7 ─────────────────────────────────────────────────────────────────
 
+    template<typename G> static auto& dx7Ctrl(G&& g, int n)
+    {
+        n &= 3;
+        return n == 0 ? g.wheel : n == 1 ? g.breath : n == 2 ? g.foot : g.aftertouch;
+    }
+
     void HeadlessProcessor::setDx7Controller(const int n, const int range, const int assign)
     {
-        m_dx7Ctrl[n & 3][0] = juce::jlimit(0, 99, range);
-        m_dx7Ctrl[n & 3][1] = assign & 7;
+        m_dx7Fn = dx7Functions();
+        auto& c = dx7Ctrl(m_dx7Fn, n);
+        c.range = static_cast<uint8_t>(juce::jlimit(0, 99, range));
+        c.assign = static_cast<uint8_t>(assign & 7);
         if(m_synthType == SynthType::DX7)
             applyDx7Controllers(m_device.get());
     }
 
+    int HeadlessProcessor::getDx7CtrlRange(const int n) const { return dx7Ctrl(dx7Functions(), n).range; }
+    int HeadlessProcessor::getDx7CtrlAssign(const int n) const { return dx7Ctrl(dx7Functions(), n).assign; }
+
+    dx7clean::Global HeadlessProcessor::dx7Functions() const
+    {
+        if(m_synthType == SynthType::DX7)
+            if(const auto* dx = dynamic_cast<const dx7Emu::Device*>(m_device.get()))
+                if(const auto* g = dx->functions())
+                    return *g;
+        return m_dx7Fn;
+    }
+
     void HeadlessProcessor::applyDx7Controllers(synthLib::Device* dev)
     {
-        if(auto* dx = dynamic_cast<dx7Emu::Device*>(dev))
-            for(int n = 0; n < 4; ++n)
-                dx->setController(n, m_dx7Ctrl[n][0], m_dx7Ctrl[n][1]);
+        auto* dx = dynamic_cast<dx7Emu::Device*>(dev);
+        if(!dx)
+            return;
+        if(dx->isClean())
+        {
+            dx->setFunctions(m_dx7Fn);
+            return;
+        }
+        for(int n = 0; n < 4; ++n)
+            dx->setController(n, dx7Ctrl(m_dx7Fn, n).range, dx7Ctrl(m_dx7Fn, n).assign);
     }
 
     // ── Trackermeister ──────────────────────────────────────────────────────
@@ -4963,12 +4998,14 @@ namespace retromulator
             appendInt32(destData, m_matrixLfoSync[1]);
         }
 
-        // ['DX7C':int32][range | assign << 8 : int32 x 4]
+        // ['DX7C':int32][4 words, see dx7Emu::Device::packFunctions]
         if(m_synthType == SynthType::DX7)
         {
+            int32_t w[4];
+            dx7Emu::Device::packFunctions(dx7Functions(), w);
             appendInt32(destData, kDx7CtrlMagic);
-            for(int n = 0; n < 4; ++n)
-                appendInt32(destData, m_dx7Ctrl[n][0] | (m_dx7Ctrl[n][1] << 8));
+            for(const auto x : w)
+                appendInt32(destData, x);
         }
 
         // Board the session was using, taken from the live device rather than the shared
@@ -5150,19 +5187,16 @@ namespace retromulator
         if(newType == SynthType::Matrix)
             m_matrixCoreState = matrixCoreState;
 
-        // DX7 controller setup sits in the last twenty bytes; sessions without it get the defaults
-        for(auto& c : m_dx7Ctrl) { c[0] = 99; c[1] = 7; }
+        // DX7 function settings sit in the last twenty bytes; sessions without them get the defaults
+        m_dx7Fn = dx7Emu::Device::defaults();
         if(newType == SynthType::DX7 && sizeInBytes >= 20)
         {
             int32_t v[5] = {};
             std::memcpy(v, bytes + sizeInBytes - 20, 20);
             if(v[0] == kDx7CtrlMagic)
             {
-                for(int n = 0; n < 4; ++n)
-                {
-                    m_dx7Ctrl[n][0] = juce::jlimit(0, 99, static_cast<int>(v[n + 1] & 0xff));
-                    m_dx7Ctrl[n][1] = (v[n + 1] >> 8) & 7;
-                }
+                const int32_t w[4] = { v[1], v[2], v[3], v[4] };
+                m_dx7Fn = dx7Emu::Device::unpackFunctions(w);
             }
         }
         const auto* runningDx7 = dynamic_cast<const dx7Emu::Device*>(m_device.get());
@@ -5189,8 +5223,6 @@ namespace retromulator
         setSynthType(newType, romPath, keepDevice);
         if(newType == SynthType::Matrix)
             applyMatrixLfoSync();
-        else if(newType == SynthType::DX7)
-            applyDx7Controllers(m_device.get());
 
         if(newType == SynthType::AkaiS1000)
         {

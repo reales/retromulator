@@ -26,27 +26,11 @@ Device::Device(const synthLib::DeviceCreateParams& _params)
 	// Default velocity curve (0.4 = convex, matches VDX7 default)
 	setMidiVelocity(0.4f);
 
-	// CPU cycles per sample at native rate
-	// DX7 master clock: 9.4265 MHz, CPU divides by 2, then by 4
-	// So CPU clock = 9.4265e6 / 2 / 4 = 1,178,312.5 Hz
-	// Native sample rate = 49,096.354 Hz
-	// Cycles per sample = 1,178,312.5 / 49,096.354 ≈ 24.0
-	m_cpuCyclesPerSample = (9.4265e6 / 2.0 / 4.0) / static_cast<double>(kNativeSamplerate);
-
 	// Without a firmware ROM the clean-room controller drives the EGS
 	if(_params.romData.empty())
 	{
 		m_dx7.midiFilter.set_f(10.6f / kNativeSamplerate);
-		m_clean = std::make_unique<dx7clean::Core>();
-		m_clean->onWrite = [this](uint16_t addr, uint8_t value, uint64_t) { m_dx7.busWrite(addr, value); };
-
-		float discard[kBufSize + 4];
-		for(int i = 0; i < 4096; i++)
-		{
-			int cnt = 0;
-			m_clean->advance(24);
-			m_dx7.egs.clock(discard, cnt, 96);
-		}
+		bootClean();
 		return;
 	}
 
@@ -87,6 +71,11 @@ bool Device::isValid() const
 	return m_clean || m_dx7.isRomLoaded();
 }
 
+template<typename G> static auto& ctrlOf(G& g, int n)
+{
+	return n == 0 ? g.wheel : n == 1 ? g.breath : n == 2 ? g.foot : g.aftertouch;
+}
+
 void Device::setController(int n, int range, int assign)
 {
 	if(!m_clean)
@@ -95,15 +84,109 @@ void Device::setController(int n, int range, int assign)
 		return;
 	}
 
-	// n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Only changes are sent, as a front-panel edit would be
-	static constexpr uint8_t kRangeParam[4] = { dx7clean::fn::WheelRange, dx7clean::fn::BreathRange, dx7clean::fn::FootRange, dx7clean::fn::AtRange };
-	auto& c = m_cleanCtrl[n & 3];
-	const auto r = static_cast<uint8_t>(std::clamp(range, 0, 99));
-	const auto a = static_cast<uint8_t>(assign & 7);
-	if(c[0] != r) m_clean->setFunction(kRangeParam[n & 3], r);
-	if(c[1] != a) m_clean->setFunction(static_cast<uint8_t>(kRangeParam[n & 3] + 1), a);
-	c[0] = r;
-	c[1] = a;
+	// n: 0 wheel, 1 breath, 2 foot, 3 aftertouch
+	auto g = m_clean->global();
+	auto& c = ctrlOf(g, n & 3);
+	c.range = static_cast<uint8_t>(std::clamp(range, 0, 99));
+	c.assign = static_cast<uint8_t>(assign & 7);
+	setFunctions(g);
+}
+
+// Power-on function memory as measured (INTERFACE.md 6), except pitch bend range: the measured
+// unit holds 0, which disables bend. 2 semitones is the General MIDI default and the old adapter's fallback
+dx7clean::Global Device::defaults()
+{
+	dx7clean::Global g;
+	g.bendRange = 2;
+	return g;
+}
+
+void Device::setFunctions(const dx7clean::Global& g)
+{
+	if(!m_clean)
+		return;
+	namespace fn = dx7clean::fn;
+	// compared with the core, so values changed by function sysex from MIDI are not skipped
+	const auto& cur = m_clean->global();
+	auto set = [this](uint8_t p, uint8_t now, uint8_t want) { if(now != want) m_clean->setFunction(p, want); };
+	set(fn::PolyMono, cur.mono, g.mono);
+	set(fn::BendRange, cur.bendRange, g.bendRange);
+	set(fn::BendStep, cur.bendStep, g.bendStep);
+	set(fn::PortaMode, cur.portaMode, g.portaMode);
+	set(fn::Glissando, cur.glissando, g.glissando);
+	set(fn::PortaTime, cur.portaTime, g.portaTime);
+	set(fn::WheelRange, cur.wheel.range, std::min<uint8_t>(g.wheel.range, 99));
+	set(fn::WheelAssign, cur.wheel.assign, g.wheel.assign & 7);
+	set(fn::FootRange, cur.foot.range, std::min<uint8_t>(g.foot.range, 99));
+	set(fn::FootAssign, cur.foot.assign, g.foot.assign & 7);
+	set(fn::BreathRange, cur.breath.range, std::min<uint8_t>(g.breath.range, 99));
+	set(fn::BreathAssign, cur.breath.assign, g.breath.assign & 7);
+	set(fn::AtRange, cur.aftertouch.range, std::min<uint8_t>(g.aftertouch.range, 99));
+	set(fn::AtAssign, cur.aftertouch.assign, g.aftertouch.assign & 7);
+}
+
+// top bytes, version 1: version, bend range | mono << 4 | porta mode << 5 | glissando << 6, bend step,
+// porta time. Bit 16 of word 0 (firmware choice in older sessions) is ignored
+void Device::packFunctions(const dx7clean::Global& g, int32_t (&w)[4])
+{
+	const uint32_t fn[4] = { 1u, static_cast<uint32_t>(g.bendRange | (g.mono ? 0x10 : 0) | ((g.portaMode & 1) << 5) | (g.glissando ? 0x40 : 0)),
+	                         g.bendStep, g.portaTime };
+	for(int n = 0; n < 4; n++)
+	{
+		const auto& c = ctrlOf(g, n);
+		w[n] = static_cast<int32_t>(c.range | (c.assign << 8) | (fn[n] << 24));
+	}
+}
+
+dx7clean::Global Device::unpackFunctions(const int32_t (&w)[4])
+{
+	auto g = defaults();
+	const auto top = [&](int n) { return static_cast<uint32_t>(w[n]) >> 24; };
+	for(int n = 0; n < 4; n++)
+	{
+		auto& c = ctrlOf(g, n);
+		c.range = static_cast<uint8_t>(std::min(99, w[n] & 0xff));
+		c.assign = static_cast<uint8_t>((w[n] >> 8) & 7);
+	}
+	if(top(0) >= 1)
+	{
+		g.bendRange = static_cast<uint8_t>(std::min(12u, top(1) & 0x0f));
+		g.mono = (top(1) & 0x10) != 0;
+		g.portaMode = static_cast<uint8_t>((top(1) >> 5) & 1);
+		g.glissando = (top(1) & 0x40) != 0;
+		g.bendStep = static_cast<uint8_t>(std::min(12u, top(2)));
+		g.portaTime = static_cast<uint8_t>(std::min(99u, top(3)));
+	}
+	return g;
+}
+
+void Device::bootClean()
+{
+	std::unique_ptr<dx7clean::Core> old = std::move(m_clean);
+	m_clean = std::make_unique<dx7clean::Core>();
+	if(old)
+		for(int i = 0; i < static_cast<int>(dx7clean::kVoicesPerBank); i++)
+			m_clean->storeInternal(i, old->internal(i));
+	m_clean->onWrite = [this](uint16_t addr, uint8_t value, uint64_t) { m_dx7.busWrite(addr, value); };
+
+	m_clean->presetFunction(dx7clean::fn::BendRange, defaults().bendRange);
+
+	float discard[kBufSize + 4];
+	for(int i = 0; i < 4096; i++)
+	{
+		int cnt = 0;
+		m_clean->advance(24);
+		m_dx7.egs.clock(discard, cnt, 96);
+	}
+}
+
+void Device::resetPerformance()
+{
+	if(!m_clean)
+		return;
+	bootClean();
+	m_midiExpression = 1.0f;
+	m_dx7.midiFilter.reset();
 }
 
 bool Device::setDspClockPercent(uint32_t)
@@ -170,68 +253,39 @@ void Device::processAudio(const synthLib::TAudioInputs& /*_inputs*/, const synth
 	auto* outL = _outputs[0];
 	auto* outR = _outputs[1];
 
-	size_t remaining = _samples;
 	size_t outPos = 0;
+	Message msg;
 
-	while(remaining > 0)
+	while(outPos < _samples)
 	{
-		const int toGenerate = static_cast<int>(std::min(remaining, static_cast<size_t>(kBufSize)));
-		const int generated = fillBuffer(m_internalBuffer, toGenerate);
+		const int needed = static_cast<int>(std::min(_samples - outPos, static_cast<size_t>(kBufSize)));
+
+		// One sample every 24 CPU cycles, but the CPU steps whole instructions
+		while(m_pendingCnt < needed)
+		{
+			if(m_shutdown.load(std::memory_order_relaxed))
+				return;
+
+			if(!m_dx7.haveMsg)
+				if(m_toSynth->pop(msg)) processMessage(msg);
+
+			m_dx7.run();
+			m_dx7.egs.clock(m_pending, m_pendingCnt, 4 * std::max(m_dx7.inst->cycles, 1));
+		}
 
 		// MIDI volume filtering and expression
 		const float mv = m_dx7.midiVolTab[m_dx7.midiVolume] * m_midiExpression + 1e-18f;
 
-		const int toCopy = std::min(generated, toGenerate);
-		for(int i = 0; i < toCopy && outPos < _samples; i++, outPos++)
+		for(int i = 0; i < needed; i++, outPos++)
 		{
-			const float sample = m_internalBuffer[i] * m_volume * m_dx7.midiFilter.operate(mv);
+			const float sample = m_pending[i] * m_volume * m_dx7.midiFilter.operate(mv);
 			outL[outPos] = sample;
 			outR[outPos] = sample; // mono to stereo
 		}
 
-		remaining -= static_cast<size_t>(toCopy);
-		if(generated == 0) break; // safety
+		m_pendingCnt -= needed;
+		std::copy_n(m_pending + needed, m_pendingCnt, m_pending);
 	}
-
-	// Zero remaining if we underran
-	for(; outPos < _samples; outPos++)
-	{
-		outL[outPos] = 0.0f;
-		outR[outPos] = 0.0f;
-	}
-
-}
-
-int Device::fillBuffer(float* outBuffer, int maxSamples)
-{
-	m_cycCount += m_cpuCyclesPerSample * maxSamples;
-	int outCnt = 0;
-	m_discardCnt = 0;
-	Message msg;
-
-	while(m_cycCount > 0 && !m_shutdown.load(std::memory_order_relaxed))
-	{
-		// Process messages from ToSynth queue
-		if(!m_dx7.haveMsg)
-			if(m_toSynth->pop(msg)) processMessage(msg);
-
-		// Run one CPU instruction
-		m_dx7.run();
-
-		const int cycles = m_dx7.inst->cycles;
-
-		// Clock the EGS and OPS — always clock to keep CPU/EGS in sync,
-		// but use a discard buffer once we have enough output samples
-		if(outCnt < maxSamples)
-			m_dx7.egs.clock(outBuffer, outCnt, 4 * cycles);
-		else
-			m_dx7.egs.clock(m_discardBuffer, m_discardCnt, 4 * cycles);
-
-		// Safety: ensure we always make forward progress
-		m_cycCount -= (cycles > 0) ? cycles : 1;
-	}
-
-	return outCnt;
 }
 
 void Device::processAudioClean(const synthLib::TAudioOutputs& _outputs, size_t _samples)
@@ -239,18 +293,29 @@ void Device::processAudioClean(const synthLib::TAudioOutputs& _outputs, size_t _
 	auto* outL = _outputs[0];
 	auto* outR = _outputs[1];
 
-	const float mv = m_dx7.midiVolTab[m_dx7.midiVolume] * m_midiExpression + 1e-18f;
-
-	// 24 controller cycles = 96 EGS clocks = one sample
-	for(size_t i = 0; i < _samples; i++)
+	size_t outPos = 0;
+	while(outPos < _samples)
 	{
-		float s = 0.0f;
-		int cnt = 0;
-		m_clean->advance(24);
-		m_dx7.egs.clock(&s, cnt, 96);
-		const float sample = s * m_volume * m_dx7.midiFilter.operate(mv);
-		outL[i] = sample;
-		outR[i] = sample;
+		const int needed = static_cast<int>(std::min(_samples - outPos, static_cast<size_t>(kBufSize)));
+
+		// 24 controller cycles = 96 EGS clocks = one sample
+		while(m_pendingCnt < needed)
+		{
+			m_clean->advance(24);
+			m_dx7.egs.clock(m_pending, m_pendingCnt, 96);
+		}
+
+		const float mv = m_dx7.midiVolTab[m_dx7.midiVolume] * m_midiExpression + 1e-18f;
+
+		for(int i = 0; i < needed; i++, outPos++)
+		{
+			const float sample = m_pending[i] * m_volume * m_dx7.midiFilter.operate(mv);
+			outL[outPos] = sample;
+			outR[outPos] = sample;
+		}
+
+		m_pendingCnt -= needed;
+		std::copy_n(m_pending + needed, m_pendingCnt, m_pending);
 	}
 }
 
@@ -284,10 +349,36 @@ void Device::sendMidiClean(const synthLib::SMidiEvent& _ev)
 		m_midiExpression = _ev.c / 127.0f;
 		return;
 	}
+	if(status == 0xB0 && _ev.b == 120)
+	{
+		// all sound off: release every key, sustained ones too
+		cleanIn(0xB0, 64, 0);
+		cleanIn(0xB0, 123, 0);
+		return;
+	}
+	if(status == 0xB0 && _ev.b == 121)
+	{
+		// reset controllers to their power-on values (portamento pedal on, as the DX7 boots); volume stays
+		m_midiExpression = 1.0f;
+		cleanIn(0xB0, 1, 0);
+		cleanIn(0xB0, 2, 0);
+		cleanIn(0xB0, 4, 0);
+		cleanIn(0xD0, 0, 0);
+		cleanIn(0xE0, 0, 64);
+		cleanIn(0xB0, 64, 0);
+		cleanIn(0xB0, 65, 127);
+		return;
+	}
 	if(status == 0xB0 && (_ev.b == 0 || _ev.b == 32 || _ev.b == 100 || _ev.b == 101))
 		return;
 
-	const uint8_t buf[3] = { static_cast<uint8_t>(_ev.a < 0xF0 ? status : _ev.a), _ev.b, _ev.c };
+	cleanIn(static_cast<uint8_t>(_ev.a < 0xF0 ? status : _ev.a), _ev.b, _ev.c);
+}
+
+void Device::cleanIn(uint8_t a, uint8_t b, uint8_t c)
+{
+	const uint8_t buf[3] = { a, b, c };
+	const uint8_t status = a & 0xF0;
 	const size_t len = (status == 0xC0 || status == 0xD0) ? 2 : 3;
 	m_clean->midiIn(buf, len);
 }

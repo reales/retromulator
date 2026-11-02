@@ -633,10 +633,11 @@ uint64_t Core::functionReset(uint64_t t)
 	return end;
 }
 
-void Core::applyFunction(uint8_t param, uint8_t value)
+void Core::applyFunction(uint8_t param, uint8_t value, bool live)
 {
 	auto& g = m_global;
-	m_ctrl.functionChanged();
+	if (live)
+		m_ctrl.functionChanged();
 	switch (param)
 	{
 	case fn::PolyMono:

@@ -83,6 +83,8 @@ public:
 	void setChannel(uint8_t ch) { m_channel = ch & 15; }
 	void setMasterTune(int mt) { m_global.masterTune = mt < -256 ? -256 : mt > 255 ? 255 : mt; }
 	void setFunction(uint8_t param, uint8_t value);
+	// a value already held in function memory at power-on: no voice reset, EG bias stays off
+	void presetFunction(uint8_t param, uint8_t value) { applyFunction(param, value, false); }
 	void setAllocPolicy(std::unique_ptr<AllocPolicy> p);
 	void setAcceptSingleVoiceSysex(bool b) { m_acceptVced = b; }
 
@@ -134,7 +136,7 @@ private:
 	uint64_t loadPatch(uint64_t t);
 	uint64_t voiceTriplets(uint64_t t, uint32_t step);
 	uint64_t paramChange(uint16_t p, uint8_t v, uint64_t t);
-	void applyFunction(uint8_t param, uint8_t value);
+	void applyFunction(uint8_t param, uint8_t value, bool live = true);
 	static bool resetsVoices(uint8_t param);
 	uint64_t functionReset(uint64_t t);
 	uint16_t voiceWord(int v);
