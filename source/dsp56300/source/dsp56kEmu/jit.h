@@ -75,6 +75,7 @@ namespace dsp56k
 		}
 
 		void create(TWord _pc, bool _execute);
+		void interpret(TWord _pc);
 		void recreate(TWord _pc);
 
 		void addLoop(const JitBlockInfo& _info);

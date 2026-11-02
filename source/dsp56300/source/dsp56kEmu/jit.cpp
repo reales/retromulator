@@ -142,6 +142,13 @@ namespace dsp56k
 		m_currentChain->create(_pc, _execute);
 	}
 
+	void Jit::interpret(const TWord _pc)
+	{
+		m_dsp.pcCurrentInstruction = _pc;
+		m_dsp.setPC(_pc);
+		m_dsp.execOp(m_dsp.fetchPC());
+	}
+
 	void Jit::recreate(TWord _pc)
 	{
 		m_currentChain->recreate(_pc);

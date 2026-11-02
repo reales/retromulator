@@ -15,8 +15,6 @@ namespace dsp56k
 	void funcCreate(JitDspPtr* _jit, TWord _pc) noexcept;
 	void funcRecreate(JitDspPtr* _jit, TWord _pc) noexcept;
 
-	constexpr size_t g_maxChildLinkDepth = 256;
-
 	JitBlockChain::JitBlockChain(Jit& _jit, const JitDspMode& _mode, const size_t _usedFuncSize) : m_jit(_jit), m_mode(_mode)
 	{
 		m_logger.reset(new AsmJitLogger());
@@ -148,7 +146,13 @@ namespace dsp56k
 		}
 
 		emit(_pc);
-		if(_execute)
+		if(!_execute)
+			return;
+
+		// a failed compile leaves funcCreate in the table, executing it would recurse until the stack overflows
+		if(m_jitFuncs[_pc] == &funcCreate)
+			m_jit.interpret(_pc);
+		else
 			exec(_pc);
 	}
 
@@ -303,10 +307,6 @@ namespace dsp56k
 			if (!_allowCreate)
 				return nullptr;
 
-			// each nested child compile adds stack frames; long uncompiled chains overflowed the DSP thread stack
-			if (m_generatingBlocks.size() >= g_maxChildLinkDepth)
-				return nullptr;
-
 			// If we jump into the middle of an existing block, this block needs to be regenerated.
 			// However, we can only destroy blocks that are not part of the recursive generation that is running at the moment
 			if (isBeingGeneratedRecursive(e.block))
@@ -377,6 +377,7 @@ namespace dsp56k
 		{
 			const auto* const errString = asmjit::DebugUtils::errorAsString(err);
 			LOG("JIT failed: " << err << " - " << errString << "PC " << HEX(_pc));
+			m_jit.releaseBlockRuntimeData(b);
 			m_jit.releaseEmitter(emitter);
 			return nullptr;
 		}
