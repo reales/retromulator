@@ -71,7 +71,8 @@ namespace retromulator
         void onFirmwareMissing(SynthType type);
         void applyLoadedRom(SynthType type, const juce::String& romFolder);
 
-        void timerCallback() override { updateStatus(); }
+        void timerCallback() override;
+        uint32_t m_matrixRomBankRuns = HeadlessProcessor::getMatrixRomBankRuns();
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BasicEditor)
     };

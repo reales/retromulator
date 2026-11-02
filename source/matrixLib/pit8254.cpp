@@ -1,5 +1,7 @@
 #include "pit8254.h"
 
+#include <algorithm>
+
 namespace matrixLib
 {
 	void Pit8254::reset()
@@ -12,6 +14,8 @@ namespace matrixLib
 	{
 		if(_c.hasPending && _tick >= _c.pendingAt)
 		{
+			_c.prevReload = _c.reload;
+			_c.switchedAt = _c.pendingAt;
 			_c.reload = _c.pendingReload;
 			_c.loadedAt = _c.pendingAt;
 			_c.phaseOfs = _c.pendingLow ? (effective(_c.reload) + 1) / 2 : 0;
@@ -26,7 +30,10 @@ namespace matrixLib
 
 		const bool reloading = (_c.mode == 2 || _c.mode == 3) && _c.running;
 		if(!reloading)
+		{
 			_c.phaseOfs = 0;
+			_c.switchedAt = 0;
+		}
 
 		switch(_c.mode)
 		{
@@ -84,6 +91,9 @@ namespace matrixLib
 			return;
 		if(c.hasPending)
 		{
+			// the gate takes the pending count early: before both ticks the old count holds
+			c.prevReload = c.reload;
+			c.switchedAt = std::min(c.pendingAt, _lowAt);
 			c.reload = c.pendingReload;
 			c.hasPending = false;
 		}
@@ -287,7 +297,7 @@ namespace matrixLib
 		update(c, _tick);
 		if(!c.running || (c.mode != 2 && c.mode != 3))
 			return 0;
-		return effective(c.reload);
+		return effective(_tick < c.switchedAt ? c.prevReload : c.reload);
 	}
 
 	uint64_t Pit8254::nextOutEdge(const uint32_t _counter, const uint64_t _tick)

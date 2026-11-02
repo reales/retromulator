@@ -36,7 +36,7 @@
 #include "dx7Lib/romloader.h"
 #include "matrixLib/device.h"
 #include "matrixLib/patch.h"
-#include "matrixLib/romloader.h"
+#include "matrixLib/romBankGenerator.h"
 #include "virusLib/deviceModel.h"
 #include "virusLib/microcontrollerTypes.h"
 #ifdef CUSTOM
@@ -243,7 +243,7 @@ namespace retromulator
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
         case SynthType::DX7:       return true; // runs firmware-free without a ROM
-        case SynthType::Matrix:    return !matrixLib::RomLoader::findROM().firmware.empty();
+        case SynthType::Matrix:    return true; // runs firmware-free, never loads a ROM
         case SynthType::Emu88:
         {
             // Content-identified sets; rescan so a dump the user just imported is seen.
@@ -595,7 +595,7 @@ namespace retromulator
         HeadlessProcessor& proc;
     };
 
-    // Audio thread. The firmware never sees these: its own bank switch would race the
+    // Audio thread. The core never sees these: its own bank switch would race the
     // edit buffer the plugin sends for the loaded bank file.
     void HeadlessProcessor::filterMatrixProgramChanges(juce::MidiBuffer& midi)
     {
@@ -653,7 +653,7 @@ namespace retromulator
             }
         }
 
-        // No bank file loaded: the firmware plays its own patch memory
+        // No bank file loaded: the core plays its own patch memory
         if(getProgramCount() == 0)
         {
             getPlugin().addMidiEvent(synthLib::SMidiEvent(synthLib::MidiEventSource::Editor,
@@ -937,7 +937,11 @@ namespace retromulator
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
                 else if(type == SynthType::Matrix)
+                {
                     applyMatrixLfoSync();
+                    // the firmware only ever runs here, in the background, to write the ROM banks
+                    matrixLib::RomBankGenerator::startOnce(getSynthDataFolder(SynthType::Matrix));
+                }
                 else if(type == SynthType::Ayumi)
                 {
                     // Two banks: Factory (read-only presets) and User (imports).
@@ -1180,7 +1184,11 @@ namespace retromulator
                 else if(type == SynthType::SID)
                     juce::File(getSynthDataFolder(SynthType::SID)).createDirectory();
                 else if(type == SynthType::Matrix)
+                {
                     applyMatrixLfoSync();
+                    // the firmware only ever runs here, in the background, to write the ROM banks
+                    matrixLib::RomBankGenerator::startOnce(getSynthDataFolder(SynthType::Matrix));
+                }
                 else if(type == SynthType::Ayumi)
                 {
                     // Two banks: Factory (read-only presets) and User (imports).
@@ -3339,6 +3347,60 @@ namespace retromulator
         return dev && dev->hasTempoSource();
     }
 
+    uint32_t HeadlessProcessor::getMatrixRomBankRuns()
+    {
+        return matrixLib::RomBankGenerator::completedRuns();
+    }
+
+    bool HeadlessProcessor::takeMatrixMemoryNotice()
+    {
+        if(!m_matrixMemoryNotice.exchange(false))
+            return false;
+        writeSettingsBool("matrixInternalMemoryNotice", true);
+        return true;
+    }
+
+    bool HeadlessProcessor::restoreMatrixPatchByName(const std::string& name, const int program)
+    {
+        const auto wanted = juce::String(name).trim();
+        if(wanted.isEmpty())
+            return false;
+
+        juce::Array<juce::File> files;
+        juce::File(getSynthDataFolder(SynthType::Matrix)).findChildFiles(files, juce::File::findFiles, false, "*.syx");
+        files.sort();
+
+        juce::File found;
+        int foundIndex = -1;
+        for(const auto& f : files)
+        {
+            juce::MemoryBlock data;
+            if(!f.loadFileAsData(data))
+                continue;
+            synthLib::SysexBufferList messages;
+            const auto* p = static_cast<const uint8_t*>(data.getData());
+            synthLib::MidiToSysex::extractSysexFromData(messages, synthLib::SysexBuffer(p, p + data.getSize()));
+            for(size_t i = 0; i < messages.size(); ++i)
+            {
+                if(!matrixLib::patch::isSinglePatch(messages[i]) || juce::String(matrixLib::patch::getName(messages[i])).trim() != wanted)
+                    continue;
+                // the same name in several banks: the one at the saved program number wins
+                if(foundIndex < 0 || static_cast<int>(i) == program)
+                {
+                    found = f;
+                    foundIndex = static_cast<int>(i);
+                }
+                if(static_cast<int>(i) == program)
+                    break;
+            }
+            if(foundIndex == program)
+                break;
+        }
+        if(foundIndex < 0)
+            return false;
+        return loadPresetFromFile(found.getFullPathName().toStdString(), found.getFileNameWithoutExtension().toStdString(), foundIndex);
+    }
+
     bool HeadlessProcessor::isMatrixLfoDivisionReachable(const int division) const
     {
         const auto* dev = getMatrixDevice();
@@ -4659,6 +4721,8 @@ namespace retromulator
     // "TRKO": tracker options, a bit field. 1 = stop at end, 2 = shuffle.
     static constexpr int32_t kTrackerOptionsMagic = 0x4F4B5254;
     static constexpr int32_t kMatrixLfoSyncMagic = 0x534C584D;   // 'MXLS'
+    static constexpr int32_t kMatrixCoreMagic = 0x5343584D;      // 'MXCS'
+    static constexpr int32_t kMatrixLastSyncMagic = 0x4C4C584D;  // 'MXLL'
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
     static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
     static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
@@ -4873,9 +4937,27 @@ namespace retromulator
         }
 #endif
 
-        // ['MXLS':int32][lfo1 division:int32][lfo2 division:int32]
+        // ['MXLL':int32][lfo1 last division:int32][lfo2 last division:int32]
+        // [core state][length:int32]['MXCS':int32]['MXLS':int32][lfo1 division:int32][lfo2 division:int32]
+        // Sessions before the clean core end with the MXLS block alone
         if(m_synthType == SynthType::Matrix)
         {
+            appendInt32(destData, kMatrixLastSyncMagic);
+            appendInt32(destData, m_matrixLfoLastSync[0]);
+            appendInt32(destData, m_matrixLfoLastSync[1]);
+
+            // without a device (editor only) the state the session came with is kept
+            std::vector<uint8_t> core;
+            if(auto* dev = getMatrixDevice())
+                dev->getState(core, synthLib::StateTypeGlobal);
+            else
+                core = m_matrixCoreState;
+            if(!core.empty())
+            {
+                destData.append(core.data(), core.size());
+                appendInt32(destData, static_cast<int32_t>(core.size()));
+                appendInt32(destData, kMatrixCoreMagic);
+            }
             appendInt32(destData, kMatrixLfoSyncMagic);
             appendInt32(destData, m_matrixLfoSync[0]);
             appendInt32(destData, m_matrixLfoSync[1]);
@@ -5021,8 +5103,11 @@ namespace retromulator
                 m_restoredEmu88Model = model;
         }
 
-        // Matrix LFO sync sits in the last twelve bytes; read before boot so the device gets it
+        // Matrix LFO sync sits in the last twelve bytes, the core state before it; read before
+        // boot so the device gets them
         m_matrixLfoSync[0] = m_matrixLfoSync[1] = 0;
+        m_matrixLfoLastSync[0] = m_matrixLfoLastSync[1] = 0;
+        std::vector<uint8_t> matrixCoreState;
         if(newType == SynthType::Matrix && sizeInBytes >= 12)
         {
             int32_t magic = 0, lfo1 = 0, lfo2 = 0;
@@ -5034,8 +5119,36 @@ namespace retromulator
             {
                 m_matrixLfoSync[0] = lfo1;
                 m_matrixLfoSync[1] = lfo2;
+
+                int32_t coreMagic = 0, coreLength = 0;
+                if(sizeInBytes >= 20)
+                {
+                    std::memcpy(&coreMagic, bytes + sizeInBytes - 16, 4);
+                    std::memcpy(&coreLength, bytes + sizeInBytes - 20, 4);
+                }
+                int lastEnd = sizeInBytes - 12;
+                if(coreMagic == kMatrixCoreMagic && coreLength > 0 && coreLength <= sizeInBytes - 20)
+                {
+                    matrixCoreState.assign(bytes + sizeInBytes - 20 - coreLength, bytes + sizeInBytes - 20);
+                    lastEnd = sizeInBytes - 20 - coreLength;
+                }
+
+                int32_t lastMagic = 0, last1 = 0, last2 = 0;
+                if(lastEnd >= 12)
+                {
+                    std::memcpy(&lastMagic, bytes + lastEnd - 12, 4);
+                    std::memcpy(&last1, bytes + lastEnd - 8, 4);
+                    std::memcpy(&last2, bytes + lastEnd - 4, 4);
+                }
+                if(lastMagic == kMatrixLastSyncMagic && last1 >= 0 && last1 < count && last2 >= 0 && last2 < count)
+                {
+                    m_matrixLfoLastSync[0] = last1;
+                    m_matrixLfoLastSync[1] = last2;
+                }
             }
         }
+        if(newType == SynthType::Matrix)
+            m_matrixCoreState = matrixCoreState;
 
         // DX7 controller setup sits in the last twenty bytes; sessions without it get the defaults
         for(auto& c : m_dx7Ctrl) { c[0] = 99; c[1] = 7; }
@@ -5067,7 +5180,7 @@ namespace retromulator
         }
 
         // A patch fully describes these cores, so the one already running takes the session
-        // without a reboot (a Matrix boot took seconds per preset).
+        // without a reboot.
         const bool keepDevice = newType == m_synthType && romPath == m_romPath && !m_editorOnly
             && m_deviceError == synthLib::DeviceError::None && m_device && dx7EngineMatches
             && (newType == SynthType::Matrix || newType == SynthType::DX7 || newType == SynthType::OPL3
@@ -5138,7 +5251,29 @@ namespace retromulator
             // Restore the saved file path so navigatePatch can find the file in
             // the bank list for cross-bank navigation after a project reload.
             m_sysexFilePath = sysexFilePath;
+
+            // Firmware-era Matrix session that played the internal memory: find the patch by
+            // name in the folder banks (the old !ROM Bank files included), else start from Init
+            if(newType == SynthType::Matrix && sysexData.empty() && matrixCoreState.empty())
+            {
+                const auto name = juce::String(patchName).trim();
+                if(!restoreMatrixPatchByName(patchName, static_cast<int>(savedProgram)))
+                {
+                    m_patchName = "Init";
+                    if(name.isNotEmpty() && name != "Init" && !readSettingsBool("matrixInternalMemoryNotice", false))
+                        m_matrixMemoryNotice.store(true);
+                }
+            }
         }
+
+        // After the bank message above was queued: the patch it sends still replaces the edit buffer.
+        // A session without the block starts from init memory, not the previous project's
+        if(newType == SynthType::Matrix)
+            if(auto* dev = getMatrixDevice())
+            {
+                if(matrixCoreState.empty() || !dev->setState(matrixCoreState, synthLib::StateTypeGlobal))
+                    dev->resetMemory();
+            }
 
         // Restore OpenWurli device state blob (optional, backwards compatible)
         if(newType == SynthType::OpenWurli)

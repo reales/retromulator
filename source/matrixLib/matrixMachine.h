@@ -41,7 +41,7 @@ namespace matrixLib
 		static constexpr uint32_t Oversampling = 2;
 
 	private:
-		void buildControls(uint32_t _voice, Cem3396::Controls& _c);
+		void buildControls(uint32_t _voice, uint64_t _sampleCycle, Cem3396::Controls& _c);
 		void buildDischarges(uint32_t _voice, double _from, double _to, Cem3396::Discharges& _d0, Cem3396::Discharges& _d1);
 		float noise();
 

@@ -49,7 +49,8 @@ namespace matrixLib
 		Acia6850& getAcia() { return m_acia; }
 
 		// DCO1 and DCO2 period of a voice in voice timer ticks, 0 while stopped
-		uint32_t getDcoPeriod(uint32_t _voice, uint32_t _dco);
+		uint32_t getDcoPeriod(uint32_t _voice, uint32_t _dco) { return getDcoPeriod(_voice, _dco, getTimerTick()); }
+		uint32_t getDcoPeriod(uint32_t _voice, uint32_t _dco, uint64_t _tick);
 		bool getRangeHigh(uint32_t _voice, uint32_t _dco) const { return m_latches[(_dco ? 0x80 : 0x00) + _voice] != 0; }
 		Pit8254& getVoiceTimer(uint32_t _index) { return m_timers[_index]; }
 

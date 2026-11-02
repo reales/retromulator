@@ -313,11 +313,11 @@ namespace matrixLib
 		}
 	}
 
-	uint32_t Hardware::getDcoPeriod(const uint32_t _voice, const uint32_t _dco)
+	uint32_t Hardware::getDcoPeriod(const uint32_t _voice, const uint32_t _dco, const uint64_t _tick)
 	{
-		scanDco(_voice, getTimerTick());
+		scanDco(_voice, _tick);
 		auto& timer = m_timers[(_dco ? 2 : 0) + (_voice >= 3 ? 1 : 0)];
-		return timer.getPeriod(_voice % 3, getTimerTick());
+		return timer.getPeriod(_voice % 3, _tick);
 	}
 
 	void Hardware::updateIrq()

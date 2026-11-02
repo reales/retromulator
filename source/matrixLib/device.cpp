@@ -1,31 +1,42 @@
 #include "device.h"
 
 #include "patch.h"
-#include "patchNames.h"
-
-#include "baseLib/filesystem.h"
+#include "clean/lfo.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <fstream>
+#include <memory>
+#include <random>
 
 namespace matrixLib
 {
 	namespace
 	{
-		// bump when the voice model changes: the snapshot holds calibration done against it
-		constexpr uint8_t SnapshotVersion = 8;
-		constexpr char SnapshotMagic[] = "M1KSRAM";
-		constexpr char SnapshotFile[] = "matrix1000.nvram";
+		using matrixClean::HwWrite;
+		using matrixClean::Target;
 
-		constexpr float BootRate = 48000.0f;
+		// four times the MIDI rate, which keeps controller and pitch bend streams from
+		// queueing up behind the 31.25 kbaud line
+		constexpr double ByteUs = matrixClean::Core::ByteUs / 4.0;
 
-		// the firmware keeps up with four times the MIDI rate, which keeps controller and
-		// pitch bend streams from queueing up behind the 31.25 kbaud UART
-		constexpr uint32_t UartCyclesPerByte = Hardware::MidiCyclesPerByte / 4;
+		constexpr float DefaultSamplerate = 48000.0f;
+		constexpr size_t MaxBlock = 4096;   // per unit buffers, grown only by a larger host block
+
+		constexpr float SleepPeak = 3.1623e-6f;   // -110 dBFS
+		constexpr float SleepSeconds = 0.1f;
+
+		constexpr float LimitThreshold = 0.95f;
+		constexpr float LimitReleaseS = 0.15f;
+		float limitRelease(const float _rate) { return std::exp(-1.0f / (LimitReleaseS * _rate)); }
+
+		// unit 0 keeps the instance seed, the others get their own from it
+		uint32_t deriveSeed(const uint32_t _seed, const uint32_t _unit)
+		{
+			uint32_t x = _seed + _unit * 0x9e3779b9u;
+			x = (x ^ (x >> 16)) * 0x7feb352du;
+			x = (x ^ (x >> 15)) * 0x846ca68bu;
+			return x ^ (x >> 16);
+		}
 
 		// continuous messages that only need their latest value per block
 		uint32_t coalesceKey(const synthLib::SMidiEvent& _ev)
@@ -45,22 +56,7 @@ namespace matrixLib
 			}
 		}
 
-		uint32_t firmwareSum(const std::vector<uint8_t>& _rom)
-		{
-			uint32_t s = 0;
-			for(const auto b : _rom)
-				s = s * 31 + b;
-			return s;
-		}
-
-		// LFO rate per speed value: the firmware's increment table at $AA1C times the tick scale
-		constexpr uint16_t LfoIncrements[64] =
-		{
-			44, 62, 74, 88, 102, 116, 132, 148, 168, 172, 192, 214, 242, 276, 312, 356,
-			410, 462, 520, 586, 656, 720, 780, 830, 886, 936, 992, 1058, 1130, 1192, 1262, 1338,
-			1424, 1490, 1560, 1638, 1724, 1820, 1928, 2048, 2184, 2340, 2520, 2730, 2978, 3276, 3450, 3640,
-			3856, 4096, 4370, 4682, 5042, 5462, 5958, 6554, 7282, 8192, 9364, 10924, 13108, 16386, 21846, 32770
-		};
+		// LFO rate per speed value: level step per voice block, measured block rate
 		constexpr double LfoHzPerIncrement = 5.9466e-4;
 
 		struct LfoDivision { const char* name; double beats; };
@@ -76,19 +72,20 @@ namespace matrixLib
 		};
 		constexpr uint32_t LfoDivisionCount = sizeof(LfoDivisions) / sizeof(LfoDivisions[0]);
 		constexpr double LfoSyncTolerance = 0.06;
-		constexpr uint8_t LfoSpeedParam[2] = {80, 90};
 
 		// without a host playhead, MIDI clock or SysEx tempo (the standalone app)
 		constexpr float DefaultBpm = 120.0f;
+		constexpr float MinBpm = 20.0f;
+		constexpr float MaxBpm = 999.0f;
 
-		// nearest firmware speed for a rate, and how far off it is (ratio - 1)
+		// nearest speed for a rate, and how far off it is (ratio - 1)
 		int nearestLfoSpeed(const double _hz, double& _error)
 		{
 			int best = 0;
 			double bestErr = 1e9;
 			for(int i = 0; i < 64; ++i)
 			{
-				const double hz = LfoIncrements[i] * LfoHzPerIncrement;
+				const double hz = matrixClean::lfoCurve::step(i) * LfoHzPerIncrement;
 				const double err = std::fabs(std::log(hz / _hz));
 				if(err < bestErr)
 				{
@@ -100,58 +97,51 @@ namespace matrixLib
 			return best;
 		}
 
-		bool fileExists(const std::string& _path)
+		void pushToBoard(matrixClean::VoiceBoard& _vb, const HwWrite& _w)
 		{
-			std::ifstream f(_path, std::ios::binary);
-			return f.is_open();
-		}
-
-		// another process (the app and its AUv3 share the folder) never sees a partial file
-		bool writeFileAtomic(const std::string& _path, const std::vector<uint8_t>& _data)
-		{
-			static std::atomic<uint32_t> s_counter{0};
-			const auto id = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + s_counter.fetch_add(1);
-			const auto tmp = _path + ".tmp" + std::to_string(id);
-			if(!baseLib::filesystem::writeFile(tmp, _data))
-				return false;
-			if(std::rename(tmp.c_str(), _path.c_str()) == 0)
-				return true;
-			std::remove(tmp.c_str());
-			return false;
-		}
-
-		std::string withSlash(const std::string& _path)
-		{
-			if(_path.empty() || _path.back() == '/' || _path.back() == '\\')
-				return _path;
-			return _path + '/';
+			const double t = _w.timeUs;
+			switch(_w.target)
+			{
+			case Target::Cv: _vb.writeCv(t, _w.channel, static_cast<uint16_t>(_w.value & 0x1fff), static_cast<uint8_t>((_w.value >> 13) & 3)); break;
+			case Target::Mux: if(_w.value) _vb.inhibitCv(t); break;
+			case Target::Pit: _vb.writeTimer(t, _w.channel / 4, _w.channel % 4, static_cast<uint8_t>(_w.value)); break;
+			case Target::DcoMode: _vb.writeDcoMode(t, _w.channel / 2, _w.channel % 2, static_cast<uint8_t>(_w.value)); break;
+			case Target::Dco: _vb.writeDcoCount(t, _w.channel / 2, _w.channel % 2, static_cast<uint16_t>(_w.value)); break;
+			case Target::Range: _vb.writeRangeLatch(t, _w.channel / 2, _w.channel % 2, _w.value != 0); break;
+			case Target::Noise: _vb.writeNoiseLatch(t, _w.value != 0); break;
+			case Target::Ctrl: _vb.writeControlLatch(t, static_cast<uint8_t>(_w.value)); break;
+			case Target::Idle: _vb.setIdle(t, _w.value != 0); break;
+			case Target::Latch: break;
+			}
 		}
 	}
 
 	Device::Device(const synthLib::DeviceCreateParams& _params) : synthLib::Device(_params)
 	{
-		const auto& rom = _params.romData;
-		if(rom.size() < 0x8000)
-			return;
-
-		if(!m_machine.setFirmware(std::vector<uint8_t>(rom.begin(), rom.begin() + 0x8000)))
-			return;
-
-		if(rom.size() >= 0x18000)
+		for(auto& n : m_noteBoard)
+			n.fill(-1);
+		const auto seed = randomAnalogSeed();
+		for(auto& b : m_boards)
 		{
-			m_machine.setPatchRom(std::vector<uint8_t>(rom.begin() + 0x8000, rom.begin() + 0x18000));
-			m_hasPatchRom = true;
+			b = std::make_unique<Board>();
+			b->core.setOutputMode(matrixClean::OutputMode::Vintage);
+			b->board.setSamplerate(DefaultSamplerate);
+			b->board.reset();
+			b->core.setAnalog(&b->analog);
+			b->mono.resize(MaxBlock);
 		}
-
-		m_homePath = withSlash(_params.homePath);
-		m_valid = true;
-
-		boot();
-
-		if(m_hasPatchRom && !m_homePath.empty())
-			createRomBanks();
-
-		m_machine.getHardware().getAcia().setCyclesPerByte(UartCyclesPerByte);
+		m_boards[0]->analog.setSeed(seed);
+		deriveAnalog();
+		applyAnalog();
+		m_limitRelease = limitRelease(DefaultSamplerate);
+		m_writeBuf.reserve(8192);
+		m_outBuf.reserve(4096);
+		m_pending.reserve(512);
+		m_midiOut.reserve(64);
+		m_txSysex.reserve(1024);
+		m_boards[0]->core.getState(m_stateBuf);
+		for(uint32_t b = 0; b < BoardCount; ++b)
+			flushWrites(b);
 	}
 
 	Device::~Device() = default;
@@ -168,187 +158,174 @@ namespace matrixLib
 	{
 		if(!synthLib::Device::setSamplerate(_samplerate))
 			return false;
-		m_machine.setSamplerate(_samplerate);
+		std::lock_guard lock(m_mutex);
+		for(auto& b : m_boards)
+			b->board.setSamplerate(_samplerate);
+		m_limitRelease = limitRelease(_samplerate);
 		return true;
 	}
 
-	void Device::runSeconds(const float _seconds)
+#if SYNTHLIB_DEMO_MODE == 0
+	bool Device::getState(std::vector<uint8_t>& _state, synthLib::StateType)
 	{
-		std::vector<float> buf(512);
-		auto remaining = static_cast<size_t>(_seconds * m_machine.getSamplerate());
-		// nobody hears this audio, so the voices are skipped outside calibration
-		m_machine.setCpuOnly(true);
-		while(remaining)
+		// the audio thread waits only for two copies into buffers that already have the room
+		std::lock_guard stateLock(m_stateMutex);
 		{
-			const auto n = std::min(remaining, buf.size());
-			m_machine.render(buf.data(), n);
-			remaining -= n;
+			std::lock_guard lock(m_mutex);
+			m_boards[0]->core.getState(m_stateBuf);
+			m_analogCopy = m_boards[0]->analog;
 		}
-		m_machine.setCpuOnly(false);
-	}
-
-	bool Device::loadSnapshot()
-	{
-		if(m_homePath.empty())
-			return false;
-
-		std::vector<uint8_t> data;
-		if(!baseLib::filesystem::readFile(data, m_homePath + SnapshotFile))
-			return false;
-
-		constexpr size_t header = sizeof(SnapshotMagic) + 1 + 4;
-		auto& sram = m_machine.getHardware().getSram();
-		if(data.size() != header + sram.size())
-			return false;
-		if(std::memcmp(data.data(), SnapshotMagic, sizeof(SnapshotMagic)) != 0 || data[sizeof(SnapshotMagic)] != SnapshotVersion)
-			return false;
-
-		uint32_t sum;
-		std::memcpy(&sum, &data[sizeof(SnapshotMagic) + 1], 4);
-		if(sum != firmwareSum(getDeviceCreateParams().romData))
-			return false;
-
-		std::memcpy(sram.data(), &data[header], sram.size());
+		_state.insert(_state.end(), m_stateBuf.begin(), m_stateBuf.end());
+		const auto a = m_analogCopy.getState();
+		_state.insert(_state.end(), a.begin(), a.end());
 		return true;
 	}
 
-	void Device::saveSnapshot() const
+	bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType)
 	{
-		if(m_homePath.empty())
-			return;
+		std::lock_guard lock(m_mutex);
+		for(auto& b : m_boards)
+			if(!b->core.setState(_state))
+				return false;
+		clearNotes(-1);
+		// the core ignores the analog chunk behind its state; without one the unit is off
+		auto& analog = m_boards[0]->analog;
+		size_t offset = 0, size = 0;
+		if(!matrixClean::analog::Unit::findState(_state, matrixClean::Core::stateSize(), offset, size) || !analog.setState(&_state[offset], size))
+			analog.setEnabled(false);
+		deriveAnalog();
+		applyAnalog();
+		for(uint32_t b = 0; b < BoardCount; ++b)
+			flushWrites(b);
+		return true;
+	}
+#endif
 
-		baseLib::filesystem::createDirectory(m_homePath);
-
-		const auto& sram = const_cast<Machine&>(m_machine).getHardware().getSram();
-		std::vector<uint8_t> data(SnapshotMagic, SnapshotMagic + sizeof(SnapshotMagic));
-		data.push_back(SnapshotVersion);
-		const auto sum = firmwareSum(getDeviceCreateParams().romData);
-		data.insert(data.end(), reinterpret_cast<const uint8_t*>(&sum), reinterpret_cast<const uint8_t*>(&sum) + 4);
-		data.insert(data.end(), sram.begin(), sram.end());
-		writeFileAtomic(m_homePath + SnapshotFile, data);
+	void Device::resetMemory()
+	{
+		std::vector<uint8_t> init;
+		std::make_unique<matrixClean::Core>()->getState(init);
+		std::lock_guard lock(m_mutex);
+		for(auto& b : m_boards)
+			b->core.setState(init);
+		clearNotes(-1);
+		m_boards[0]->analog.setEnabled(false);
+		deriveAnalog();
+		applyAnalog();
+		for(uint32_t b = 0; b < BoardCount; ++b)
+			flushWrites(b);
 	}
 
-	void Device::boot()
+	// units 1 and 2: unit 0's settings with their own seed, so they differ like separate units
+	void Device::deriveAnalog()
 	{
-		m_machine.setSamplerate(BootRate);
-
-		const bool warm = loadSnapshot();
-		m_machine.reset();
-
-		if(warm)
+		const auto& a0 = m_boards[0]->analog;
+		for(uint32_t b = 1; b < BoardCount; ++b)
 		{
-			runSeconds(1.0f);
-			selectFirmwareProgram();
-			return;
+			auto& a = m_boards[b]->analog;
+			const auto seed = deriveSeed(a0.seed(), b);
+			if(a.seed() != seed)
+				a.setSeed(seed);
+			if(a.amount() != a0.amount())
+				a.setAmount(a0.amount());
+			if(a.residual() != a0.residual())
+				a.setResidual(a0.residual());
+			a.setThermal(a0.thermal());
+			a.setEnabled(a0.enabled());
 		}
-
-		// cold start: the firmware initialises its RAM and calibrates every voice, which
-		// takes about half a minute of machine time
-		constexpr float step = 0.25f;
-		float t = 0.0f;
-		bool sawCalibration = false;
-		while(t < 60.0f)
-		{
-			runSeconds(step);
-			t += step;
-			if(m_machine.isCalibrating())
-				sawCalibration = true;
-			else if(sawCalibration || t > 5.0f)
-				break;
-		}
-		runSeconds(1.0f);
-		selectFirmwareProgram();
-
-		saveSnapshot();
 	}
 
-	void Device::selectFirmwareProgram()
+	void Device::applyAnalog()
 	{
-		// Only a firmware patch load points the remote edit target ($79AB) at the edit
-		// buffer. Left at its boot value, opcode 06 edits land in voice 3 and crash the CPU
-		auto& hw = m_machine.getHardware();
-		hw.midiIn(0xc0);
-		hw.midiIn(0x00);
-		runSeconds(0.25f);
+		for(auto& b : m_boards)
+			b->analog.applyTo(b->board);
 	}
 
-	std::string Device::romBankFileName(const uint32_t _bank)
+	void Device::setAnalogEnabled(const bool _on)
 	{
-		return "!ROM Bank " + std::to_string(_bank) + ".syx";
+		std::lock_guard lock(m_mutex);
+		m_boards[0]->analog.setEnabled(_on);
+		deriveAnalog();
+		applyAnalog();
 	}
 
-	std::vector<uint8_t> Device::requestPatch(const uint32_t _number)
+	bool Device::getAnalogEnabled() const
 	{
-		auto& hw = m_machine.getHardware();
-		const uint8_t request[] = {0xf0, patch::IdOberheim, patch::IdMatrix, patch::OpRequest, 0x01, static_cast<uint8_t>(_number), 0xf7};
-		for(const auto b : request)
-			hw.midiIn(b);
-
-		std::vector<uint8_t> reply;
-		std::vector<uint8_t> tx;
-		for(int i = 0; i < 200 && reply.size() < patch::SysexSize; ++i)
-		{
-			runSeconds(0.005f);
-			tx.clear();
-			hw.midiOut(tx);
-			for(const auto b : tx)
-			{
-				if(b == 0xf0)
-					reply.clear();
-				if(b == 0xf0 || !reply.empty())
-					reply.push_back(b);
-			}
-		}
-		return reply;
+		std::lock_guard lock(m_mutex);
+		return m_boards[0]->analog.enabled();
 	}
 
-	void Device::createRomBanks()
+	void Device::setAnalogAmount(const float _amount)
 	{
-		bool missing = false;
-		for(uint32_t bank = 2; bank <= 9 && !missing; ++bank)
-			missing = !fileExists(m_homePath + romBankFileName(bank));
-		if(!missing)
-			return;
+		std::lock_guard lock(m_mutex);
+		m_boards[0]->analog.setAmount(_amount);
+		deriveAnalog();
+		applyAnalog();
+	}
 
-		auto& hw = m_machine.getHardware();
+	float Device::getAnalogAmount() const
+	{
+		std::lock_guard lock(m_mutex);
+		return m_boards[0]->analog.amount();
+	}
 
-		// the dumps only need to be correct, not real time
-		hw.getAcia().setCyclesPerByte(UartCyclesPerByte);
+	void Device::setAnalogSeed(const uint32_t _seed)
+	{
+		std::lock_guard lock(m_mutex);
+		m_boards[0]->analog.setSeed(_seed);
+		deriveAnalog();
+		applyAnalog();
+	}
 
-		for(uint32_t bank = 2; bank <= 9; ++bank)
-		{
-			const auto file = m_homePath + romBankFileName(bank);
-			if(fileExists(file))
-				continue;
+	uint32_t Device::getAnalogSeed() const
+	{
+		std::lock_guard lock(m_mutex);
+		return m_boards[0]->analog.seed();
+	}
 
-			const uint8_t setBank[] = {0xf0, patch::IdOberheim, patch::IdMatrix, patch::OpSetBank, static_cast<uint8_t>(bank), 0xf7};
-			for(const auto b : setBank)
-				hw.midiIn(b);
-			runSeconds(0.05f);
+	void Device::setAnalogMode(const matrixClean::analog::Thermal _mode)
+	{
+		std::lock_guard lock(m_mutex);
+		m_boards[0]->analog.setThermal(_mode);
+		deriveAnalog();
+	}
 
-			std::vector<uint8_t> out;
-			for(uint32_t n = 0; n < 100; ++n)
-			{
-				const auto reply = requestPatch(n);
-				auto data = patch::decode(reply);
-				if(!data)
-				{
-					out.clear();
-					break;
-				}
-				patch::setName(*data, g_factoryPatchNames[bank * 100 + n]);
-				const auto msg = patch::encode(*data, patch::OpSinglePatch, static_cast<uint8_t>(n));
-				out.insert(out.end(), msg.begin(), msg.end());
-			}
+	matrixClean::analog::Thermal Device::getAnalogMode() const
+	{
+		std::lock_guard lock(m_mutex);
+		return m_boards[0]->analog.thermal();
+	}
 
-			if(!out.empty())
-				writeFileAtomic(file, out);
-		}
+	void Device::setAnalogResidual(const matrixClean::analog::Residual _residual)
+	{
+		std::lock_guard lock(m_mutex);
+		m_boards[0]->analog.setResidual(_residual);
+		deriveAnalog();
+	}
 
-		// return to the state the snapshot describes
-		loadSnapshot();
-		m_machine.reset();
-		runSeconds(1.0f);
+	matrixClean::analog::Residual Device::getAnalogResidual() const
+	{
+		std::lock_guard lock(m_mutex);
+		return m_boards[0]->analog.residual();
+	}
+
+	uint32_t Device::randomAnalogSeed()
+	{
+		std::random_device rd;
+		return rd();
+	}
+
+	void Device::flushWrites(const uint32_t _board)
+	{
+		auto& b = *m_boards[_board];
+		b.core.takeWrites(m_writeBuf);
+		for(const auto& w : m_writeBuf)
+			pushToBoard(b.board, w);
+		// replies and echo come from unit 0 only
+		b.core.takeMidiOut(m_outBuf);
+		if(_board == 0)
+			for(const auto byte : m_outBuf)
+				parseMidiOut(byte);
 	}
 
 	uint32_t Device::getLfoDivisionCount()
@@ -396,64 +373,54 @@ namespace matrixLib
 		return err <= LfoSyncTolerance;
 	}
 
-	void Device::sendLfoSync(const bool _force)
+	void Device::applyLfoSync()
 	{
 		const float bpm = getHostBpm();
 		m_sentBpm = bpm;
-		auto& hw = m_machine.getHardware();
-
 		for(uint32_t lfo = 0; lfo < 2; ++lfo)
 		{
 			const auto division = m_lfoSync[lfo].load();
-			if(division == 0 || bpm <= 0.0f)
+			int speed = -1;
+			if(division != 0 && bpm > 0.0f)
 			{
-				// give the patch its own speed back
-				if(m_sentSpeed[lfo] >= 0 && m_patchLfoSpeed[lfo] >= 0)
-					for(const auto b : patch::createParamChange(LfoSpeedParam[lfo], m_patchLfoSpeed[lfo]))
-						hw.midiIn(b);
-				m_sentSpeed[lfo] = -1;
-				continue;
+				double err;
+				speed = nearestLfoSpeed(bpm / 60.0 / LfoDivisions[division].beats, err);
 			}
-			double err;
-			const int speed = nearestLfoSpeed(bpm / 60.0 / LfoDivisions[division].beats, err);
-			if(!_force && speed == m_sentSpeed[lfo])
-				continue;
-			m_sentSpeed[lfo] = speed;
-			for(const auto b : patch::createParamChange(LfoSpeedParam[lfo], speed))
-				hw.midiIn(b);
+			for(auto& b : m_boards)
+				b->core.setLfoSpeedOverride(lfo, speed);
 		}
 	}
 
 	bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMidiEvent>&)
 	{
-		// tempo for the LFO sync, never forwarded to the firmware
+		// tempo for the LFO sync, never forwarded to the core
 		const auto& sx = _ev.sysex;
 		if(sx.size() == 7 && sx[0] == 0xf0 && sx[1] == 0x7d && sx[2] == 0x54 && sx[6] == 0xf7)
 		{
 			const uint32_t us = (static_cast<uint32_t>(sx[3] & 0x7f) << 14) | ((sx[4] & 0x7f) << 7) | (sx[5] & 0x7f);
 			if(us > 0)
-				m_sysexBpm.store(static_cast<float>(60000000.0 / us));
+				m_sysexBpm.store(std::clamp(static_cast<float>(60000000.0 / us), MinBpm, MaxBpm));
 			return true;
 		}
 
-		// Logic's AU wrapper streams MIDI Tuning and master tuning SysEx nonstop; the firmware
-		// ignores anything not for Oberheim, and queueing it on the UART starves the notes
-		if(!sx.empty() && (sx.size() < 2 || sx[1] != patch::IdOberheim))
+		// Logic's AU wrapper streams MIDI Tuning and master tuning SysEx nonstop; only Oberheim
+		// messages and the identity request reach the core
+		if(!sx.empty() && (sx.size() < 5 || (sx[1] != patch::IdOberheim && !(sx[1] == 0x7e && sx[3] == 0x06 && sx[4] == 0x01))))
 			return true;
 
 		if(_ev.sysex.empty() && _ev.a == 0xf8)
 		{
 			// MIDI clock, 24 per quarter note: the tempo is taken over a whole beat
 			const uint64_t t = m_sampleTime + _ev.offset;
-			const auto rate = static_cast<double>(m_machine.getSamplerate());
+			const auto rate = static_cast<double>(getSamplerate());
 			if(m_lastClock == 0 || t - m_lastClock > static_cast<uint64_t>(rate))
 			{
 				m_clockCount = 0;
 				m_clockBeatStart = t;
 			}
-			else if(++m_clockCount == 24)
+			else if(++m_clockCount == 24 && t > m_clockBeatStart)
 			{
-				m_clockBpm.store(static_cast<float>(60.0 * rate / static_cast<double>(t - m_clockBeatStart)));
+				m_clockBpm.store(std::clamp(static_cast<float>(60.0 * rate / static_cast<double>(t - m_clockBeatStart)), MinBpm, MaxBpm));
 				m_clockCount = 0;
 				m_clockBeatStart = t;
 			}
@@ -465,33 +432,144 @@ namespace matrixLib
 		return true;
 	}
 
-	void Device::pushMidi(const synthLib::SMidiEvent& _ev)
+	void Device::pushBytes(Board& _b, const uint8_t* _bytes, const size_t _count, const double _timeUs)
 	{
-		auto& hw = m_machine.getHardware();
+		double t = std::max(_timeUs, _b.lineFree);
+		for(size_t i = 0; i < _count; ++i)
+		{
+			t += ByteUs;
+			_b.core.midiIn(t, _bytes[i]);
+		}
+		_b.lineFree = t;
+	}
 
+	void Device::broadcast(const uint8_t* _bytes, const size_t _count, const double _timeUs)
+	{
+		for(auto& b : m_boards)
+			pushBytes(*b, _bytes, _count, _timeUs);
+	}
+
+	int Device::routeNoteOn(const uint8_t _channel, const uint8_t _note)
+	{
+		auto& held = m_noteBoard[_channel][_note];
+		if(held >= 0)
+			return held;
+
+		// unison and mono modes play one note per unit, so each note gets its own unit
+		auto& core = m_boards[0]->core;
+		const bool mono = core.editBuffer().keyboardMode() == matrixClean::KeyboardMode::Unison
+			|| core.master().unison() || core.master().monoMode();
+		const uint32_t capacity = mono ? 1 : matrixClean::VoiceCount;
+
+		// lowest unit with a free voice: 1-6 notes stay on unit 0, the next unit wakes when needed
+		int board = -1;
+		for(uint32_t b = 0; b < BoardCount && board < 0; ++b)
+			if(m_boardNotes[b] < capacity)
+				board = static_cast<int>(b);
+		if(board < 0)
+		{
+			// all units full: the one holding the oldest note, its own allocator steals
+			uint32_t oldest = 0;
+			int oc = -1, on = -1;
+			for(int c = 0; c < 16; ++c)
+				for(int n = 0; n < 128; ++n)
+				{
+					const uint32_t age = m_noteClock - m_noteAge[c][n];
+					if(m_noteBoard[c][n] >= 0 && m_noteCounted[c][n] && (oc < 0 || age > oldest))
+					{
+						oldest = age;
+						oc = c;
+						on = n;
+					}
+				}
+			board = oc >= 0 ? m_noteBoard[oc][on] : 0;
+			if(oc >= 0)
+			{
+				m_noteCounted[oc][on] = false;
+				--m_boardNotes[board];
+			}
+		}
+		held = static_cast<int8_t>(board);
+		m_noteAge[_channel][_note] = m_noteClock++;
+		m_noteCounted[_channel][_note] = true;
+		++m_boardNotes[board];
+		return board;
+	}
+
+	void Device::noteOff(const uint8_t _channel, const uint8_t _note)
+	{
+		auto& held = m_noteBoard[_channel][_note];
+		if(held >= 0 && m_noteCounted[_channel][_note])
+			--m_boardNotes[held];
+		m_noteCounted[_channel][_note] = false;
+		held = -1;
+	}
+
+	void Device::clearNotes(const int _channel)
+	{
+		for(int c = 0; c < 16; ++c)
+		{
+			if(_channel >= 0 && c != _channel)
+				continue;
+			for(int n = 0; n < 128; ++n)
+				if(m_noteBoard[c][n] >= 0)
+					noteOff(static_cast<uint8_t>(c), static_cast<uint8_t>(n));
+		}
+	}
+
+	bool Device::envelopesDone(const uint32_t _board) const
+	{
+		using Stage = matrixClean::Envelope::Stage;
+		const auto& core = m_boards[_board]->core;
+		for(uint32_t v = 0; v < matrixClean::VoiceCount; ++v)
+			for(uint32_t e = 0; e < 3; ++e)
+			{
+				const auto& env = core.envelope(v, e);
+				if(env.stage() != Stage::Idle && !(env.stage() == Stage::Release && env.level() == 0))
+					return false;
+			}
+		return true;
+	}
+
+	void Device::wake(const uint32_t _board, const double _timeUs)
+	{
+		auto& unit = *m_boards[_board];
+		unit.quietSamples = 0;
+		if(!unit.asleep)
+			return;
+		unit.asleep = false;
+		unit.board.setIdle(_timeUs, false);
+	}
+
+	// Units 1 and 2 sleep (voice board idle: the voices are not rendered, Core, timers and CVs
+	// keep running) once no note is routed to them, every envelope of every voice is idle or
+	// at zero in release, and the output peak stayed under SleepPeak for SleepSeconds. Unit 0
+	// never sleeps, so up to six notes render exactly like one Matrix-1000
+	void Device::updateSleep(const uint32_t _board, const size_t _samples)
+	{
+		auto& unit = *m_boards[_board];
+		if(_board == 0 || unit.asleep || !m_sleepEnabled)
+			return;
+		float peak = 0.0f;
+		for(size_t i = 0; i < _samples; ++i)
+			peak = std::max(peak, std::fabs(unit.mono[i]));
+		if(m_boardNotes[_board] || peak >= SleepPeak || !envelopesDone(_board))
+		{
+			unit.quietSamples = 0;
+			return;
+		}
+		unit.quietSamples += static_cast<uint32_t>(_samples);
+		if(unit.quietSamples < static_cast<uint32_t>(SleepSeconds * unit.board.getSamplerate()))
+			return;
+		unit.asleep = true;
+		unit.board.setIdle(unit.board.getTimeUs(), true);
+	}
+
+	void Device::pushMidi(const synthLib::SMidiEvent& _ev, const double _timeUs)
+	{
 		if(!_ev.sysex.empty())
 		{
-			for(const auto b : _ev.sysex)
-				hw.midiIn(b);
-			// a new patch or an edit of the speed itself replaces the synced value
-			const auto& sx = _ev.sysex;
-			if(sx.size() > 5 && sx[1] == patch::IdOberheim && sx[2] == patch::IdMatrix)
-			{
-				if(sx[3] == patch::OpEditBuffer)
-				{
-					if(const auto data = patch::decode(sx))
-						for(uint32_t lfo = 0; lfo < 2; ++lfo)
-							m_patchLfoSpeed[lfo] = (*data)[patch::findParam(LfoSpeedParam[lfo])->byte];
-					m_lfoSyncDirty.store(true);
-				}
-				else if(sx[3] == patch::OpSinglePatch)
-					m_lfoSyncDirty.store(true);
-				else if(sx[3] == patch::OpParameter && (sx[4] == LfoSpeedParam[0] || sx[4] == LfoSpeedParam[1]))
-				{
-					m_patchLfoSpeed[sx[4] == LfoSpeedParam[0] ? 0 : 1] = sx[5] & 0x7f;
-					m_lfoSyncDirty.store(true);
-				}
-			}
+			broadcast(_ev.sysex.data(), _ev.sysex.size(), _timeUs);
 			return;
 		}
 
@@ -499,45 +577,60 @@ namespace matrixLib
 		if(status < 0x80)
 			return;
 
-		// the firmware has no use for clock and active sensing, and every byte costs 320 us
+		// clock and active sensing do nothing on the Matrix, and every byte costs line time
 		if(status >= 0xf8)
 			return;
 
-		if((status & 0xf0) == 0xc0)
-		{
-			m_patchLfoSpeed[0] = m_patchLfoSpeed[1] = -1;
-			m_lfoSyncDirty.store(true);
-		}
-
-		hw.midiIn(status);
+		uint8_t bytes[3] = {status, static_cast<uint8_t>(_ev.b & 0x7f), static_cast<uint8_t>(_ev.c & 0x7f)};
+		const uint8_t channel = status & 0x0f;
+		size_t count = 3;
 		switch(status & 0xf0)
 		{
+		case 0x90:
+			if(bytes[2])
+			{
+				const auto board = static_cast<uint32_t>(routeNoteOn(channel, bytes[1]));
+				wake(board, _timeUs);
+				pushBytes(*m_boards[board], bytes, count, _timeUs);
+				return;
+			}
+			[[fallthrough]];
+		case 0x80:
+		{
+			const int board = m_noteBoard[channel][bytes[1]];
+			noteOff(channel, bytes[1]);
+			// a note the router never saw (or lost) is released everywhere
+			if(board >= 0)
+				pushBytes(*m_boards[static_cast<size_t>(board)], bytes, count, _timeUs);
+			else
+				broadcast(bytes, count, _timeUs);
+			return;
+		}
+		case 0xb0:
+			if(bytes[1] == 120 || bytes[1] == 123)
+				clearNotes(channel);
+			break;
 		case 0xc0:
 		case 0xd0:
-			hw.midiIn(_ev.b & 0x7f);
+			count = 2;
 			break;
 		case 0xf0:
-			if(status == 0xf1 || status == 0xf3)
-				hw.midiIn(_ev.b & 0x7f);
-			else if(status == 0xf2)
-			{
-				hw.midiIn(_ev.b & 0x7f);
-				hw.midiIn(_ev.c & 0x7f);
-			}
+			count = (status == 0xf1 || status == 0xf3) ? 2 : (status == 0xf2 ? 3 : 1);
 			break;
 		default:
-			hw.midiIn(_ev.b & 0x7f);
-			hw.midiIn(_ev.c & 0x7f);
 			break;
 		}
+		broadcast(bytes, count, _timeUs);
 	}
 
 	void Device::processAudio(const synthLib::TAudioInputs&, const synthLib::TAudioOutputs& _outputs, const size_t _samples)
 	{
-		if(m_mono.size() < _samples)
-			m_mono.resize(_samples);
-
-		std::stable_sort(m_pending.begin(), m_pending.end(), [](const PendingEvent& _a, const PendingEvent& _b) { return _a.offset < _b.offset; });
+		// stable insertion sort: std::stable_sort may allocate
+		for(auto it = m_pending.begin(); it != m_pending.end(); ++it)
+		{
+			const auto pos = std::upper_bound(m_pending.begin(), it, *it, [](const PendingEvent& _a, const PendingEvent& _b) { return _a.offset < _b.offset; });
+			std::rotate(pos, it, it + 1);
+		}
 
 		// drop continuous messages that a later one of the same kind replaces in this block
 		for(size_t i = 0; i < m_pending.size(); ++i)
@@ -555,39 +648,60 @@ namespace matrixLib
 			}
 		}
 
-		size_t pos = 0;
-		size_t ev = 0;
-		while(pos < _samples)
 		{
-			while(ev < m_pending.size() && m_pending[ev].offset <= pos)
-				pushMidi(m_pending[ev++].event);
+			std::lock_guard lock(m_mutex);
 
-			size_t end = _samples;
-			if(ev < m_pending.size())
-				end = std::min<size_t>(end, std::max<size_t>(m_pending[ev].offset, pos + 1));
+			for(auto& b : m_boards)
+				if(b->mono.size() < _samples)
+					b->mono.resize(_samples);
 
-			m_machine.render(m_mono.data() + pos, end - pos);
-			pos = end;
+			// every unit runs on the same clock
+			auto& board0 = m_boards[0]->board;
+			const double usPerSample = 1e6 / static_cast<double>(board0.getSamplerate());
+			const double t0 = board0.getTimeUs();
+
+			for(const auto& p : m_pending)
+				pushMidi(p.event, t0 + static_cast<double>(std::min<size_t>(p.offset, _samples)) * usPerSample);
+			m_pending.clear();
+
+			const bool anySync = m_lfoSync[0].load() || m_lfoSync[1].load();
+			if(m_lfoSyncDirty.exchange(false) || (anySync && std::fabs(getHostBpm() - m_sentBpm) > 0.05f))
+				applyLfoSync();
+
+			const double t1 = t0 + static_cast<double>(_samples) * usPerSample;
+			for(uint32_t b = 0; b < BoardCount; ++b)
+			{
+				auto& unit = *m_boards[b];
+				unit.core.advance(t1);
+				flushWrites(b);
+				// an envelope the unit starts by itself (LFO or pedal trigger) wakes it
+				if(unit.asleep && !envelopesDone(b))
+					wake(b, t0);
+				unit.board.render(unit.mono.data(), _samples);
+				updateSleep(b, _samples);
+			}
+
+			// unity sum: one unit sounds as before. Six can reach about 5.7, so a peak limiter
+			// (instant attack, LimitReleaseS release) holds the sum at LimitThreshold, above
+			// the 0.945 one unit clips at, so it never acts on a single unit
+			const float* m0 = m_boards[0]->mono.data();
+			for(size_t i = 0; i < _samples; ++i)
+			{
+				float sum = m0[i];
+				for(uint32_t b = 1; b < BoardCount; ++b)
+					sum += m_boards[b]->mono[i];
+				const float a = std::fabs(sum);
+				m_limitEnv = std::max(a, m_limitEnv * m_limitRelease);
+				if(m_limitEnv > LimitThreshold)
+					sum *= LimitThreshold / m_limitEnv;
+				if(_outputs[0]) _outputs[0][i] = sum;
+				if(_outputs[1]) _outputs[1][i] = sum;
+			}
 		}
-		while(ev < m_pending.size())
-			pushMidi(m_pending[ev++].event);
-		m_pending.clear();
 
 		m_sampleTime += _samples;
-		if(m_lastClock && m_sampleTime - m_lastClock > static_cast<uint64_t>(m_machine.getSamplerate()))
+		if(m_lastClock && m_sampleTime - m_lastClock > static_cast<uint64_t>(getSamplerate()))
 			m_clockBpm.store(0.0f);
-
-		const bool anySync = m_lfoSync[0].load() || m_lfoSync[1].load();
-		if(m_lfoSyncDirty.exchange(false))
-			sendLfoSync(true);
-		else if(anySync && std::fabs(getHostBpm() - m_sentBpm) > 0.05f)
-			sendLfoSync(false);
-
-		for(size_t i = 0; i < _samples; ++i)
-		{
-			if(_outputs[0]) _outputs[0][i] = m_mono[i];
-			if(_outputs[1]) _outputs[1][i] = m_mono[i];
-		}
 	}
 
 	void Device::parseMidiOut(const uint8_t _byte)
@@ -603,7 +717,7 @@ namespace matrixLib
 			if(_byte == 0xf7)
 			{
 				synthLib::SMidiEvent e(synthLib::MidiEventSource::Device);
-				e.sysex = std::move(m_txSysex);
+				e.sysex.assign(m_txSysex.begin(), m_txSysex.end());
 				m_midiOut.push_back(std::move(e));
 				m_txSysex.clear();
 			}
@@ -643,11 +757,7 @@ namespace matrixLib
 
 	void Device::readMidiOut(std::vector<synthLib::SMidiEvent>& _midiOut)
 	{
-		m_txBytes.clear();
-		m_machine.getHardware().midiOut(m_txBytes);
-		for(const auto b : m_txBytes)
-			parseMidiOut(b);
-
+		std::lock_guard lock(m_mutex);
 		_midiOut.insert(_midiOut.end(), m_midiOut.begin(), m_midiOut.end());
 		m_midiOut.clear();
 	}

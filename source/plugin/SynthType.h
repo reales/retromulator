@@ -19,7 +19,7 @@ namespace retromulator
         Ayumi     = 11, // AY-3-8910 / YM2149 PSG (Ayumi + Ym2149Synth voice engine)
         Emu88     = 12, // Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII (Ronaldo 88emu)
         Trackermeister = 13, // XM / MOD (FT2 replayer) and S3M / IT (Schism player) module player
-        Matrix    = 14, // Oberheim Matrix-1000 (6809 firmware + CEM3396 voice model)
+        Matrix    = 14, // Oberheim Matrix-1000 (clean controller + CEM3396 voice model)
         OpenB3    = 15, // Hammond B3 + Leslie (OpenB3 / setBfree Beatrix engine)
         CA72      = 16, // Minimoog Model D (CA-72 circuit model by Idle Foundry)
         OPL       = 17, // discoDSP OPL, hosted from ROM/OPL.vst3 (commercial builds only)

@@ -623,6 +623,8 @@ namespace retromulator
             m_progCombo.setSelectedId(0,           juce::dontSendNotification);
             if(progCount > 0)
                 m_progCombo.setSelectedId(progIdx + 1, juce::dontSendNotification);
+            else if(type == SynthType::Matrix)
+                m_progCombo.setTextWhenNothingSelected(juce::String(m_proc.getPatchName()));
         }
 
         const bool synthChanged = (type != m_lastSynthType);
@@ -631,6 +633,25 @@ namespace retromulator
             m_bankCombo.clear(juce::dontSendNotification);
 
         refreshBankCombo();
+    }
+
+    void BasicEditor::timerCallback()
+    {
+        updateStatus();
+        if(const auto runs = HeadlessProcessor::getMatrixRomBankRuns(); runs != m_matrixRomBankRuns)
+        {
+            m_matrixRomBankRuns = runs;
+            if(m_proc.getSynthType() == SynthType::Matrix)
+                refreshBankCombo();
+        }
+        if(m_proc.takeMatrixMemoryNotice())
+            juce::NativeMessageBox::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::InfoIcon)
+                    .withTitle("Matrix-1000")
+                    .withMessage("This project played a patch from the Matrix-1000 internal memory. The Matrix no longer uses the firmware or its patch memory, so the patch could not be restored and Init is loaded.\n\nLoad a bank from the bank menu to pick a patch.")
+                    .withButton("OK"),
+                nullptr);
     }
 
     void BasicEditor::onLoadSysex()

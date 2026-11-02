@@ -400,6 +400,11 @@ namespace retromulator
         void setMatrixLfoSync(int lfo, int division);
         bool hasMatrixHostTempo() const;
         bool isMatrixLfoDivisionReachable(int division) const;
+        // A firmware-era session played the internal memory, which the clean core does not have.
+        // True once per user when such a session found no bank patch of the same name
+        bool takeMatrixMemoryNotice();
+        // counts background runs that wrote "!ROM Bank 2-9" files, for the bank list to rescan
+        static uint32_t getMatrixRomBankRuns();
 
         // ── DX7 controller setup (Function mode) ───────────────────────────
         // n: 0 wheel, 1 breath, 2 foot, 3 aftertouch. Assign bits 1=pitch 2=amp 4=EG bias
@@ -624,7 +629,12 @@ namespace retromulator
         std::vector<uint8_t> m_trackerFileData;
         std::string          m_trackerFileName;
         bool                 m_trackerTempoSync = false;
-        int                  m_matrixLfoSync[2] = {0, 0};
+        std::atomic<int>     m_matrixLfoSync[2] = {0, 0};
+        std::atomic<int>     m_matrixLfoLastSync[2] = {0, 0};   // the division the board's Sync switch turns back on
+        std::vector<uint8_t> m_matrixCoreState;                  // the session's core state, saved again while editor only
+        std::atomic<bool>    m_matrixMemoryNotice{false};
+        // loads the Matrix folder bank holding a patch of that name, the one at _program first
+        bool restoreMatrixPatchByName(const std::string& name, int program);
         void applyMatrixLfoSync();
         int                  m_dx7Ctrl[4][2] = {{99, 7}, {99, 7}, {99, 7}, {99, 7}};
         void applyDx7Controllers(synthLib::Device* dev);

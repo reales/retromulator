@@ -24,6 +24,8 @@ namespace matrixLib
 			bool hasPending = false;
 			bool pendingLow = false;    // mode 3: the pending count starts with the low half
 			uint32_t phaseOfs = 0;      // ticks into the period at loadedAt
+			uint32_t prevReload = 0;    // count before the last pending reload took over at switchedAt
+			uint64_t switchedAt = 0;
 
 			uint64_t loadedAt = 0;      // tick where counting started
 			bool running = false;
@@ -48,7 +50,8 @@ namespace matrixLib
 		bool getOut(uint32_t _counter, uint64_t _tick);
 		uint16_t getCount(uint32_t _counter, uint64_t _tick);
 
-		// period in ticks of a counter running in mode 2 or 3, 0 if stopped
+		// period in ticks of a counter running in mode 2 or 3, 0 if stopped. A tick before the
+		// last reload switch gets the previous count
 		uint32_t getPeriod(uint32_t _counter, uint64_t _tick);
 
 		// tick of the next OUT transition after _tick, or ~0 if none is scheduled

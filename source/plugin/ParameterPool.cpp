@@ -794,7 +794,7 @@ namespace retromulator
             return false;
         auto* s = m_slots[static_cast<size_t>(slot)];
 
-        // The Matrix firmware ignores these CCs: spread 0-127 over the parameter's range
+        // The Matrix ignores these CCs: spread 0-127 over the parameter's range
         // and send it as a remote parameter edit. Same for the tracker's loop points.
         const auto& b = s->binding();
         if((map->type == SynthType::Matrix || map->type == SynthType::Trackermeister) && b.native >= 0 && b.desc)

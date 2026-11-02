@@ -83,12 +83,14 @@ namespace matrixLib
 		return static_cast<float>(static_cast<int32_t>(m_noiseState)) * (1.0f / 2147483648.0f);
 	}
 
-	void Machine::buildControls(const uint32_t _voice, Cem3396::Controls& _c)
+	void Machine::buildControls(const uint32_t _voice, const uint64_t _sampleCycle, Cem3396::Controls& _c)
 	{
 		const auto& cv = m_hw.getCvVolts();
 
-		const uint32_t pA = m_hw.getDcoPeriod(_voice, 0);
-		const uint32_t pB = m_hw.getDcoPeriod(_voice, 1);
+		// at the sample boundary, not where the CPU's last instruction ended
+		const uint64_t tick = _sampleCycle * Hardware::TimerTicksPerCycle;
+		const uint32_t pA = m_hw.getDcoPeriod(_voice, 0, tick);
+		const uint32_t pB = m_hw.getDcoPeriod(_voice, 1, tick);
 		_c.periodA = pA ? static_cast<float>(pA) / Hardware::VoiceTimerClock : 0.0f;
 		_c.periodB = pB ? static_cast<float>(pB) / Hardware::VoiceTimerClock : 0.0f;
 		_c.rtCtA = m_hw.getRangeHigh(_voice, 0) ? RtCtHigh : RtCtLow;
@@ -150,7 +152,7 @@ namespace matrixLib
 				float sum0 = 0.0f, sum1 = 0.0f;
 				for(uint32_t v = 0; v < Hardware::VoiceCount; ++v)
 				{
-					buildControls(v, c);
+					buildControls(v, start, c);
 					buildDischarges(v, edgeFrom, edgeTo, d0, d1);
 					sum0 += m_voices[v].process(c, d0, n0);
 					sum1 += m_voices[v].process(c, d1, n1);

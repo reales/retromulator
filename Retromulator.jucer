@@ -20,14 +20,14 @@
                extraLinkerFlags="" customPList="&lt;plist version=&quot;1.0&quot;&gt;&lt;dict&gt;&lt;key&gt;CFBundleDocumentTypes&lt;/key&gt;&lt;array&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Tracker Module&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Default&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;xm&lt;/string&gt;&lt;string&gt;mod&lt;/string&gt;&lt;string&gt;s3m&lt;/string&gt;&lt;string&gt;it&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Playlist&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;m3u&lt;/string&gt;&lt;string&gt;m3u8&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;MIDI File&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;CFBundleTypeExtensions&lt;/key&gt;&lt;array&gt;&lt;string&gt;mid&lt;/string&gt;&lt;string&gt;midi&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;dict&gt;&lt;key&gt;CFBundleTypeName&lt;/key&gt;&lt;string&gt;Folder&lt;/string&gt;&lt;key&gt;CFBundleTypeRole&lt;/key&gt;&lt;string&gt;Viewer&lt;/string&gt;&lt;key&gt;LSHandlerRank&lt;/key&gt;&lt;string&gt;Alternate&lt;/string&gt;&lt;key&gt;LSItemContentTypes&lt;/key&gt;&lt;array&gt;&lt;string&gt;public.folder&lt;/string&gt;&lt;/array&gt;&lt;/dict&gt;&lt;/array&gt;&lt;/dict&gt;&lt;/plist&gt;">
       <CONFIGURATIONS>
         <CONFIGURATION name="Debug" isDebug="1" targetName="Retromulator" osxCompatibility="12.0 SDK"
-                       headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
+                       headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode&#10;../../source/matrixLib"
                        binaryPath="Bin/MacOSX/Debug" enablePluginBinaryCopyStep="1"
                        vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
                        vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
                        auBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/Components"
                        macOSDeploymentTarget="12.0"/>
         <CONFIGURATION name="Release" isDebug="0" targetName="Retromulator" osxCompatibility="12.0 SDK"
-                       headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode"
+                       headerPath="../../source&#10;../../source/plugin&#10;../../source/bridge&#10;../../source/ronaldo&#10;../../source/ronaldo/custom_chips&#10;../../source/cpu&#10;../../source/lameLib&#10;../../source/JUCE/modules&#10;../../source/dsp56300/source&#10;../../source/dsp56300/source/dsp56kBase&#10;../../source/dsp56300/source/dsp56kEmu&#10;../../source/dsp56300/source/asmjit/src&#10;../../source/mc68k&#10;../../source/mc68k/Musashi&#10;../../source/mc68k/Musashi/softfloat&#10;../../JuceLibraryCode&#10;../../source/matrixLib"
                        binaryPath="Bin/MacOSX/Release" stripLocalSymbols="1" linkTimeOptimisation="1"
                        enablePluginBinaryCopyStep="1" vstBinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST"
                        vst3BinaryLocation="/Users/reales/Library/Audio/Plug-Ins/VST3"
@@ -646,6 +646,7 @@
       <FILE id="mx004" name="cem3396.h" compile="0" resource="0" file="source/matrixLib/cem3396.h"/>
       <FILE id="mx005" name="device.cpp" compile="1" resource="0" file="source/matrixLib/device.cpp"/>
       <FILE id="mx006" name="device.h" compile="0" resource="0" file="source/matrixLib/device.h"/>
+      <FILE id="mx021" name="halfband2x.h" compile="0" resource="0" file="source/matrixLib/halfband2x.h"/>
       <FILE id="mx007" name="m6809.cpp" compile="1" resource="0" file="source/matrixLib/m6809.cpp"/>
       <FILE id="mx008" name="m6809.h" compile="0" resource="0" file="source/matrixLib/m6809.h"/>
       <FILE id="mx009" name="matrixHardware.cpp" compile="1" resource="0" file="source/matrixLib/matrixHardware.cpp"/>
@@ -658,9 +659,46 @@
       <FILE id="mx016" name="patchNames.h" compile="0" resource="0" file="source/matrixLib/patchNames.h"/>
       <FILE id="mx017" name="pit8254.cpp" compile="1" resource="0" file="source/matrixLib/pit8254.cpp"/>
       <FILE id="mx018" name="pit8254.h" compile="0" resource="0" file="source/matrixLib/pit8254.h"/>
+      <FILE id="mx024" name="romBankGenerator.cpp" compile="1" resource="0" file="source/matrixLib/romBankGenerator.cpp"/>
+      <FILE id="mx025" name="romBankGenerator.h" compile="0" resource="0" file="source/matrixLib/romBankGenerator.h"/>
       <FILE id="mx019" name="romloader.cpp" compile="1" resource="0" file="source/matrixLib/romloader.cpp"/>
       <FILE id="mx020" name="romloader.h" compile="0" resource="0" file="source/matrixLib/romloader.h"/>
-      <FILE id="mx021" name="halfband2x.h" compile="0" resource="0" file="source/matrixLib/halfband2x.h"/>
+      <FILE id="mx022" name="voiceBoard.cpp" compile="1" resource="0" file="source/matrixLib/voiceBoard.cpp"/>
+      <FILE id="mx023" name="voiceBoard.h" compile="0" resource="0" file="source/matrixLib/voiceBoard.h"/>
+      <GROUP id="mxc000" name="clean">
+        <FILE id="mxc031" name="analog.cpp" compile="1" resource="0" file="source/matrixLib/clean/analog.cpp"/>
+        <FILE id="mxc032" name="analog.h" compile="0" resource="0" file="source/matrixLib/clean/analog.h"/>
+        <FILE id="mxc001" name="core.cpp" compile="1" resource="0" file="source/matrixLib/clean/core.cpp"/>
+        <FILE id="mxc002" name="core.h" compile="0" resource="0" file="source/matrixLib/clean/core.h"/>
+        <FILE id="mxc003" name="cvDco.cpp" compile="1" resource="0" file="source/matrixLib/clean/cvDco.cpp"/>
+        <FILE id="mxc004" name="cvDco.h" compile="0" resource="0" file="source/matrixLib/clean/cvDco.h"/>
+        <FILE id="mxc005" name="cvFilterAmp.cpp" compile="1" resource="0" file="source/matrixLib/clean/cvFilterAmp.cpp"/>
+        <FILE id="mxc006" name="cvFilterAmp.h" compile="0" resource="0" file="source/matrixLib/clean/cvFilterAmp.h"/>
+        <FILE id="mxc007" name="cvMap.cpp" compile="1" resource="0" file="source/matrixLib/clean/cvMap.cpp"/>
+        <FILE id="mxc008" name="cvMap.h" compile="0" resource="0" file="source/matrixLib/clean/cvMap.h"/>
+        <FILE id="mxc009" name="env.cpp" compile="1" resource="0" file="source/matrixLib/clean/env.cpp"/>
+        <FILE id="mxc010" name="env.h" compile="0" resource="0" file="source/matrixLib/clean/env.h"/>
+        <FILE id="mxc011" name="lfo.cpp" compile="1" resource="0" file="source/matrixLib/clean/lfo.cpp"/>
+        <FILE id="mxc012" name="lfo.h" compile="0" resource="0" file="source/matrixLib/clean/lfo.h"/>
+        <FILE id="mxc029" name="matrix.cpp" compile="1" resource="0" file="source/matrixLib/clean/matrix.cpp"/>
+        <FILE id="mxc030" name="matrix.h" compile="0" resource="0" file="source/matrixLib/clean/matrix.h"/>
+        <FILE id="mxc013" name="master.cpp" compile="1" resource="0" file="source/matrixLib/clean/master.cpp"/>
+        <FILE id="mxc014" name="master.h" compile="0" resource="0" file="source/matrixLib/clean/master.h"/>
+        <FILE id="mxc015" name="midiIn.cpp" compile="1" resource="0" file="source/matrixLib/clean/midiIn.cpp"/>
+        <FILE id="mxc016" name="midiIn.h" compile="0" resource="0" file="source/matrixLib/clean/midiIn.h"/>
+        <FILE id="mxc017" name="modulators.cpp" compile="1" resource="0" file="source/matrixLib/clean/modulators.cpp"/>
+        <FILE id="mxc018" name="modulators.h" compile="0" resource="0" file="source/matrixLib/clean/modulators.h"/>
+        <FILE id="mxc019" name="patch.cpp" compile="1" resource="0" file="source/matrixLib/clean/patch.cpp"/>
+        <FILE id="mxc020" name="patch.h" compile="0" resource="0" file="source/matrixLib/clean/patch.h"/>
+        <FILE id="mxc021" name="porta.cpp" compile="1" resource="0" file="source/matrixLib/clean/porta.cpp"/>
+        <FILE id="mxc022" name="porta.h" compile="0" resource="0" file="source/matrixLib/clean/porta.h"/>
+        <FILE id="mxc023" name="refresh.cpp" compile="1" resource="0" file="source/matrixLib/clean/refresh.cpp"/>
+        <FILE id="mxc024" name="tracking.cpp" compile="1" resource="0" file="source/matrixLib/clean/tracking.cpp"/>
+        <FILE id="mxc025" name="tracking.h" compile="0" resource="0" file="source/matrixLib/clean/tracking.h"/>
+        <FILE id="mxc026" name="types.h" compile="0" resource="0" file="source/matrixLib/clean/types.h"/>
+        <FILE id="mxc027" name="voiceAlloc.cpp" compile="1" resource="0" file="source/matrixLib/clean/voiceAlloc.cpp"/>
+        <FILE id="mxc028" name="voiceAlloc.h" compile="0" resource="0" file="source/matrixLib/clean/voiceAlloc.h"/>
+      </GROUP>
     </GROUP>
     <GROUP id="espLib" name="espLib">
       <FILE id="es001" name="esp_jit.cpp" compile="1" resource="0" file="source/ronaldo/esp/esp_jit.cpp"/>
