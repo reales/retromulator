@@ -248,6 +248,7 @@ namespace retromulator
 
 #ifdef CUSTOM
             case SynthType::NordLead1:
+            case SynthType::OBXd:
             {
                 juce::String error;
                 auto loaded = hosted::load(type, 44100.0, 512, error);

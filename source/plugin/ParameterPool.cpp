@@ -873,10 +873,18 @@ namespace retromulator
             }
             else if(map && map->type == SynthType::JE8086)
             {
-                // DT1 into the temp performance's Upper patch: plain CCs need the firmware's
-                // Tx/Rx Edit switch and a matching part channel. Upper only, MIDI in is 31.25k.
-                ev.sysex = jeLib::State::createParameterChange(jeLib::PerformanceData::PatchUpper,
-                                                               static_cast<jeLib::Patch>(b.native), value);
+                // DT1 into the temp performance: plain CCs need the firmware's Tx/Rx Edit
+                // switch and a matching part channel. Patch offsets past 127 carry into the
+                // next address byte, 7 bits each.
+                const bool lower = m_sendPart == 1;
+                if(b.native >= kJePart)
+                    ev.sysex = jeLib::State::createParameterChange(lower ? jeLib::PerformanceData::PartLower : jeLib::PerformanceData::PartUpper,
+                                                                   static_cast<jeLib::Part>(b.native - kJePart), value);
+                else if(b.native >= kJePerformance)
+                    ev.sysex = jeLib::State::createParameterChange(static_cast<jeLib::PerformanceCommon>(b.native - kJePerformance), value);
+                else
+                    ev.sysex = jeLib::State::createParameterChange(lower ? jeLib::PerformanceData::PatchLower : jeLib::PerformanceData::PatchUpper,
+                                                                   static_cast<jeLib::Patch>((b.native & 0x7f) | ((b.native & 0x80) << 1)), value);
             }
             else
                 return;
@@ -888,7 +896,7 @@ namespace retromulator
             const auto idx = static_cast<uint8_t>(b.pp);
             if(virus)
             {
-                ev.sysex = {0xf0, 0x00, 0x20, 0x33, 0x01, 0x10, 0x71, 0x40, idx, value, 0xf7};
+                ev.sysex = {0xf0, 0x00, 0x20, 0x33, 0x01, 0x10, 0x71, m_virusPart.load(), idx, value, 0xf7};
                 ev.a = 0xf0;
             }
             else
@@ -903,7 +911,7 @@ namespace retromulator
             // Page A param change addressed to the single edit buffer (part 0x40),
             // omni device id. Covers CCs the emulator drops as plain CC (chorus/delay).
             const auto cc = static_cast<uint8_t>(b.cc);
-            ev.sysex = {0xf0, 0x00, 0x20, 0x33, 0x01, 0x10, 0x70, 0x40, cc, value, 0xf7};
+            ev.sysex = {0xf0, 0x00, 0x20, 0x33, 0x01, 0x10, 0x70, m_virusPart.load(), cc, value, 0xf7};
             ev.a = 0xf0;
         }
         else if(map && map->type == SynthType::Emu88 && (b.cc == 0 || b.cc == 32))
@@ -1248,7 +1256,7 @@ namespace retromulator
     }
 
     bool ParameterPool::readNative(const SynthType type, const std::vector<uint8_t>& m,
-                                   const std::function<void(int, int)>& out)
+                                   const std::function<void(int, int, int)>& out)
     {
         if(type == SynthType::DX7)
         {
@@ -1262,7 +1270,7 @@ namespace retromulator
             else
                 return true;
             for(size_t i = 0; i < vced.size(); ++i)
-                out(static_cast<int>(i), vced[i]);
+                out(0, static_cast<int>(i), vced[i]);
             return true;
         }
 
@@ -1273,33 +1281,46 @@ namespace retromulator
                 for(const auto& p : matrixLib::patch::getParams())
                 {
                     const int v = matrixLib::patch::getParamValue(*data, p);
-                    out(p.number, p.min < 0 ? v - p.min : v);
+                    out(0, p.number, p.min < 0 ? v - p.min : v);
                 }
             return true;
         }
 
         if(type == SynthType::JE8086)
         {
-            // Roland DT1. Patch data starts at a user patch (02 bb pp oo) or at the
-            // Upper patch of a performance (01/03 xx 40 oo); the offset is the native.
+            // Roland DT1. Patch data starts at a user patch (02 bb pp oo) or at a patch of
+            // a performance (01/03 xx 40-43 oo); the offset is the native. A performance's
+            // common block and its parts sit at kJePerformance / kJePart plus the offset.
             if(m.size() < 12 || m[0] != 0xf0 || m[1] != 0x41 || m[5] != 0x12)
                 return true;
             int offset;
+            int part = 0;
+            const bool perf = m[6] == 0x01 || m[6] == 0x03;
             if(m[6] == 0x02)
                 offset = ((m[8] & 1) << 7) | m[9];
-            else if((m[6] == 0x01 || m[6] == 0x03) && m[8] == 0x40)
-                offset = m[9];
+            else if(perf && m[8] >= 0x40 && m[8] <= 0x43)
+            {
+                offset = ((m[8] & 1) << 7) | m[9];
+                part = (m[8] - 0x40) >> 1;
+            }
+            else if(perf && m[8] == 0x00)
+                offset = kJePerformance + m[9];
+            else if(perf && (m[8] == 0x10 || m[8] == 0x11))
+            {
+                offset = kJePart + m[9];
+                part = m[8] - 0x10;
+            }
             else
                 return true;
             for(size_t i = 10; i + 2 < m.size(); ++i)
-                out(offset + static_cast<int>(i - 10), m[i]);
+                out(part, offset + static_cast<int>(i - 10), m[i]);
             return true;
         }
         return false;
     }
 
     void ParameterPool::readNatives(const std::vector<std::vector<uint8_t>>& messages,
-                                    const std::function<void(int, int)>& out) const
+                                    const std::function<void(int, int, int)>& out) const
     {
         for(const auto& m : messages)
             readNative(m_core, m, out);
@@ -1312,9 +1333,10 @@ namespace retromulator
             m_capture->push_back(ev);
     }
 
-    void ParameterPool::sendNative(const int native, const int value, std::vector<synthLib::SMidiEvent>* captured)
+    void ParameterPool::sendNative(const int native, const int value, std::vector<synthLib::SMidiEvent>* captured, const int part)
     {
         const juce::ScopedValueSetter<std::vector<synthLib::SMidiEvent>*> capture(m_capture, captured);
+        const juce::ScopedValueSetter<int> sendPart(m_sendPart, part);
         const auto* map = m_current.load(std::memory_order_acquire);
         if(!map)
             return;
@@ -1339,8 +1361,10 @@ namespace retromulator
         SlotValues values;
         values.fill(-1);
 
-        const auto setNative = [&](const int native, const int value)
+        const auto setNative = [&](const int part, const int native, const int value)
         {
+            if(part != 0)
+                return;
             for(size_t i = 0; i < static_cast<size_t>(NumSlots); ++i)
                 if(map->bindings[i].desc && map->bindings[i].native == native)
                     values[i] = value;

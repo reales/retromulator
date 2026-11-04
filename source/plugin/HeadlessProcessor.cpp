@@ -745,12 +745,12 @@ namespace retromulator
             {
                 return m_paramPool ? m_paramPool->getSlotMidiValue(slot) : -1;
             },
-            [this](const int native, const int value)
+            [this](const int native, const int value, const int part)
             {
                 if(!m_paramPool)
                     return;
                 std::vector<synthLib::SMidiEvent> sent;
-                m_paramPool->sendNative(native, value, &sent);
+                m_paramPool->sendNative(native, value, &sent, part);
                 if(m_midiInParser)
                     for(const auto& ev : sent)
                     {
@@ -759,11 +759,12 @@ namespace retromulator
                                                   ev.sysex.empty() ? 3 : ev.sysex.size());
                     }
             },
-            [this](const std::vector<std::vector<uint8_t>>& messages, const std::function<void(int, int)>& out)
+            [this](const std::vector<std::vector<uint8_t>>& messages, const std::function<void(int, int, int)>& out)
             {
                 if(m_paramPool)
                     m_paramPool->readNatives(messages, out);
             });
+        m_board->onPartsChanged = [this] { boardPartsChanged(); };
         // host automation on a slot linked to a SysEx board parameter: any thread, so it
         // only encodes from the (immutable) map and queues the message
         m_paramPool->setBoardSender([this](const int param, const int value)
@@ -896,6 +897,8 @@ namespace retromulator
         {
             m_midiInParser->setCore(type);
             m_board->setMap(m_midiInParser->currentMap());
+            m_boardPartsActive = false;
+            boardPartsChanged();
             if(m_paramPool)
                 board::applySlotLinks(type, *m_board, *m_paramPool);
         }
@@ -1015,6 +1018,8 @@ namespace retromulator
         {
             m_midiInParser->setCore(type);
             m_board->setMap(m_midiInParser->currentMap());
+            m_boardPartsActive = false;
+            boardPartsChanged();
             if(m_paramPool)
                 board::applySlotLinks(type, *m_board, *m_paramPool);
         }
@@ -1038,6 +1043,16 @@ namespace retromulator
         writeSettingsBool(editorOnlyKey(type).toRawUTF8(), enabled);
     }
 
+    bool HeadlessProcessor::readSettingFlag(const char* name, const bool fallback)
+    {
+        return readSettingsBool(name, fallback);
+    }
+
+    void HeadlessProcessor::writeSettingFlag(const char* name, const bool value)
+    {
+        writeSettingsBool(name, value);
+    }
+
     void HeadlessProcessor::setMidiOutCore(const bool enabled, const bool save)
     {
         // what the emulated core sends (SysEx dumps, parameter echoes) also goes to the host
@@ -1055,7 +1070,7 @@ namespace retromulator
         case SynthType::JE8086: case SynthType::AkaiS1000: case SynthType::OpenWurli:
         case SynthType::OPL3: case SynthType::SID: case SynthType::Ayumi:
         case SynthType::Trackermeister: case SynthType::Matrix: case SynthType::OpenB3:
-        case SynthType::CA72: case SynthType::NordLead1: case SynthType::None:
+        case SynthType::CA72: case SynthType::NordLead1: case SynthType::OBXd: case SynthType::None:
             return 0;
         default:
             return 1;
@@ -1104,6 +1119,8 @@ namespace retromulator
         {
             m_midiInParser->setCore(type);
             m_board->setMap(m_midiInParser->currentMap());
+            m_boardPartsActive = false;
+            boardPartsChanged();
             if(m_paramPool)
                 board::applySlotLinks(type, *m_board, *m_paramPool);
         }
@@ -1435,17 +1452,45 @@ namespace retromulator
         if(m_paramPool)
         {
             const auto end = std::min(rawStart + std::max(1, m_bankStride), static_cast<int>(m_bankMessages.size()));
-            m_paramPool->syncFromPatch(synthLib::SysexBufferList(m_bankMessages.begin() + rawStart,
-                                                                 m_bankMessages.begin() + end));
+            // host slots follow the first part only
+            const int part = juce::jmax(0, m_boardLoadPart.load());
+            if(part == 0)
+                m_paramPool->syncFromPatch(synthLib::SysexBufferList(m_bankMessages.begin() + rawStart,
+                                                                     m_bankMessages.begin() + end));
 #ifdef CUSTOM
             // The deferred resend calls this from the audio thread; the board lives on the message thread.
             std::vector<std::vector<uint8_t>> patch(m_bankMessages.begin() + rawStart, m_bankMessages.begin() + end);
             if(juce::MessageManager::existsAndIsCurrentThread())
-                m_board->applyDump(patch);
+                m_board->applyDump(patch, part);
             else
-                juce::MessageManager::callAsync([this, patch = std::move(patch)] { m_board->applyDump(patch); });
+                juce::MessageManager::callAsync([this, part, patch = std::move(patch)] { m_board->applyDump(patch, part); });
 #endif
         }
+    }
+
+    void HeadlessProcessor::boardPartsChanged()
+    {
+#ifdef CUSTOM
+        // Virus Multi: programs load into the part the board shows, host slots edit part 1
+        const auto* map = m_board->map();
+        const bool multi = map && map->parts().modeParam >= 0 && m_board->partsActive();
+        m_boardLoadPart = multi ? m_board->part() : -1;
+        if(m_paramPool)
+            m_paramPool->setVirusPart(multi ? 0 : 0x40);
+        if(multi == m_boardPartsActive)
+            return;
+        m_boardPartsActive = multi;
+        // the mode switch starts from the patch playing, now in part 1 or back in Single mode
+        juce::MessageManager::callAsync([this]
+        {
+            const int keep = m_board->part();
+            m_board->setPart(0);
+            if(m_currentProgram >= 0 && m_currentProgram < getProgramCount())
+                sendBankMessage(m_currentProgram);
+            m_board->resendEdits();
+            m_board->setPart(keep);
+        });
+#endif
     }
 
     void HeadlessProcessor::clearBoardEdits()
@@ -1588,7 +1633,8 @@ namespace retromulator
            ev.sysex[6] == 0x10 && ev.sysex[7] != 0x00)
         {
             ev.sysex[7] = 0x00; // EditBuffer
-            ev.sysex[8] = 0x40; // SINGLE part
+            const int part = m_boardLoadPart.load();
+            ev.sysex[8] = part >= 0 ? static_cast<uint8_t>(part) : uint8_t(0x40); // SINGLE or the Multi part
         }
 
         // Waldorf XT single dump: F0 3E <machine> <devId> 10 <bank> <prog> ...

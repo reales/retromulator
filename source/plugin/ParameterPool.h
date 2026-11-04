@@ -121,6 +121,9 @@ namespace retromulator
         // 1-15 drive the plugin itself (part view, program change); 0x40.. are the
         // Roland GS global address map, sent as a one-byte DT1 SysEx to that address.
         // Transport for the loaded song, mirroring the C1/D1 keys and the bank combo.
+        // JE-8086 natives past the patch: performance common and part blocks, offset added
+        static constexpr int kJePerformance = 0x1000;
+        static constexpr int kJePart        = 0x2000;
         static constexpr int kEmu88TransportNative  = 1;
         static constexpr int kEmu88PartNative       = 2;
         static constexpr int kEmu88ProgramNative    = 3;
@@ -195,10 +198,11 @@ namespace retromulator
 
         // Board support for cores whose edits and dumps are core specific (DX7, Matrix,
         // JE-8086): send one native parameter, decode dumps into native / value pairs.
-        // captured, when given, receives the messages sent (for MIDI out)
-        void sendNative(int native, int value, std::vector<synthLib::SMidiEvent>* captured = nullptr);
+        // captured, when given, receives the messages sent (for MIDI out). part: JE-8086 Upper
+        // or Lower; out gets (part, native, value).
+        void sendNative(int native, int value, std::vector<synthLib::SMidiEvent>* captured = nullptr, int part = 0);
         void readNatives(const std::vector<std::vector<uint8_t>>& messages,
-                         const std::function<void(int, int)>& out) const;
+                         const std::function<void(int, int, int)>& out) const;
 
         // Message thread. Cores driven by plain CCs (OpenB3): point the slots at the
         // (cc, value) pairs of a preset the device just loaded. Clears the touched flags.
@@ -230,7 +234,7 @@ namespace retromulator
         juce::Array<juce::AudioProcessorParameter*> m_hosted;
         std::vector<int> m_hostedSlotOf;   // hosted parameter index -> slot
 
-        static bool readNative(SynthType type, const std::vector<uint8_t>& m, const std::function<void(int, int)>& out);
+        static bool readNative(SynthType type, const std::vector<uint8_t>& m, const std::function<void(int, int, int)>& out);
         void emit(const synthLib::SMidiEvent& ev);
         void unmapCc(int slot);
 
@@ -242,6 +246,12 @@ namespace retromulator
         std::array<bool, NumSlots> m_linked{};   // syncFromPatch's dump layouts address the default slots
         std::function<void(int, int)> m_boardSend;
         std::vector<synthLib::SMidiEvent>* m_capture = nullptr;
+        int m_sendPart = 0;
+        std::atomic<uint8_t> m_virusPart{0x40};
+    public:
+        // Virus edit buffer the host slots edit: 0x40 in Single mode, part 1 (0) in Multi.
+        void setVirusPart(uint8_t part) { m_virusPart.store(part); }
+    private:
         struct CoreMap
         {
             std::unique_ptr<pluginLib::ParameterDescriptions> descriptions;

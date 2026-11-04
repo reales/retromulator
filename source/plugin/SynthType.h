@@ -46,6 +46,9 @@ namespace retromulator
             SynthType::NordLead1,
 #endif
             SynthType::NordN2X,
+#ifdef CUSTOM
+            SynthType::OBXd,
+#endif
             SynthType::OPL3,
             SynthType::OpenB3,
             SynthType::OpenWurli,
@@ -91,7 +94,7 @@ namespace retromulator
     // A discoDSP plugin run from ROM/<name>.vst3 rather than an emulator built in.
     inline bool isHostedCore(SynthType t)
     {
-        return t == SynthType::NordLead1;
+        return t == SynthType::NordLead1 || t == SynthType::OBXd;
     }
 
     // Name of the core's data folder and settings keys. Fixed once shipped, so a core can be
@@ -101,6 +104,7 @@ namespace retromulator
         switch(t)
         {
             case SynthType::OPL3: return "OPL3";
+            case SynthType::OBXd: return "OB-Xd";   // the hosted plugin keeps its data there
             default:              return synthTypeName(t);
         }
     }
