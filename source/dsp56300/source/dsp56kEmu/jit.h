@@ -15,6 +15,7 @@
 #include "jitconfig.h"
 #include "jitdspmode.h"
 #include "jitruntimedata.h"
+#include "jittrampoline.h"
 
 namespace asmjit
 {
@@ -54,6 +55,7 @@ namespace dsp56k
 		void runCheckPMemWrite(TWord _pc) noexcept;
 		void runCheckPMemWriteAndModeChange(TWord _pc) noexcept;
 		void runCheckModeChange(TWord _pc) noexcept;
+		void runCheckLoopEnd(TWord _pc) noexcept;
 
 		const JitConfig& getConfig() const { return m_config; }
 		JitConfig getConfig(TWord _pc) const;
@@ -87,6 +89,7 @@ namespace dsp56k
 		void destroyToRecreate(TWord _pc);
 
 		void checkModeChange() noexcept;
+		void checkLoopEnd() noexcept;
 
 		void onDebuggerAttached(DebuggerInterface& _debugger) const;
 
@@ -101,10 +104,14 @@ namespace dsp56k
 
 		void onFuncsResized(const JitBlockChain& _chain) const;
 
+		JitTrampoline& getTrampoline() { return m_trampoline; }
+
 	private:
 		void checkPMemWrite() noexcept;
+		void moveLoopEnd(TWord _begin, TWord _end);
 
 		DSP& m_dsp;
+		JitTrampoline m_trampoline;
 
 		asmjit::ASMJIT_ABI_NAMESPACE::JitRuntime* m_rt = nullptr;
 

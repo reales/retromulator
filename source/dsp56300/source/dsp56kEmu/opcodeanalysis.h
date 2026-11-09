@@ -713,7 +713,6 @@ namespace dsp56k
 		case Or_xxxx:
 			readwritef(Field_d);
 			break;
-		case ADC:
 		case Addl:
 		case Addr:
 		case Subl:
@@ -800,6 +799,14 @@ namespace dsp56k
 		case Dor_S:
 			readf(Field_DDDDDD);
 			break;
+		// BRKcc unwinds the loop the same way ENDDO does, and additionally writes PC and reads the
+		// condition codes. Declaring the loop registers is what makes the JIT end the block here -
+		// without it the rest of the loop body stays in the same block and still executes.
+		case BRKcc:
+			write(Register::PC);
+			read(Register::SR);
+			write(Register::SR);
+			[[fallthrough]];
 		case Enddo:
 			write(Register::LA);
 			write(Register::LC);
@@ -1030,6 +1037,8 @@ namespace dsp56k
 				const auto writePeriph = getFieldValue(_inst, Field_W, _op);
 				if (writePeriph)
 					readf(Field_dddddd);
+				else
+					writef(Field_dddddd);
 			}
 			break;
 		case Mpy_S1S2D:
@@ -1073,6 +1082,7 @@ namespace dsp56k
 		case Ror:
 			readwritef(Field_d);
 			break;
+		case ADC:
 		case Sbc:
 			readf(Field_J);
 			readwritef(Field_d);
@@ -1207,15 +1217,10 @@ namespace dsp56k
 		switch (_inst)
 		{
 		case Movem_ea:
-			{
-				const auto write = getFieldValue<Movem_ea, Field_W>(op);
-				return !write;
-			}
+		case Movem_aa:
 		case Movep_eapp:
-			{
-				const auto write = getFieldValue<Movep_eapp, Field_W>(op);
-				return !write;
-			}
+		case Movep_eaqq:
+			return !getFieldValue(_inst, Field_W, op);
 		default:
 			return false;
 		}

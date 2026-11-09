@@ -4,6 +4,7 @@
 
 #include <iomanip>
 #include <cstring>
+#include <cstdio>
 
 #include "registers.h"
 #include "types.h"
@@ -13,6 +14,7 @@
 #include "debuggerinterface.h"
 #include "dspconfig.h"
 #include "interrupts.h"
+#include "opcodecycles.h"
 
 #include "dsp_decode.inl"
 
@@ -177,8 +179,13 @@ namespace dsp56k
 
 		const auto vba = interrupt;
 
+		// A masked request stays pending until the mask allows it. The peripherals keep running meanwhile, as they do on
+		// the chip: firmware that masks interrupts and then waits for a peripheral flag waited forever otherwise
 		if(isInterruptMasked(vba))
+		{
+			m_execPeripheralsFunc(this);
 			return;
+		}
 
 		// it is important that the processing mode is switched first before popping the vector to prevent a possible race condition in hasPendingInterrupt()
 		{
@@ -191,6 +198,7 @@ namespace dsp56k
 
 	void DSP::execInterrupt(const TWord vba)
 	{
+		++m_interruptCount;
 		pcCurrentInstruction = vba;
 		m_processingMode = FastInterrupt;
 
@@ -203,8 +211,7 @@ namespace dsp56k
 		{
 			LOGJITPC(vba);
 			const auto pc = getPC();
-			m_jitEntries[vba](&reg, vba);
-//			m_jit.exec(vba);
+			m_jit.getTrampoline().execOne(&reg, vba, m_jitEntries[vba]);
 			if(m_processingMode != LongInterrupt)
 			{
 				m_processingMode = DefaultPreventInterrupt;
@@ -254,7 +261,8 @@ namespace dsp56k
 				// 4.The Sixteen-bit Arithmetic (SA) mode bit is cleared.
 				// 5.The IPL is raised to disallow further interrupts of the same or lower levels.
 
-				sr_clear(static_cast<CCRMask>(SR_S1 | SR_S0 | SR_SA | SR_LF));
+				// the interrupt control cycle clears the loop flags too, FV as well as LF
+				sr_clear(static_cast<CCRMask>(SR_S1 | SR_S0 | SR_SA | SR_LF | SR_FV));
 
 				m_processingMode = LongInterrupt;
 				m_interruptFunc = &dspExecNop;
@@ -280,6 +288,8 @@ namespace dsp56k
 
 	void DSP::terminate()
 	{
+		m_terminate.store(true, std::memory_order_relaxed);
+
 		for(size_t i=0; i<perif.size(); ++i)
 			perif[i]->terminate();
 	}
@@ -328,6 +338,9 @@ namespace dsp56k
 		{
 			++m_instructions;
 
+			if constexpr(!g_useJIT)
+				m_cycles += getOpcodeCycles(currentOp);
+
 			if(g_traceSupported && pcCurrentInstruction == currentOp)
 				traceOp();
 		}
@@ -343,6 +356,7 @@ namespace dsp56k
 		// simulate latches registers for parallel instructions
 
 		// ALU op can only write to either A or B
+		// these are raw copies of the left-aligned values, comparing and restoring them needs no conversion
 		const auto preAluA = reg.a;
 		const auto preAluB = reg.b;
 
@@ -419,12 +433,13 @@ namespace dsp56k
 
 		auto& dsp = const_cast<DSP&>(*this);
 
+		const auto dirty = ccrCache.dirty;
 		dsp.ccrCache.dirty = 0;
-		
-//		dsp.sr_s_update();
-		dsp.sr_e_update(ccrCache.alu);
-		dsp.sr_u_update(ccrCache.alu);
-		dsp.sr_n_update(ccrCache.alu);
+
+//		if(dirty & CCR_S)	dsp.sr_s_update();
+		if(dirty & CCR_E)	dsp.sr_e_update(ccrCache.alu);
+		if(dirty & CCR_U)	dsp.sr_u_update(ccrCache.alu);
+		if(dirty & CCR_N)	dsp.sr_n_update(ccrCache.alu);
 	}
 
 	void DSP::sr_debug(char* _dst) const
@@ -480,17 +495,37 @@ namespace dsp56k
 			}
 		}
 
+		return do_start(&_loopcount, _addr);
+	}
+
+	bool DSP::do_execForever(const TWord _addr)
+	{
+		return do_start(nullptr, _addr);
+	}
+
+	/*	Open a loop and run it. Shared by DO and DO FOREVER, as in the JIT: FOREVER does not load the loop counter, and
+		it raises SR_FV along with SR_LF so that its loop end never terminates on the counter - ENDDO or BRKcc leave it.
+		SR_FV describes the loop being opened, so a counted DO nested in a DO FOREVER clears it; do_end restores the
+		outer loop's flags from the stack.
+	*/
+	bool DSP::do_start(const TWord* _loopcount, const TWord _addr)
+	{
 		ssh(reg.la);
 		ssl(reg.lc);
 
 		reg.la.var = _addr;
-		reg.lc.var = _loopcount;
+		if(_loopcount)
+			reg.lc.var = *_loopcount;
 
 		pushPCSR();
 
 		const auto stackCount = reg.sc.var;
-		
+
+		sr_toggle( SR_FV, _loopcount == nullptr );
 		sr_set( SR_LF );
+
+		if constexpr(!g_useJIT)
+			m_cycles += getOpcodeCycles(pcCurrentInstruction);
 
 		++m_instructions;
 
@@ -499,26 +534,44 @@ namespace dsp56k
 		// __________________
 		//
 
-		while(reg.sc.var >= stackCount)
-		{
-			exec();
+		/*	The loop ends where the chip decides it, at the fetch of the word at LA: when the instruction that ends at LA
+			falls through, or when a call at LA returns there. A jump or call from the body that merely lands at LA+1
+			does not count. It was taken for a loop end, the code at LA+1 never ran and the call's return address stayed
+			on the stack. Found by helica1 (dsp56300 PR #15)
+		*/
+		bool fetchedLA = false;
 
-			if(reg.pc.var != (reg.la.var+1))
+		// note the terminate check: the interpreter executes a whole DO loop inside this function, it never returns
+		// to DSPThread::threadFunc in between. Without it, a firmware loop that never ends deadlocks the join on shutdown.
+		while(reg.sc.var >= stackCount && !m_terminate.load(std::memory_order_relaxed))
+		{
+			execInterpreter();
+
+			if(pcCurrentInstruction + m_currentOpLen == reg.la.var + 1)
+				fetchedLA = true;
+
+			if(reg.pc.var != (reg.la.var+1) || !fetchedLA)
 				continue;
+
+			fetchedLA = false;
 
 			if(!sr_test_noCache(SR_LF))
 				break;
 
-			if( reg.lc.var <= 1 )
+			if(!sr_test_noCache(SR_FV))
 			{
-				// restore PC to point to the next instruction after the last instruction of the loop
-				setPC(reg.la.var+1);
+				if( reg.lc.var <= 1 )
+				{
+					// restore PC to point to the next instruction after the last instruction of the loop
+					setPC(reg.la.var+1);
 
-				do_end();
-				break;
+					do_end();
+					break;
+				}
+
+				--reg.lc.var;
 			}
 
-			--reg.lc.var;
 			setPC(hiword(reg.ss[ssIndex()]));
 		}
 		return true;
@@ -529,8 +582,12 @@ namespace dsp56k
 	//
 	bool DSP::do_end()
 	{
-		// restore previous loop flag
+		// Restore the previous loop flags - BOTH of them. The manual's ENDDO operation line says
+		// SSL(LF) only, but the hardware restores the DO FOREVER flag as well: measured on the
+		// reference simulator, a stacked $018000 sets both and a stacked $000000 clears both, so it
+		// copies the two bits rather than or-ing them in. The JIT's do_end() always did this.
 		sr_toggle( SR_LF, (ssl().var & SR_LF) != 0 );
+		sr_toggle( SR_FV, (ssl().var & SR_FV) != 0 );
 
 		// decrement SP twice, restoring old loop settings
 		decSP();
@@ -548,15 +605,23 @@ namespace dsp56k
 		const auto lcBackup = reg.lc;
 		reg.lc.var = _loopCount;
 
+		if constexpr(!g_useJIT)
+			m_cycles += getOpcodeCycles(pcCurrentInstruction);
+
 		++m_instructions;
 
 		traceOp();
 
 		pcCurrentInstruction = reg.pc.var;
+		const auto repeatedOpPC = pcCurrentInstruction;
 		const auto op = fetchPC();
 
 		--reg.lc.var;
 		execOp(op);
+
+		// A two-word instruction moves PC past its extension word every time it runs, but it is fetched only
+		// once. sim56300 continues behind the first pass, however often it repeats.
+		const auto pcNext = reg.pc;
 
 		const auto& opCache = m_opcodeCache[pcCurrentInstruction];
 
@@ -567,9 +632,12 @@ namespace dsp56k
 			--reg.lc.var;
 			(this->*func)(op);
 			++m_instructions;
+			if constexpr(!g_useJIT)
+				m_cycles += getOpcodeCycles(repeatedOpPC);
 //			traceOp();
 		}
 
+		reg.pc = pcNext;
 		reg.lc = lcBackup;
 
 		return true;
@@ -695,8 +763,8 @@ namespace dsp56k
 		case Reg_VBA:	_res = reg.vba;			break;
 		case Reg_SZ:	_res = reg.sz;			break;
 		case Reg_EP:	_res = reg.ep;			break;
-		case Reg_DCR:	_res.var = 0;/*reg.dcr;*/	break;
-		case Reg_BCR:	_res.var = 0;/*reg.bcr;*/	break;
+		case Reg_DCR:	_res.var = memReadPeriph(MemArea_X, XIO_DCR, Nop);	break;
+		case Reg_BCR:	_res.var = memReadPeriph(MemArea_X, XIO_BCR, Nop);	break;
 		case Reg_IPRP:	_res.var = iprp();		break;
 		case Reg_IPRC:	_res.var = iprc();		break;
 
@@ -722,9 +790,8 @@ namespace dsp56k
 	{
 		switch( _reg )
 		{
-		case Reg_A:		_res = reg.a;	return true;
-		case Reg_B:		_res = reg.b;	return true;
-		default: break;
+		case Reg_A:		_res = aluA();	return true;
+		case Reg_B:		_res = aluB();	return true;
 		}
 		return false;
 	}
@@ -825,7 +892,14 @@ namespace dsp56k
 	bool DSP::writeReg( EReg _reg, const TReg24& _res )
 	{
 		assert( (_res.var & 0xff000000) == 0 );
-			
+
+		// the JIT compiles for the addressing mode of each M register and the mode bits of the SR
+		auto setM = [&](const int _index)
+		{
+			set_m(_index, _res.var);
+			m_jit.checkModeChange();
+		};
+
 		switch( _reg )
 		{
 		case Reg_N0:	reg.n[0] = _res;	break;
@@ -846,14 +920,14 @@ namespace dsp56k
 		case Reg_R6:	reg.r[6] = _res;	break;
 		case Reg_R7:	reg.r[7] = _res;	break;
 							
-		case Reg_M0:	set_m(0, _res.var);		break;
-		case Reg_M1:	set_m(1, _res.var);		break;
-		case Reg_M2:	set_m(2, _res.var);		break;
-		case Reg_M3:	set_m(3, _res.var);		break;
-		case Reg_M4:	set_m(4, _res.var);		break;
-		case Reg_M5:	set_m(5, _res.var);		break;
-		case Reg_M6:	set_m(6, _res.var);		break;
-		case Reg_M7:	set_m(7, _res.var);		break;
+		case Reg_M0:	setM(0);		break;
+		case Reg_M1:	setM(1);		break;
+		case Reg_M2:	setM(2);		break;
+		case Reg_M3:	setM(3);		break;
+		case Reg_M4:	setM(4);		break;
+		case Reg_M5:	setM(5);		break;
+		case Reg_M6:	setM(6);		break;
+		case Reg_M7:	setM(7);		break;
 							
 		case Reg_A0:	a0(_res);		break;
 		case Reg_A1:	a1(_res);		break;
@@ -867,6 +941,42 @@ namespace dsp56k
 		case Reg_Y1:	y1(_res);		break;
 
 		case Reg_PC:	setPC(_res);	break;
+		case Reg_SR:	setSR(_res);	m_jit.checkModeChange();	break;
+		case Reg_OMR:	reg.omr = _res;		break;
+		case Reg_SP:	reg.sp = _res;		break;
+
+		// LA is where the running loop ends, the JIT keeps a registry of loop ends
+		case Reg_LA:	reg.la = _res;	m_jit.checkLoopEnd();	break;
+		case Reg_LC:	reg.lc = _res;		break;
+
+		// like readReg, the top of the stack is written in place, unlike a MOVEC to SSH that pushes
+		case Reg_SSH:	hiword(reg.ss[ssIndex()], _res);	break;
+		case Reg_SSL:	ssl(_res);			break;
+
+		case Reg_VBA:	reg.vba = _res;		break;
+		case Reg_SZ:	reg.sz = _res;		break;
+		case Reg_EP:	reg.ep = _res;		break;
+		case Reg_DCR:	memWritePeriph(MemArea_X, XIO_DCR, _res.var);	break;
+		case Reg_BCR:	memWritePeriph(MemArea_X, XIO_BCR, _res.var);	break;
+		case Reg_IPRP:	iprp(_res.var);		break;
+		case Reg_IPRC:	iprc(_res.var);		break;
+
+		case Reg_AAR0:	memWritePeriph(MemArea_X, M_AAR0, _res.var);	break;
+		case Reg_AAR1:	memWritePeriph(MemArea_X, M_AAR1, _res.var);	break;
+		case Reg_AAR2:	memWritePeriph(MemArea_X, M_AAR2, _res.var);	break;
+		case Reg_AAR3:	memWritePeriph(MemArea_X, M_AAR3, _res.var);	break;
+
+		// the instruction counter and the counters that readReg reports as zero are not modelled registers
+		case Reg_ICTR:
+		case Reg_CNT1:
+		case Reg_CNT2:
+		case Reg_CNT3:
+		case Reg_CNT4:
+		case Reg_REPLACE:
+		case Reg_HIT:
+		case Reg_MISS:
+		case Reg_CYC:
+			return false;
 
 		default:
 			assert( 0 && "unknown register" );
@@ -883,9 +993,47 @@ namespace dsp56k
 	{
 		switch( _reg )
 		{
-		case Reg_A:		reg.a = _val;		return true;
-		case Reg_B:		reg.b = _val;		return true;
-		default: break;
+		case Reg_A:		setALU(false, _val);	return true;
+		case Reg_B:		setALU(true , _val);	return true;
+		}
+		assert( 0 && "unknown register" );
+		return false;
+	}
+	// _____________________________________________________________________________
+	// writeReg
+	//
+	bool DSP::writeReg( EReg _reg, const TReg8& _val )
+	{
+		switch( _reg )
+		{
+		case Reg_A2:	a2(_val);	return true;
+		case Reg_B2:	b2(_val);	return true;
+		}
+		assert( 0 && "unknown register" );
+		return false;
+	}
+	// _____________________________________________________________________________
+	// writeReg
+	//
+	bool DSP::writeReg( EReg _reg, const TReg48& _val )
+	{
+		switch( _reg )
+		{
+		case Reg_X:		reg.x = _val;	return true;
+		case Reg_Y:		reg.y = _val;	return true;
+		}
+		assert( 0 && "unknown register" );
+		return false;
+	}
+	// _____________________________________________________________________________
+	// writeReg
+	//
+	bool DSP::writeReg( EReg _reg, const TReg5& _val )
+	{
+		if( _reg == Reg_SC )
+		{
+			reg.sc.var = _val.var & 0x1f;
+			return true;
 		}
 		assert( 0 && "unknown register" );
 		return false;
@@ -1033,12 +1181,21 @@ namespace dsp56k
 
 	void DSP::notifyProgramMemWrite(TWord _offset)
 	{
-		m_opcodeCache[_offset].op = &DSP::op_ResolveCache;
+		mem.forEachAlias(_offset, [this](const TWord _addr)
+		{
+			// the cache covers internal P only. memWriteP checks before it calls, a write the JIT reports does not
+			if(_addr >= m_opcodeCache.size())
+				return;
+
+			m_opcodeCache[_addr].op = &DSP::op_ResolveCache;
+			if constexpr(!g_useJIT)
+				m_opcodeCycleCache[_addr] = 0;
 
 #if DSP56300_DEBUGGER
-		if(m_debugger)
-			m_debugger->onProgramMemWrite(_offset);
+			if(m_debugger)
+				m_debugger->onProgramMemWrite(_addr);
 #endif
+		});
 	}
 
 	// _____________________________________________________________________________
@@ -1138,21 +1295,26 @@ namespace dsp56k
 	{
 		TReg56& d = ab ? reg.b : reg.a;
 
-		TInt64 d64 = d.signextend<TInt64>();
+		const TInt64 d64 = aluSignextend(d);
 
-		d64 = d64 < 0 ? -d64 : d64;
+		// Negate unsigned: the minimum has no positive counterpart and negating it as a signed value is UB. It stays
+		// the minimum, which is also ABS's only overflow: sim56300 gives sr=$00037a for a=$80000000000000.
+		const auto magnitude = d64 < 0 ? static_cast<uint64_t>(0) - static_cast<uint64_t>(d64) : static_cast<uint64_t>(d64);
 
-		d.var = d64 & 0xffffffffffffff;
+		d.var = static_cast<TReg56::MyType>(magnitude);
+		aluMask(d);
+
+		constexpr auto minimum = static_cast<uint64_t>(1) << (55 + g_aluShift);
 
 		sr_z_update(d);
-	//	sr_v_update(d);
-	//	sr_l_update_by_v();
+		sr_toggle(CCR_V, static_cast<uint64_t>(d.var) == minimum);
+		sr_l_update_by_v();
 		setCCRDirty(ab, d, CCR_S | CCR_E | CCR_U | CCR_N);
 	}
 
 	void DSP::alu_tfr(const bool ab, const TReg56& src)
 	{
-		auto& d = ab ? reg.b : reg.a;
+		TReg56& d = ab ? reg.b : reg.a;
 		d = src;
 	}
 
@@ -1169,13 +1331,18 @@ namespace dsp56k
 	{
 		TReg56& d = ab ? reg.b : reg.a;
 
-		auto d64 = d.signextend<TInt64>();
-		d64 = -d64;
-		
-		d.var = d64 & 0x00ffffffffffffff;
+		// The 56 bit minimum negates to itself, which is the only overflow NEG has; sim56300 gives
+		// sr=$00037a for a=$80000000000000 (V and the sticky L set) and leaves both clear for every
+		// other input. Unsigned arithmetic also defines that wraparound - negating the left-aligned
+		// minimum as a signed 64 bit value is UB, which is what this did.
+		constexpr auto minimum = static_cast<uint64_t>(1) << (55 + g_aluShift);
+		const auto value = static_cast<uint64_t>(d.var);
+
+		d.var = static_cast<TReg56::MyType>(static_cast<uint64_t>(0) - value);
+		aluMask(d);
 
 		sr_z_update(d);
-	//	TODO: how to update v? test in sim		sr_v_update(d);
+		sr_toggle(CCR_V, value == minimum);
 		sr_l_update_by_v();
 		setCCRDirty(ab, d, CCR_S | CCR_E | CCR_U | CCR_N);
 	}
@@ -1184,12 +1351,12 @@ namespace dsp56k
 	{
 		auto& d = ab ? reg.b.var : reg.a.var;
 
-		const auto masked = ~d & 0x00ffffff000000;
+		const auto masked = ~d & static_cast<TInt64>(0x00ffffff000000ull << g_aluShift);
 
-		d &= 0xff000000ffffff;
+		d &= static_cast<TInt64>(0xff000000ffffff00ull);
 		d |= masked;
 
-		sr_toggle(CCRB_N, bitvalue<uint64_t, 47>(d));	// Set if bit 47 of the result is set
+		sr_toggle(CCRB_N, bitvalue<uint64_t, 47 + g_aluShift>(d));	// Set if bit 47 of the result is set
 		sr_toggle(CCR_Z, masked == 0);					// Set if bits 47�24 of the result are 0
 		sr_clear(CCR_V);								// Always cleared
 		//sr_s_update();								// Changed according to the standard definition
@@ -1236,12 +1403,21 @@ namespace dsp56k
 
 	bool DSP::injectInterrupt(uint32_t _interruptVectorAddress)
 	{
-		m_pendingInterrupts.push_back({_interruptVectorAddress});
+		// A source has one pending flag on the chip. While its request waits for the mask to drop, the peripherals keep
+		// running (see execInterrupts), and a source that raises it again does not queue a second one
+		if(_interruptVectorAddress < Vba_End && isInterruptMasked(_interruptVectorAddress) && hasPendingInterrupt(_interruptVectorAddress))
+			return true;
+
+		queueInterrupt(_interruptVectorAddress);
+		return true;
+	}
+
+	void DSP::queueInterrupt(const TWord _vba)
+	{
+		m_pendingInterrupts.push_back({_vba});
 
 		if(m_interruptFunc == m_execPeripheralsFunc)
 			m_interruptFunc = &dspExecInterrupts;
-
-		return true;
 	}
 
 	bool DSP::injectInterruptImmediate(const uint32_t _interruptVectorAddress)
@@ -1273,19 +1449,50 @@ namespace dsp56k
 
 	void DSP::processExternalInterrupts()
 	{
-		while(!m_pendingExternalInterrupts.empty())
-			injectInterrupt(m_pendingExternalInterrupts.pop_front());
+		// The device decides how often it raises an interrupt, so each one is queued, but no more are pending at a
+		// time than the external ring holds. A host that sends host commands faster than the DSP takes them filled
+		// the pending ring past its end, which overwrote its oldest entries: the DSP ran commands out of order with
+		// the words they read. The rest waits in the external ring, and a host queue waits for room there.
+		// An interrupt is queued before it leaves the external ring: a host that polls both rings from its thread to
+		// know whether the DSP took everything it gave would otherwise find it in neither for a moment, for as long
+		// as the scheduler holds the DSP's thread there
+		while(!m_pendingExternalInterrupts.empty() && m_pendingInterrupts.size() < m_pendingExternalInterrupts.capacity())
+		{
+			queueInterrupt(m_pendingExternalInterrupts.front());
+			m_pendingExternalInterrupts.pop_front();
+		}
+	}
+
+	uint32_t DSP::calcOpcodeCycles(const TWord _pc) const
+	{
+		TWord opA;
+		TWord opB;
+		mem.getOpcode(_pc, opA, opB);
+		Instruction instA;
+		Instruction instB;
+		m_opcodes.getInstructionTypes(opA, instA, instB);
+		return dsp56k::calcCycles(instA, instB, _pc, opA, mem.getBridgedMemoryAddress(), 1);
+	}
+
+	uint8_t DSP::getOpcodeCycles(const TWord _pc)
+	{
+		auto& cachedCycles = m_opcodeCycleCache[_pc];
+		if(!cachedCycles)
+			cachedCycles = static_cast<uint8_t>(std::min<uint32_t>(255, std::max<uint32_t>(1, calcOpcodeCycles(_pc))));
+		return cachedCycles;
 	}
 
 	void DSP::clearOpcodeCache()
 	{
 		m_opcodeCache.clear();
 		m_opcodeCache.resize(mem.sizeP(), {&DSP::op_ResolveCache});
+		if constexpr(!g_useJIT)
+			m_opcodeCycleCache.assign(mem.sizeP(), 0);
 	}
 
 	void DSP::clearOpcodeCache(const TWord _address)
 	{
-		m_opcodeCache[_address].op = &DSP::op_ResolveCache;
+		notifyProgramMemWrite(_address);
 		m_jit.notifyProgramMemWrite(_address);
 	}
 	
@@ -1370,6 +1577,19 @@ aar0=$000008 aar1=$000000 aar2=$000000 aar3=$000000
 
 		const auto str(ss.str());
 		LOG(str);
+
+		// LOG goes to the debugger on Windows, and the assert below is compiled out of release
+		// builds, which would leave an unimplemented instruction silently doing nothing at all.
+		// Say so on stderr regardless of build type, as the JIT side already does.
+		fprintf(stderr, "*** DSP errNotImplemented: %s at PC $%06X\n", _opName, pcCurrentInstruction);
+		fflush(stderr);
+
+		// A two word instruction leaves its extension word unconsumed: the dispatcher advanced PC by
+		// one and only the missing implementation would have fetched the second word. Without this
+		// the PC lands ON the immediate and executes it as an instruction - one observed case decoded
+		// as a MOVEP into a peripheral - so skipping the whole instruction is the least wrong thing
+		// we can do in a release build, where the assert below is gone.
+		setPC(pcCurrentInstruction + m_opcodes.getOpcodeLength(memRead(MemArea_P, pcCurrentInstruction)));
 
 		assert(false && "instruction not implemented, see console for details");
 	}
@@ -1459,6 +1679,106 @@ aar0=$000008 aar1=$000000 aar2=$000000 aar3=$000000
 		coreDump(ss);
 		const std::string dump(ss.str());
 		LOG(std::endl << dump);
+	}
+
+	uint64_t DSP::hashIdleState() const noexcept
+	{
+		// only state a loop can change: mMask/mModulo derive from m, and only the stack top is visible
+		constexpr uint64_t k = 0xff51afd7ed558ccdull;
+		auto pair = [](const TReg24& _a, const TReg24& _b) { return static_cast<uint64_t>(static_cast<uint32_t>(_a.var)) | static_cast<uint64_t>(static_cast<uint32_t>(_b.var)) << 32; };
+
+		uint64_t h0 = 0x9e3779b97f4a7c15ull ^ static_cast<uint64_t>(ccrCache.alu.var);
+		uint64_t h1 = 0xc2b2ae3d27d4eb4full ^ (static_cast<uint64_t>(ccrCache.dirty) << 1) ^ static_cast<uint64_t>(ccrCache.ab);
+
+		h0 = (h0 ^ static_cast<uint64_t>(reg.x.var)) * k;	h1 = (h1 ^ static_cast<uint64_t>(reg.y.var)) * k;
+		h0 = (h0 ^ static_cast<uint64_t>(reg.a.var)) * k;	h1 = (h1 ^ static_cast<uint64_t>(reg.b.var)) * k;
+
+		for(size_t i=0; i<8; i += 2)
+		{
+			h0 = (h0 ^ pair(reg.r[i], reg.r[i+1])) * k;
+			h1 = (h1 ^ pair(reg.n[i], reg.n[i+1])) * k;
+			h0 = (h0 ^ pair(reg.m[i], reg.m[i+1])) * k;
+		}
+
+		h1 = (h1 ^ pair(reg.sr, reg.omr)) * k;
+		h0 = (h0 ^ pair(reg.la, reg.lc)) * k;
+		h1 = (h1 ^ (pair(reg.sp, reg.sz) ^ static_cast<uint64_t>(reg.sc.var) << 56)) * k;
+		h0 = (h0 ^ static_cast<uint64_t>(reg.ss[reg.sp.var & 0xf].var)) * k;
+
+		const auto h = h0 ^ (h1 * 0x94d049bb133111ebull);
+		return h ^ (h >> 31);
+	}
+
+	void dspCheckIdleLoop(DSP* _dsp) noexcept
+	{
+		_dsp->checkIdleLoop();
+	}
+
+	void DSP::checkIdleLoop() noexcept
+	{
+		auto& idle = m_idle;
+
+		if(m_processingMode == FastInterrupt || m_processingMode == LongInterrupt)
+		{
+			idle.head = 0xffffffff;
+			return;
+		}
+
+		const TWord head = reg.pc.var;
+		const auto now = m_instructions;
+		const bool recent = now - idle.visit <= IdleMaxLoopLength;
+
+		if(head != idle.head)
+		{
+			// a backward jump inside the loop we are already watching
+			if(recent && idle.head != 0xffffffff)
+				return;
+			idle.head = head;
+			idle.visit = now;
+			idle.interrupts = m_interruptCount;
+			idle.hashed = false;
+			return;
+		}
+
+		const bool quiet = recent && idle.interrupts == m_interruptCount;
+
+		idle.visit = now;
+		idle.interrupts = m_interruptCount;
+
+		if(!quiet)
+		{
+			idle.hashed = false;
+			return;
+		}
+
+		const auto h = hashIdleState();
+
+		if(!idle.hashed || h != idle.hash)
+		{
+			idle.hash = h;
+			idle.hashed = true;
+			return;
+		}
+
+		skipIdle();
+
+		idle.visit = m_instructions;
+	}
+
+	void DSP::skipIdle() noexcept
+	{
+		// Only up to the next peripheral event: a loop that polls a peripheral flag instead of waiting for an
+		// interrupt (N2X waits on ESAI TFS) has to see it change before the next slot is due
+		const auto target = perif[0]->getTargetClock();
+
+		if(target > m_instructions)
+		{
+			const auto delay = std::min(target - m_instructions, IdleMaxSkip);
+			m_instructions += delay;
+			m_cycles += delay;
+		}
+
+		m_execPeripheralsFunc(this);
 	}
 
 	void DSP::op_Wait(const TWord)

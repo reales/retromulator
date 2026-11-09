@@ -7,6 +7,8 @@
 #include "jitdspmode.h"
 #include "jittypes.h"
 
+#include "dsp56kBase/mmuarray.h"
+
 namespace dsp56k
 {
 	class AsmJitLogger;
@@ -43,7 +45,7 @@ namespace dsp56k
 			return m_jitCache[_pc].block;
 		}
 
-		const auto& getFuncs() const
+		const MmuArray<TJitFunc>& getFuncs() const
 		{
 			return m_jitFuncs;
 		}
@@ -58,10 +60,7 @@ namespace dsp56k
 			exec(_pc, m_jitFuncs[_pc]);
 		}
 
-		void exec(const TWord _pc, const TJitFunc& _f) const
-		{
-			_f(&getDspRegs(), _pc);
-		}
+		void exec(const TWord _pc, const TJitFunc& _f) const;
 
 		const JitDspMode& getMode() const
 		{
@@ -69,6 +68,12 @@ namespace dsp56k
 		}
 
 		void notifyPMemWrite(TWord _addr, bool _isCurrentChain);
+
+		// drop the single instruction blocks kept for reuse at this address
+		void releaseSingleOpCache(TWord _pc);
+
+		// recompile what holds LA of a loop that has just become known, see Jit::addLoop
+		void forgetLoopEnd(TWord _loopEnd);
 
 		size_t getFuncSize() const
 		{
@@ -85,12 +90,12 @@ namespace dsp56k
 			return m_jit;
 		}
 
-		DspRegs& getDspRegs() const;
-
 	private:
 
 		void destroyParents(JitBlockRuntimeData* _block);
 		void destroy(JitBlockRuntimeData* _block);
+
+		bool makeRoomForFirstInstruction(TWord _pc);
 
 		void release(JitBlockRuntimeData* _block);
 		void occupyArea(JitBlockRuntimeData* _block);
@@ -99,19 +104,20 @@ namespace dsp56k
 		bool isBeingGeneratedRecursive(const JitBlockRuntimeData* _block) const;
 		bool isBeingGenerated(const JitBlockRuntimeData* _block) const;
 
-		bool ensureCacheSize(size_t _address);
+		bool ensureCacheSize(size_t _first, size_t _last);
 		bool ensureFuncSize(size_t _address);
-		bool ensureSize(size_t _address);
+		bool ensureSize(size_t _first, size_t _last);
 
 		void onFuncsResized() const;
 
 		Jit& m_jit;
 		const JitDspMode m_mode;
 
-		std::vector<JitCacheEntry> m_jitCache;
-		std::vector<TJitFunc> m_jitFuncs;
+		MmuArray<JitCacheEntry> m_jitCache;
+		MmuArray<TJitFunc> m_jitFuncs;
 
 		std::map<TWord, JitBlockRuntimeData*> m_generatingBlocks;
+		std::vector<TWord> m_loopEndsToForget;
 
 		std::unique_ptr<AsmJitLogger> m_logger;
 		std::unique_ptr<AsmJitErrorHandler> m_errorHandler;

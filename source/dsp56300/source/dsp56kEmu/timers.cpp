@@ -4,6 +4,8 @@
 
 #include "timers.h"
 
+#include <algorithm>
+
 namespace dsp56k
 {
 	uint32_t Timers::exec() noexcept
@@ -23,21 +25,109 @@ namespace dsp56k
 
 		const uint32_t diffDiv2 = static_cast<uint32_t>(diff >> 1);
 
-		m_lastClock = clock;
+		// an odd instruction is half a timer clock, it counts with the next update instead of getting lost
+		m_lastClock = clock - (diff & 1);
 
-//		m_prescalerClock ^= 1;
-//		m_tpcr -= m_prescalerClock;
+		// The prescaler is a 21 bit counter clocked by the prescaler input, reloaded from TPLR when
+		// it reaches zero. Its output is one tick per TPLR+1 input clocks, and that output is what
+		// clocks a timer with PCE set - a timer without PCE runs straight off the input instead.
+		// Ignoring PCE and clocking everything off the input makes a prescaled timer run TPLR+1
+		// times too fast, so its compare flag is set permanently rather than periodically.
+		//
+		// The counter only runs while at least one timer is both enabled and using its output, as
+		// the comment at the top of this function already says. While nothing uses it the counter
+		// holds, so an idle stretch cannot bank a remainder that makes the first tick after it early.
+		bool prescalerEnabled = false;
 
-		if(m_tpcr == 0)
-			m_tpcr = m_tplr & 0xfffff;
+		for (const auto& t : m_timers)
+			prescalerEnabled |= t.m_tcsr.test(Timer::M_TE) && t.m_tcsr.test(Timer::M_PCE);
 
-		execTimer(m_timers[0], 0, diffDiv2);
-		execTimer(m_timers[1], 1, diffDiv2);
-		execTimer(m_timers[2], 2, diffDiv2);
+		uint32_t prescaled = 0;
+
+		if(prescalerEnabled)
+		{
+			const uint32_t reload = (m_tplr & 0x1fffff) + 1;
+			const uint64_t input = static_cast<uint64_t>(m_prescalerRemainder) + diffDiv2;
+
+			prescaled = static_cast<uint32_t>(input / reload);
+			m_prescalerRemainder = static_cast<uint32_t>(input % reload);
+
+			// the counter counts down from the preload value, so what is left of it is the reload
+			// minus however much of the current period has elapsed
+			m_tpcr = reload - 1 - m_prescalerRemainder;
+		}
+
+		for(uint32_t i=0; i<3; ++i)
+			execTimer(m_timers[i], i, m_timers[i].m_tcsr.test(Timer::M_PCE) ? prescaled : diffDiv2);
 
 		if(diff > m_timerupdateInterval<<1)
 			return 0;
 		return static_cast<uint32_t>((m_timerupdateInterval << 1) - diff);
+	}
+
+	namespace
+	{
+		struct TimerEvents
+		{
+			bool compare = false;
+			bool overflow = false;
+		};
+
+		/*	A timer with TRM runs in a cycle. In timer mode the counter counts from TLR up to TCPR, and the count after
+			the one that reached TCPR loads TLR. In PWM mode it counts up to $FFFFFF, the wrap to zero is the overflow,
+			and the count after it loads TLR. So a period is one count longer than the distance from TLR (reference
+			simulator: 100 counts for TLR 0 and TCPR 99, 3249 for TLR $FFF350 and TCPR 0, 257 for PWM with TLR $FFFF00).
+			The compare is the count that reaches TCPR, but never the wrap to a TCPR of zero. Advances _tcr by _counts
+			and returns the events, an update reports each of them once
+		*/
+		TimerEvents countRestarting(TWord& _tcr, const TWord _tlr, const TWord _tcpr, const bool _pwm, uint64_t _counts)
+		{
+			// the value of the count before the one that loads TLR
+			const TWord last = _pwm ? 0 : _tcpr;
+			const uint64_t period = _pwm ? 0x1000001 - _tlr : ((_tcpr - _tlr) & 0xffffff) + 1;
+
+			// the position of a value in the cycle, one outside of it is at period or beyond
+			const auto position = [&](const TWord _value) -> uint64_t { return (_value - _tlr) & 0xffffff; };
+
+			TimerEvents e;
+
+			uint64_t p = position(_tcr);
+
+			if(p >= period)
+			{
+				// TLR or TCPR changed after TLR was loaded: the counter counts up to the last value before it enters
+				// the cycle
+				const uint64_t toLast = (last - _tcr) & 0xffffff;
+				const uint64_t end = _tcr + std::min(_counts, toLast);
+
+				e.overflow = end > 0xffffff;
+				e.compare = _tcpr && (_tcr < _tcpr ? end >= _tcpr : (e.overflow && (end & 0xffffff) >= _tcpr));
+
+				if(_counts < toLast)
+				{
+					_tcr = static_cast<TWord>(end & 0xffffff);
+					return e;
+				}
+
+				_counts -= toLast;
+				p = period - 1;
+			}
+
+			// whether these counts pass a position
+			const auto passes = [&](const uint64_t _q) { return p + _counts >= (_q > p ? _q : _q + period); };
+
+			// the wrap follows $FFFFFF if the cycle runs through it and it is not the last value
+			const uint64_t wrap = position(0xffffff) + 1;
+			if(wrap < period && passes(wrap))
+				e.overflow = true;
+
+			const uint64_t compareAt = position(_tcpr);
+			if(_tcpr && compareAt < period && passes(compareAt))
+				e.compare = true;
+
+			_tcr = static_cast<TWord>((_tlr + (p + _counts) % period) & 0xffffff);
+			return e;
+		}
 	}
 
 	void Timers::execTimer(Timer& _t, const uint32_t _index, uint32_t _cycles) const
@@ -45,34 +135,53 @@ namespace dsp56k
 		if (!_t.m_tcsr.test(Timer::M_TE))
 			return;
 
-		_t.m_tcr += _cycles;
+		// a prescaled timer sees no clock at all on most calls, and no clock means no compare - the
+		// flag below must not be re-raised just because the counter still stands above TCPR
+		if (!_cycles)
+			return;
 
-		if (_t.m_tcr > 0xffffff)
+		const auto m = mode(_index);
+
+		// in the measurement modes TCF reports an input edge, the counter is not compared against TCPR
+		const bool measures = m == ModeMeasureInputWidth || m == ModeMeasureInputPeriod || m == ModeMeasurementCapture;
+
+		TimerEvents e;
+
+		if (_t.m_tcsr.test(Timer::M_TRM) && !measures)
 		{
-			// Overflow
-			_t.m_tcr &= 0xFFFFFF;
+			TWord tcr = _t.m_tcr;
+			e = countRestarting(tcr, _t.m_tlr, _t.m_tcpr, m == ModePWM, _cycles);
+			_t.m_tcr = tcr;
+		}
+		else
+		{
+			// Free running. The compare event is the count on which TCR reaches TCPR, before the counter wraps or after
+			// it, and the wrap to zero is the overflow, not a compare with a TCPR of zero (reference simulator)
+			const TWord tcpr = _t.m_tcpr;
+			const TWord before = _t.m_tcr;
+			const uint64_t after = static_cast<uint64_t>(before) + _cycles;
 
+			e.overflow = after > 0xffffff;
+			const bool reached = before < tcpr ? after >= tcpr : (e.overflow && tcpr && (after & 0xffffff) >= tcpr);
+			e.compare = !measures && reached;
+
+			_t.m_tcr = static_cast<TWord>(after & 0xffffff);
+		}
+
+		if (e.overflow)
+		{
 			if(_t.m_tcsr.test(Timer::M_TOIE))
 				injectInterrupt(Vba_TIMER0_Overflow, _index);
 			else
 				_t.m_tcsr.set(Timer::M_TOF);
-
-			if(mode(_index) == ModePWM && _t.m_tcsr.test(Timer::M_TRM))
-				_t.m_tcr = _t.m_tlr + _t.m_tcr;	// keep the overshoot
 		}
 
-		if (_t.m_tcr >= _t.m_tcpr)
+		if (e.compare)
 		{
-			// Compare
-			const auto overshoot = _t.m_tcr - _t.m_tcpr;
-
 			if(_t.m_tcsr.test(Timer::M_TCIE))
 				injectInterrupt(Vba_TIMER0_Compare, _index);
 
 			_t.m_tcsr.set(Timer::M_TCF);
-
-			if(mode(_index) != ModePWM && _t.m_tcsr.test(Timer::M_TRM))
-				_t.m_tcr = _t.m_tlr + overshoot;
 		}
 	}
 
@@ -107,7 +216,34 @@ namespace dsp56k
 		timerFlagReset<Timer::M_TOF>(t.m_tcsr, _val);
 		timerFlagReset<Timer::M_TCF>(t.m_tcsr, _val);
 
-		t.m_tcsr = _val;
+		// DI is read only, it follows the TIO pin
+		constexpr TWord di = 1 << Timer::M_DI;
+		t.m_tcsr = (_val & ~di) | (static_cast<TWord>(t.m_tcsr) & di);
+	}
+
+	void Timers::setInputPin(const int _index, const bool _level)
+	{
+		auto& t = m_timers[_index];
+
+		const bool old = t.m_tcsr.test(Timer::M_DI) != 0;
+
+		if(_level)
+			t.m_tcsr.set(Timer::M_DI);
+		else
+			t.m_tcsr.clear(Timer::M_DI);
+
+		if(old == _level || !t.m_tcsr.test(Timer::M_TE) || mode(_index) != ModeMeasurementCapture)
+			return;
+
+		// capture: INV clear selects the rising edge of TIO, INV set the falling one
+		const bool rising = _level;
+		if(rising == (t.m_tcsr.test(Timer::M_INV) != 0))
+			return;
+
+		if(t.m_tcsr.test(Timer::M_TCIE))
+			injectInterrupt(Vba_TIMER0_Compare, static_cast<uint32_t>(_index));
+
+		t.m_tcsr.set(Timer::M_TCF);
 	}
 
 	void Timers::writeTLR(int _index, TWord _val)
@@ -136,8 +272,10 @@ namespace dsp56k
 
 	void Timers::writeTPCR(TWord _val)
 	{
-		m_tpcr = _val;
-		LOG("Write Timer TPCR " << ": " << HEX(_val));
+		// "The TPCR is a 24-bit read-only register that reflects the current value in the prescaler
+		// counter", DSP56362 UM p201. A write has no effect - and now that exec() derives the count
+		// from the prescaler remainder, storing one here would be overwritten on the next call anyway
+		LOG("Write Timer TPCR " << ": " << HEX(_val) << ", ignored, the register is read only");
 	}
 
 	void Timers::setDSP(const DSP* _dsp)

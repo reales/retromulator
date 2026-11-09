@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="2.2.1"
+<JUCERPROJECT id="mMahW1" name="Retromulator" projectType="audioplug" version="2.3.0"
               juceLinkage="amalg_multi" useGlobalAppConfig="1" pluginName="Retromulator"
               pluginDesc="Multi-synth DSP56300 emulator" pluginManufacturer="discoDSP"
               pluginManufacturerCode="DDSP" pluginCode="RtMU" pluginIsSynth="1"
@@ -138,6 +138,8 @@
       <FILE id="jp018" name="pluginVersion.cpp" compile="1" resource="0"
             file="source/jucePluginLib/pluginVersion.cpp"/>
       <FILE id="jp019" name="processor.cpp" compile="1" resource="0" file="source/jucePluginLib/processor.cpp"/>
+      <FILE id="jpwg01" name="hostAudioWorkgroup.cpp" compile="1" resource="0" file="source/jucePluginLib/hostAudioWorkgroup.cpp"/>
+      <FILE id="jpwg02" name="hostAudioWorkgroup.h" compile="0" resource="0" file="source/jucePluginLib/hostAudioWorkgroup.h"/>
       <FILE id="jp020" name="softknob.cpp" compile="1" resource="0" file="source/jucePluginLib/softknob.cpp"/>
       <FILE id="jp021" name="tools.cpp" compile="1" resource="0" file="source/jucePluginLib/tools.cpp"/>
       <GROUP id="patchdb" name="patchdb">
@@ -614,11 +616,7 @@
       <FILE id="ay007" name="device.cpp" compile="1" resource="0" file="source/ayumiLib/device.cpp"/>
     </GROUP>
     <GROUP id="dx7Lib" name="dx7Lib">
-      <FILE id="dx001" name="HD6303R.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R.cpp"/>
-      <FILE id="dx002" name="HD6303R_inst.cpp" compile="1" resource="0" file="source/dx7Lib/HD6303R_inst.cpp"/>
-      <FILE id="dx003" name="dx7.cpp" compile="1" resource="0" file="source/dx7Lib/dx7.cpp"/>
       <FILE id="dx004" name="device.cpp" compile="1" resource="0" file="source/dx7Lib/device.cpp"/>
-      <FILE id="dx005" name="romloader.cpp" compile="1" resource="0" file="source/dx7Lib/romloader.cpp"/>
       <GROUP id="dxc000" name="clean">
         <FILE id="dxc001" name="Alloc.cpp" compile="1" resource="0" file="source/dx7Lib/clean/Alloc.cpp"/>
         <FILE id="dxc002" name="Alloc.h" compile="0" resource="0" file="source/dx7Lib/clean/Alloc.h"/>
@@ -802,6 +800,10 @@
             file="source/dsp56300/source/dsp56kBase/conditionvariable.cpp"/>
       <FILE id="dsb004" name="trigger.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/trigger.cpp"/>
       <FILE id="dsb005" name="win8sync.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/win8sync.cpp"/>
+      <FILE id="dsbn00" name="audioworkgroup.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/audioworkgroup.cpp"/>
+      <FILE id="dsbn01" name="mmuhelper.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/mmuhelper.cpp"/>
+      <FILE id="dsbn02" name="mutex.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/mutex.cpp"/>
+      <FILE id="dsbn03" name="profiler.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kBase/profiler.cpp"/>
     </GROUP>
     <GROUP id="dsp56kEmu" name="dsp56kEmu">
       <FILE id="dsp001" name="agu.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/agu.cpp"/>
@@ -899,6 +901,9 @@
       <FILE id="dsp065" name="peripherals.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/peripherals.cpp"/>
       <FILE id="dsp066" name="registers.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/registers.cpp"/>
       <FILE id="dsp067" name="timers.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/timers.cpp"/>
+      <FILE id="dspn00" name="assembler.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/assembler.cpp"/>
+      <FILE id="dspn01" name="dax.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/dax.cpp"/>
+      <FILE id="dspn03" name="shi.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/shi.cpp"/>
       <FILE id="dsp069" name="types.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/types.cpp"/>
       <FILE id="dsp070" name="unittests.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/unittests.cpp"/>
       <FILE id="dsp071" name="utils.cpp" compile="1" resource="0" file="source/dsp56300/source/dsp56kEmu/utils.cpp"/>

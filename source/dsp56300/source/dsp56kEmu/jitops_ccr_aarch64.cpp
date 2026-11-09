@@ -129,7 +129,7 @@ namespace dsp56k
 		{
 			// build shift value:
 			// const auto offset = sr_val_noCache(SRB_S0) - sr_val_noCache(SRB_S1);
-			const int32_t shift = 46 + (mode->testSR(SRB_S0) ? 1 : 0) - (mode->testSR(SRB_S1) ? 1 : 0);
+			const int32_t shift = 46 + g_aluBitOffset + (mode->testSR(SRB_S0) ? 1 : 0) - (mode->testSR(SRB_S1) ? 1 : 0);
 			const RegGP r(m_block);
 			m_asm.lsr(r, _alu, asmjit::Imm(shift));
 
@@ -148,9 +148,14 @@ namespace dsp56k
 
 				m_asm.sub(shift.get(), s1.get());
 			}
+
+			// Add the base before shifting. S0 - S1 is -1 in Scale Up, and shifting by that on its own
+			// shifts by 63 - register shift amounts are taken modulo 64 - which left zero behind and set
+			// U regardless of the accumulator. The static mode path above folds the base in the same way.
+			m_asm.add(r64(shift.get()), r64(shift.get()), asmjit::Imm(46 + g_aluBitOffset));
+
 			const RegGP r(m_block);
-			m_asm.lsr(r, _alu, asmjit::Imm(46));
-			m_asm.shr(r, shift.get());	// FIXME: how can this work? shift might be negative if SRB_S1 is one but SRB_S0 is zero
+			m_asm.lsr(r64(r), r64(_alu), r64(shift.get()));
 
 			shift.release();
 
@@ -194,7 +199,10 @@ namespace dsp56k
 		auto aluScratch = [this, &_alu]()
 		{
 			RegScratch alu(m_block);
-			m_asm.lsl(alu, _alu, asmjit::Imm(8));
+			if constexpr (g_leftAlignedAlu)
+				m_asm.mov(r64(alu), r64(_alu));	// already left-aligned; the shift exists only to left-align
+			else
+				m_asm.lsl(alu, _alu, asmjit::Imm(8));
 			return alu;
 		};
 
@@ -243,20 +251,25 @@ namespace dsp56k
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
-		copyBitToCCR(_alu, 55, CCRB_N);
+		copyBitToCCR(_alu, 55 + g_aluBitOffset, CCRB_N);
 	}
 
 	void JitOps::ccr_n_update_by47(const JitReg64& _alu)
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
-		copyBitToCCR(_alu, 47, CCRB_N);
+		copyBitToCCR(_alu, 47 + g_aluBitOffset, CCRB_N);
 	}
 
 	void JitOps::ccr_n_update_by23(const JitReg64& _alu)
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
+		//
+		// No g_aluBitOffset here: the only callers are ROL and ROR, and they pass the plain 24 bit
+		// A1/B1 from getALU1(), not a left-aligned accumulator. Adding the offset read bit 31 of a
+		// 24 bit value, so N came out clear on both back ends - the interpreter and the simulator
+		// set it from bit 23.
 		copyBitToCCR(_alu, 23, CCRB_N);
 	}
 
@@ -270,7 +283,7 @@ namespace dsp56k
 
 		if(mode)
 		{
-			const auto bit = 45 + (mode->testSR(SRB_S1) ? 1 : 0) - (mode->testSR(SRB_S0) ? 1 : 0);
+			const auto bit = 45 + g_aluBitOffset + (mode->testSR(SRB_S1) ? 1 : 0) - (mode->testSR(SRB_S0) ? 1 : 0);
 
 			const RegGP alu(m_block);
 			m_asm.lsr(alu, _alu, asmjit::Imm(bit));
@@ -284,7 +297,7 @@ namespace dsp56k
 			{
 				const RegGP s0s1(m_block);
 				sr_getBitValue(s0s1, SRB_S1);
-				m_asm.add(bit, s0s1.get(), asmjit::Imm(45));
+				m_asm.add(bit, s0s1.get(), asmjit::Imm(45 + g_aluBitOffset));
 
 				sr_getBitValue(s0s1, SRB_S0);
 				m_asm.sub(bit, s0s1.get());
@@ -297,6 +310,49 @@ namespace dsp56k
 		}
 
 		m_asm.bind(exit);
+	}
+
+	void JitOps::ccr_vl_update_ifNotZero()
+	{
+		ccr_update_ifNotZero(CCRB_V);
+		ccr_l_update_by_v();
+	}
+
+	void JitOps::ccr_vl_update(const JitRegGP& _zeroOrOne)
+	{
+		// V is overwritten and L is a sticky OR of it, so the same 0/1 value writes both: a BFI for V and an
+		// ORR for L. Neither touches NZCV.
+		ccr_update(_zeroOrOne, CCRB_V);
+
+		m_ccrWritten |= CCR_L;
+		ccr_clearDirty(CCR_L);
+
+		const auto sr = m_dspRegs.getSR(JitDspRegs::ReadWrite);
+		m_asm.orr(sr, sr, _zeroOrOne, asmjit::arm::lsl(CCRB_L));
+	}
+
+	void JitOps::ccr_vl_update_ifOverflow()
+	{
+		// The batch cleared V up front, so V and L only ever need setting.
+		assert(!m_ccr_update_clear && "needs a CcrBatchUpdate that clears V");
+
+		m_ccrWritten |= static_cast<CCRMask>(CCR_V | CCR_L);
+		ccr_clearDirty(static_cast<CCRMask>(CCR_V | CCR_L));
+
+		const auto sr = m_dspRegs.getSR(JitDspRegs::ReadWrite);
+		const auto overflow = m_asm.newLabel();
+		const auto done = m_asm.newLabel();
+
+		m_asm.b(asmjit::arm::CondCode::kVS, overflow);
+		m_asm.bind(done);
+
+		m_block.addColdCode([a = &m_asm, sr, overflow, done]()
+		{
+			a->bind(overflow);
+			a->orr(sr, sr, asmjit::Imm(CCR_V));
+			a->orr(sr, sr, asmjit::Imm(CCR_L));
+			a->jmp(done);
+		});
 	}
 
 	void JitOps::ccr_l_update_by_v()

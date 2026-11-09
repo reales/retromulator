@@ -162,6 +162,12 @@ namespace dsp56k
 					if(v > 0 && v < 4)
 						return false;
 					break;
+				case Add_SD:
+				case Sub_SD:
+					// The other variant: Table 12-13 assigns JJJ=001..111; 000 is reserved.
+					if(v == 0)
+						return false;
+					break;
 				default:;
 				}
 			}
@@ -261,6 +267,10 @@ namespace dsp56k
 		const OpcodeInfo* findNonParallelOpcodeInfo(TWord _opcode) const;
 		const OpcodeInfo* findParallelMoveOpcodeInfo(TWord _opcode) const;
 		const OpcodeInfo* findParallelAluOpcodeInfo(TWord _opcode) const;
+
+		// What a parallel word runs: the move it returns, ILLEGAL for a word that is not defined, and the ALU operation
+		// in _alu, nullptr for none
+		const OpcodeInfo* findParallelOpcodeInfo(TWord _opcode, const OpcodeInfo*& _alu) const;
 
 		static bool isParallelOpcode(const TWord _opcode)
 		{

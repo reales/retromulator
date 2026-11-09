@@ -72,7 +72,16 @@ namespace dsp56k
 	const OpcodeInfo* Opcodes::findNonParallelOpcodeInfo(TWord _opcode) const
 	{
 		assert(isNonParallelOpcode(_opcode));
-		return findOpcodeInfo(_opcode, m_opcodesNonParallel);
+
+		if(const auto* oi = findOpcodeInfo(_opcode, m_opcodesNonParallel))
+			return oi;
+
+		/*	The chip runs any undefined operation code as ILLEGAL (56300 FM 2.3.2.2): a NOP, then the illegal instruction
+			interrupt. Firmware has been seen to run $000040, which the JIT compiled as an empty block that it entered over
+			and over, until the stack overflowed. The disassembler prints such a word as data, see
+			Disassembler::disassemble
+		*/
+		return &getOpcodeInfoAt(Illegal);
 	}
 
 	const OpcodeInfo* Opcodes::findParallelMoveOpcodeInfo(TWord _opcode) const
@@ -85,6 +94,26 @@ namespace dsp56k
 	{
 		assert(isParallelOpcode(_opcode));
 		return findOpcodeInfo(_opcode, m_opcodesAlu);
+	}
+
+	const OpcodeInfo* Opcodes::findParallelOpcodeInfo(const TWord _opcode, const OpcodeInfo*& _alu) const
+	{
+		/*	As the reference simulator runs them: a word whose move field matches no move is ILLEGAL and its ALU operation
+			does not run, $083100 and $083110 take the illegal instruction interrupt and $083110 adds nothing. An ALU byte
+			that matches no operation does nothing, the move runs alone, $080004 runs as $080000. Both used to decode to
+			nullptr, which the JIT dereferenced, or to a word of length 0 that the JIT decoded over and over.
+			The disassembler prints both as data, as the simulator does, see Disassembler::disassemble
+		*/
+		const auto* oiMove = findParallelMoveOpcodeInfo(_opcode);
+
+		if(!oiMove)
+		{
+			_alu = nullptr;
+			return &getOpcodeInfoAt(Illegal);
+		}
+
+		_alu = (_opcode & 0xff) ? findParallelAluOpcodeInfo(_opcode) : nullptr;
+		return oiMove;
 	}
 
 	const OpcodeInfo& Opcodes::getOpcodeInfoAt(size_t _index)
@@ -146,8 +175,8 @@ namespace dsp56k
 			return 1;
 		}
 
-		const auto* oiAlu = (_op & 0xff) ? findParallelAluOpcodeInfo(_op) : nullptr;
-		const auto* oiMove = findParallelMoveOpcodeInfo(_op);
+		const OpcodeInfo* oiAlu;
+		const auto* oiMove = findParallelOpcodeInfo(_op, oiAlu);
 
 		uint32_t res = 0;
 

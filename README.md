@@ -4,7 +4,7 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 
 [![Retromulator](https://www.discodsp.com/img/retromulator_nordrack.webp)](https://www.discodsp.com/retromulator/)
 
-[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $99](https://img.shields.io/badge/Buy_License-$99-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
+[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://www.discodsp.com/download/?id=36) &nbsp; [![Download for macOS](https://img.shields.io/badge/macOS-Download-blue?style=for-the-badge&logo=apple)](https://www.discodsp.com/download/?id=35) &nbsp; [![Download for Linux](https://img.shields.io/badge/Linux-Download-blue?style=for-the-badge&logo=linux&logoColor=white)](https://www.discodsp.com/download/?id=34) &nbsp; [![Buy License $199](https://img.shields.io/badge/Buy_License-$99-green?style=for-the-badge&logo=fastly)](https://discodsp.onfastspring.com/retromulator/)
 
 ## Hardware Cores
 
@@ -19,31 +19,31 @@ A standalone app and DAW plugin (AAX / VST3 / AU) that emulates classic hardware
 | General Instrument AY-3-8910 / Yamaha YM2149 | Ayumi + Ym2149Synth voice engine |
 | Hammond B3 + Leslie (OpenB3) | setBfree tonewheel and Leslie engine |
 | Moog Minimoog Model D (CA-72) | Circuit model from SPICE simulations |
-| Oberheim Matrix-1000 | 6809 firmware + CEM3396 voice model |
+| Oberheim Matrix-1000 | Firmware-free clean-room controller + CEM3396 voice model |
 | Roland JP-8000 (JE-8086) | H8S CPU and 4x ESP ASIC cycle-accurate |
 | Roland SC-88 / 88VL / 88Pro / SC-8850 / SC-55mkII | H8/500 and SH-2 cycle-accurate |
 | Tracker modules (XM / MOD / S3M / IT) | Fasttracker 2 and Schism Tracker replayers |
 | Waldorf microQ | Motorola DSP 56300 cycle-accurate |
 | Waldorf Microwave XT | Motorola DSP 56300 cycle-accurate |
 | Wurlitzer 200A (OpenWurli) | Physical modeling synthesis |
-| Yamaha DX7 | YM21280 EGS + YM21290 OPS (VDX7), firmware-free clean-room controller or the HD6303R firmware |
+| Yamaha DX7 | Firmware-free clean-room controller + YM21280 EGS + YM21290 OPS (VDX7) |
 | Yamaha OPL3 / YMF262 | Nuked OPL3 v1.8 |
 
-Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. The Matrix-1000 needs its 32 KB system EPROM, and the 64 KB patch EPROM for banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, AY-3-8910, CA-72, Nord Lead 1, OpenB3, OpenWurli, OPL3, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
+Most DSP-based synths require their original ROM firmware to run (not included). ROMs are loaded from the application support folder at runtime. The SC-88 family needs a full image set per board, kept together in its own folder and identified by content. Since 2.1.8 the Matrix-1000 and DX7 cores are clean-room and need no firmware; the Matrix-1000 EPROMs are only used, when present, to write ROM banks 2 to 9. The microQ can run with an embedded fallback ROM. The Akai S1000, AY-3-8910, CA-72, DX7, Matrix-1000, Nord Lead 1, OpenB3, OpenWurli, OPL3, and Tracker cores are ROM-free. The files each core needs, with their sizes and hashes, are listed under [ROM Files](#rom-files).
 
 The **Akai S1000** sampler loads SF2, SFZ, ZBP, and ZBB sample banks, as well as Akai ISO/BIN/CUE disk images, via the [SFZero](https://github.com/reales/retromulator/tree/main/Modules/SFZero) MIT-licensed engine with 8-point sinc interpolation, extended SFZ/SF2 opcode support, auto-slice drum mapping, CC20 global tuning, and discoDSP Bliss sampler format.
 
-The **Nord Lead 1 (Nordic)** is a clean-room C++ reimplementation of the 1995 Nord Lead 1 DSP program, bit exact to the original and checked against a real unit, so it needs no ROM. It has 48 voices, unison, morph, the arpeggiator and all four slots A-D, each on its own MIDI channel, with its own editor below the rack. Nord Lead 2 programs can be imported and exported. Nordic is hosted from `ROM/Nordic.vst3` and ships only with commercial builds.
+The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
 
 The **Commodore 64 SID** emulates the MOS 6581 / 8580 chip using the reSID engine with 3-voice polyphony, oldest-voice stealing, and a full 50 Hz macro playback engine (wavetable, pulsetable, filtertable, speedtable). It loads GoatTracker `.sng` banks and `.ins` standalone instruments, with live MIDI control via CC 1 (vibrato depth), CC 22 (pitch bend range, 1–48 semitones), CC 64 (sustain pedal), CC 71 (resonance), CC 74 (cutoff), and CC 75 (pulse width).
-
-The **AY-3-8910 / YM2149** emulates the 3-channel PSG used in the ZX Spectrum, Amstrad CPC, MSX, and Atari ST using the Ayumi engine, with a voice layer re-implementing the Ym2149Synth firmware: soft volume and pitch envelopes, glide, vibrato, detune, noise delay, and transpose. Voices are controlled via CC 1–11 and patches are stored in a user bank.
 
 The **Hammond B3 (OpenB3)** is the setBfree tonewheel organ and Leslie engine by way of OpenB3, with upper, lower and pedal drawbars, percussion, vibrato and chorus, overdrive, three Leslie cabinets with convolution cabinet bodies, a plate reverb, a keyboard split and .fxp presets in Factory and User banks.
 
 The **Minimoog Model D (CA-72)** is the CA-72 circuit model by Idle Foundry: every board of a 1972 Model D transcribed into SPICE netlists, with real-time models derived from those simulations. It runs at the host sample rate in LO, HI and ULTRA quality, with a 4x engine for offline renders, and opens its own front panel below the plugin bar. Presets are .fxp files in Factory and User banks, with .fxb bank import and export, and every panel control is a host parameter with a MIDI CC.
 
-The **Oberheim Matrix-1000** runs the original firmware on an emulated 6809 board (82C54 timers, 6850 UART, S&H DAC, latches) driving six CEM3396 voice models with BLEP oscillators and 2x oversampling. The firmware calibrates the voices itself at first boot, and the result is kept as a snapshot so later boots are instant. ROM banks 2 to 9 are dumped from the patch EPROM into .syx files with the factory names. Every patch parameter is exposed to the host and mapped to a MIDI CC, and both LFOs can follow the host tempo, MIDI clock or a SysEx tempo.
+The **Nord Lead 1 (Nordic)** is a clean-room C++ reimplementation of the 1995 Nord Lead 1 DSP program, bit exact to the original and checked against a real unit, so it needs no ROM. It has 48 voices, unison, morph, the arpeggiator and all four slots A-D, each on its own MIDI channel, with its own editor below the rack. Nord Lead 2 programs can be imported and exported. Nordic is hosted from `ROM/Nordic.vst3` and ships only with commercial builds.
+
+The **Oberheim Matrix-1000** runs on a clean-room controller that needs no firmware, driving CEM3396 voice models with BLEP oscillators and 2x oversampling on six boards that wake up as more notes play, for 36 voices. ROM banks 2 to 9 are written once into .syx files with the factory names when the original EPROM images are installed. Every patch parameter is exposed to the host and mapped to a MIDI CC, and both LFOs can follow the host tempo, MIDI clock or a SysEx tempo.
 
 The **Roland SC-88 family** emulates the SC-88, SC-88VL, SC-88Pro, SC-8850 and SC-55mkII GS sound modules, running each board's own firmware on an H8/500 or SH-2 core with the Roland tone generator, effects and filter chips. Tone and drum kit names are read from the board ROM, and the GS parameter map is exposed to the host: per-part programs, variation banks (CC0), tone maps (CC32) and the rhythm part assignment. A standard MIDI file, or a playlist of them, can be played through the board and rendered offline to WAV or MP3 320, from the plugin or from the command line.
 
@@ -69,60 +69,91 @@ ROMs go in the `ROM` folder inside the Retromulator data folder, and the Roland 
 - Windows: `Documents\discoDSP\Retromulator\`
 - Linux: `~/Documents/discoDSP/Retromulator/`
 
+| Hardware Core | ROM File | Size |
+|---|---|---|
+| Access Virus A, B & C | `virus_c.bin` | 512 KB |
+| Access Virus TI | `firmware.bin` | 6–9 MB |
+| Clavia Nord Lead 2X | `nord_lead_2x.bin` | 512 KB |
+| Oberheim Matrix-1000 (optional, for ROM banks 2 to 9) | `mtrx1kv120.bin` | 32 KB |
+|  | `m1000_patchrom.bin` | 64 KB |
+| Roland JP-8000 | `jp8000.bin` | 512 KB |
+| Roland SC-55mkII | `rom1.bin` | 32 KB |
+|  | `rom2.bin` | 512 KB |
+|  | `waverom1.bin` | 2 MB |
+|  | `waverom2.bin` | 1 MB |
+| Roland SC-88 / SC-88VL | `ControlROMSC88.bin` | 512 KB |
+|  | `ControlROMSC88VL.bin` | 512 KB |
+|  | `PCM_IC_325.bin` | 2 MB |
+|  | `PCM_IC_326.bin` | 2 MB |
+|  | `PCM_IC_327.bin` | 2 MB |
+|  | `PCM_IC_328.bin` | 2 MB |
+| Roland SC-88Pro | `sc88pro_valid.bin` | 1 MB |
+|  | `Roland VE-GSPro_Sample_ROM_A_R01567167 301_Roland XP-GS_v1.01.BIN` | 8 MB |
+|  | `Roland VE-GSPro_Sample_ROM_B_R01567178 302_Roland SC-GS_v1.00.BIN` | 8 MB |
+|  | `Roland VE-GSPro_Sample_ROM_C_R01233667 314_Roland SC-GS_v1.00.BIN` | 4 MB |
+| Roland SC-8850 | `8850CPU.bin` | 64 KB |
+|  | `8850.bin` | 1 MB |
+|  | `8850Flash.bin` | 2 MB |
+|  | `SC8850WaveROMUnscrambled.bin` | 32 MB |
+| Waldorf microQ | `micro_q.bin` | 512 KB |
+| Waldorf Microwave XT | `xt.bin` | 256 KB |
+
+<details>
+<summary>Checksums (SHA-1, MD5)</summary>
+
 The hashes are those of the images Retromulator is tested with. The Virus TI firmware varies in size between versions, so its hash is that of the 8,569,757 byte image tested; other versions may also work. The DX7 runs without firmware on a clean-room controller; its 16 KB firmware is optional.
 
-| Hardware Core | ROM File | Size | SHA-1 | MD5 |
-|---|---|---|---|---|
-| Access Virus A, B & C | `virus_c.bin` | 512 KB | `4c34546889d90522a8d85300c471f18339f88f72` | `e499bb4f988d18d22bbfd0343928380a` |
-| Access Virus TI | `firmware.bin` | 6–9 MB | `fb60f58212f72047b46c72767b887397dd77264a` | `5d853f2ca304045a5458812504d5db95` |
-| Clavia Nord Lead 2X | `nord_lead_2x.bin` | 512 KB | `549394349f7371e48ead57d8a0ec6b4010014d12` | `61f58146de0b566adf6d1acf6355718b` |
-| Oberheim Matrix-1000 | `mtrx1kv120.bin` | 32 KB | `4c39f955e9bed110e25805cf076537634ff1ac7a` | `a8092cfa56189c5bb7c1775e7b4ca09b` |
-|  | `m1000_patchrom.bin` | 64 KB | `20f413653f597313766f24d4e369c6b7768b6872` | `fa081871ed9120468577eefab72330b1` |
-| Roland JP-8000 | `jp8000.bin` | 512 KB | `492c98abdeef078afd0f6a5e00fd5d4a858a8242` | `6a3b6a45817a0b038aa63d6277ea7d51` |
-| Roland SC-55mkII | `rom1.bin` | 32 KB | `b91bb1d9dccffe831b7cfde7800a3fe32b2fbda6` | `4ca058f7db05f51e97bb30a162e9610a` |
-|  | `rom2.bin` | 512 KB | `078cb5feea05e80bb9a1bb857a2163ee434fd053` | `63b24c7193ce34afefce9cec32ac39f0` |
-|  | `waverom1.bin` | 2 MB | `96708cb21381c2fd03de4babbf7aea301c7594a6` | `30df645acf7f1b621d5f2891ea53e00b` |
-|  | `waverom2.bin` | 1 MB | `4d91cdeaed048d653dbf846a221003c3a3f08279` | `f86e0433a11707a048a8a79e8d98a3be` |
-| Roland SC-88 / SC-88VL | `ControlROMSC88.bin` | 512 KB | `3bc9a68703bd09459283b6b45d01d08feaffb744` | `0ac771782ea58a53af590ebdf140d517` |
-|  | `ControlROMSC88VL.bin` | 512 KB | `3a20f8f8cefd0d5e1edb103046f6fe94bb73ac7a` | `e3c8e8e644534f2390958c6f9d553da5` |
-|  | `PCM_IC_325.bin` | 2 MB | `860dcd9804ded4cd46aab38bfc3764a1ad7a6b65` | `6a92b7de3ac7b8205d29ec4497644beb` |
-|  | `PCM_IC_326.bin` | 2 MB | `ac95c26c46c40aacb944f5d45634c93bee9e6d90` | `d98f4b255d3a7dc830d92c71c25ce2eb` |
-|  | `PCM_IC_327.bin` | 2 MB | `d88bf13c3d74097991b783295d95ccfae2c9282d` | `c05b103d4db110b3962431173cc72967` |
-|  | `PCM_IC_328.bin` | 2 MB | `03e70ae2efd190f41af24be01b1abaa84bfa93d9` | `bccc26c34cac0d5509e8efb645043b5b` |
-| Roland SC-88Pro | `sc88pro_valid.bin` | 1 MB | `6d06f00a1f8195a76b3af600ca708003f9a3abdc` | `9d4c2f123b4451d8ee75c3b982760f28` |
-|  | `Roland VE-GSPro_Sample_ROM_A_R01567167 301_Roland XP-GS_v1.01.BIN` | 8 MB | `5cc1700b3f41921ed81fe3b92ba9ec28bd6649c9` | `bd33b20bb5e8f51e436e141f81a75c14` |
-|  | `Roland VE-GSPro_Sample_ROM_B_R01567178 302_Roland SC-GS_v1.00.BIN` | 8 MB | `78b37ce0e735ad2c3e51338e74219a103d7fadba` | `125ea2056dc208f04a141b3dcdffdb1b` |
-|  | `Roland VE-GSPro_Sample_ROM_C_R01233667 314_Roland SC-GS_v1.00.BIN` | 4 MB | `e2ad5f0b2e5bdad84e42d080fc2e2fad523cb84b` | `48c3887c9a2a574b907242640fa0a320` |
-| Roland SC-8850 | `8850CPU.bin` | 64 KB | `99b414c5129960e3e58af1fb147a1474ccccca84` | `efe1ffb0ccbe1b2ec454692c522494fc` |
-|  | `8850.bin` | 1 MB | `e594de1f5be17c11ef4f4d7efd142053bbf44085` | `554d5997dcd9ce6fa0777092ff48f6fa` |
-|  | `8850Flash.bin` | 2 MB | `d9af1c75b277de2258ed74982d7a754f60c0826e` | `06eee65647b66109efb01eabd6d71248` |
-|  | `SC8850WaveROMUnscrambled.bin` | 32 MB | `f3ff7b1f57f6c1a393d0a22e6bd08554dc325573` | `e8eb6ac0e394997dfbc17064f9f4a70e` |
-| Waldorf microQ | `micro_q.bin` | 512 KB | `2b5d3f57b8a43802f36a53ced4173285f70d5ae0` | `216d13d7222a9f6a548ab19d419aa101` |
-| Waldorf Microwave XT | `xt.bin` | 256 KB | `781ceb74e15d48017bf327091729f3e127ec2a3a` | `b676e922e04841e304676f9b7f55fa41` |
-| Yamaha DX7 (optional) | `dx7.bin` | 16 KB | `715dbb8e96a4df2a7f096b368334a7654860bb26` | `6580f668fa67e63c22ad2617a0aaebd7` |
+| ROM File | SHA-1 | MD5 |
+|---|---|---|
+| `virus_c.bin` | `4c34546889d90522a8d85300c471f18339f88f72` | `e499bb4f988d18d22bbfd0343928380a` |
+| `firmware.bin` | `fb60f58212f72047b46c72767b887397dd77264a` | `5d853f2ca304045a5458812504d5db95` |
+| `nord_lead_2x.bin` | `549394349f7371e48ead57d8a0ec6b4010014d12` | `61f58146de0b566adf6d1acf6355718b` |
+| `mtrx1kv120.bin` | `4c39f955e9bed110e25805cf076537634ff1ac7a` | `a8092cfa56189c5bb7c1775e7b4ca09b` |
+| `m1000_patchrom.bin` | `20f413653f597313766f24d4e369c6b7768b6872` | `fa081871ed9120468577eefab72330b1` |
+| `jp8000.bin` | `492c98abdeef078afd0f6a5e00fd5d4a858a8242` | `6a3b6a45817a0b038aa63d6277ea7d51` |
+| `rom1.bin` | `b91bb1d9dccffe831b7cfde7800a3fe32b2fbda6` | `4ca058f7db05f51e97bb30a162e9610a` |
+| `rom2.bin` | `078cb5feea05e80bb9a1bb857a2163ee434fd053` | `63b24c7193ce34afefce9cec32ac39f0` |
+| `waverom1.bin` | `96708cb21381c2fd03de4babbf7aea301c7594a6` | `30df645acf7f1b621d5f2891ea53e00b` |
+| `waverom2.bin` | `4d91cdeaed048d653dbf846a221003c3a3f08279` | `f86e0433a11707a048a8a79e8d98a3be` |
+| `ControlROMSC88.bin` | `3bc9a68703bd09459283b6b45d01d08feaffb744` | `0ac771782ea58a53af590ebdf140d517` |
+| `ControlROMSC88VL.bin` | `3a20f8f8cefd0d5e1edb103046f6fe94bb73ac7a` | `e3c8e8e644534f2390958c6f9d553da5` |
+| `PCM_IC_325.bin` | `860dcd9804ded4cd46aab38bfc3764a1ad7a6b65` | `6a92b7de3ac7b8205d29ec4497644beb` |
+| `PCM_IC_326.bin` | `ac95c26c46c40aacb944f5d45634c93bee9e6d90` | `d98f4b255d3a7dc830d92c71c25ce2eb` |
+| `PCM_IC_327.bin` | `d88bf13c3d74097991b783295d95ccfae2c9282d` | `c05b103d4db110b3962431173cc72967` |
+| `PCM_IC_328.bin` | `03e70ae2efd190f41af24be01b1abaa84bfa93d9` | `bccc26c34cac0d5509e8efb645043b5b` |
+| `sc88pro_valid.bin` | `6d06f00a1f8195a76b3af600ca708003f9a3abdc` | `9d4c2f123b4451d8ee75c3b982760f28` |
+| `Roland VE-GSPro_Sample_ROM_A_R01567167 301_Roland XP-GS_v1.01.BIN` | `5cc1700b3f41921ed81fe3b92ba9ec28bd6649c9` | `bd33b20bb5e8f51e436e141f81a75c14` |
+| `Roland VE-GSPro_Sample_ROM_B_R01567178 302_Roland SC-GS_v1.00.BIN` | `78b37ce0e735ad2c3e51338e74219a103d7fadba` | `125ea2056dc208f04a141b3dcdffdb1b` |
+| `Roland VE-GSPro_Sample_ROM_C_R01233667 314_Roland SC-GS_v1.00.BIN` | `e2ad5f0b2e5bdad84e42d080fc2e2fad523cb84b` | `48c3887c9a2a574b907242640fa0a320` |
+| `8850CPU.bin` | `99b414c5129960e3e58af1fb147a1474ccccca84` | `efe1ffb0ccbe1b2ec454692c522494fc` |
+| `8850.bin` | `e594de1f5be17c11ef4f4d7efd142053bbf44085` | `554d5997dcd9ce6fa0777092ff48f6fa` |
+| `8850Flash.bin` | `d9af1c75b277de2258ed74982d7a754f60c0826e` | `06eee65647b66109efb01eabd6d71248` |
+| `SC8850WaveROMUnscrambled.bin` | `f3ff7b1f57f6c1a393d0a22e6bd08554dc325573` | `e8eb6ac0e394997dfbc17064f9f4a70e` |
+| `micro_q.bin` | `2b5d3f57b8a43802f36a53ced4173285f70d5ae0` | `216d13d7222a9f6a548ab19d419aa101` |
+| `xt.bin` | `781ceb74e15d48017bf327091729f3e127ec2a3a` | `b676e922e04841e304676f9b7f55fa41` |
+
+</details>
 
 ## Credits
 
-- **[dsp56300](https://github.com/dsp56300)** — DSP56300 emulator, Virus TI / microQ / XT / Nord N2X engines, GPL v3
-- All contributors to [github.com/dsp56300/gearmulator](https://github.com/dsp56300/gearmulator)
-- **Giulio Zausa** — Roland JP-8000 (JE-8086) and SC-88 family emulation
 - **chiaccona** — [VDX7](https://github.com/chiaccona/VDX7), cycle-accurate Yamaha DX7 emulation (HD6303R CPU, EGS, OPS), GPL v3
-- **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
 - **Dag Lem** — [reSID](https://en.wikipedia.org/wiki/ReSID), cycle-accurate MOS 6581 / 8580 SID emulation, GPL v2
-- **Lasse Öörni / Cadaver** — [GoatTracker](https://sourceforge.net/projects/goattracker2/) `.sng` / `.ins` format reference, GPL v2
-- **Olav Sorensen** — [Fasttracker 2 clone](https://github.com/8bitbubsy/ft2-clone), XM / MOD replayer, BSD 3-Clause
-- **Schism Tracker contributors** — [Schism Tracker](https://github.com/schismtracker/schismtracker), S3M / IT player, GPL v2
-- **Peter Sovietov** — [Ayumi](https://github.com/true-grue/ayumi), AY-3-8910 / YM2149 emulation, MIT license
-- **Timothy Lamb** — [Ym2149Synth](https://github.com/trash80/Ym2149Synth), voice engine and soft envelope firmware, GPL v3
+- **[discoDSP](https://www.discodsp.com/)** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3; [Nordic](https://www.discodsp.com/retromulator/) Nord Lead 1 DSP reimplementation, proprietary, not in this repository
 - **Dominic Mazzoni** — [libresample](https://github.com/minorninth/libresample), sinc resampling, BSD 3-Clause / LGPL dual
-- **Jean-Marc Valin** — [Speex](https://www.speex.org/) arbitrary-rate resampler, BSD 3-Clause
-- **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
-- **Leo Olivers** — SFZero JUCE module port
-- **discoDSP** — [SFZero v3.0.0](https://github.com/reales/retromulator/tree/main/Modules/SFZero), 8-point sinc interpolation, Bliss format, extended opcode support, MIT license; synthLib device adapters, bank and patch handling, offline WAV / MP3 render and host parameter pool, Oberheim Matrix-1000 emulation, GPL v3; [Nordic](https://www.discodsp.com/retromulator/) Nord Lead 1 DSP reimplementation, proprietary, not in this repository
-- **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
-- **Michele Perrone** — [OpenB3](https://github.com/michele-perrone/OpenB3) Hammond B3 and Leslie, AGPL v3, based on [setBfree](https://github.com/pantherb/setBfree) by Robin Gareus, GPL v2+
+- **[dsp56300](https://github.com/dsp56300)** — DSP56300 emulator, Virus TI / microQ / XT / Nord N2X / Roland JP-8000 (JE-8086) / SC-88 family engines, GPL v3
 - **Idle Foundry** — [CA-72](https://github.com/idlefoundry/ca-72) Minimoog Model D circuit model and front panel, GPL v3 or later; ported to C++ / JUCE by discoDSP
+- **Jean-Marc Valin** — [Speex](https://www.speex.org/) arbitrary-rate resampler, BSD 3-Clause
+- **Joshua Price** — [OpenWurli](https://github.com/hal0zer0/openwurli) Wurlitzer 200A physical model
+- **Lasse Öörni / Cadaver** — [GoatTracker](https://sourceforge.net/projects/goattracker2/) `.sng` / `.ins` format reference, GPL v2
 - **Laurent de Soras** — [hiir](http://ldesoras.free.fr/prod.html#src_hiir) polyphase IIR halfband filters, WTFPL
+- **Leo Olivers** — SFZero JUCE module port
+- **Michele Perrone** — [OpenB3](https://github.com/michele-perrone/OpenB3) Hammond B3 and Leslie, AGPL v3, based on [setBfree](https://github.com/pantherb/setBfree) by Robin Gareus, GPL v2+
+- **Nuke.YKT** — [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), cycle-accurate YMF262 emulation, LGPL v2.1
+- **Olav Sorensen** — [Fasttracker 2 clone](https://github.com/8bitbubsy/ft2-clone), XM / MOD replayer, BSD 3-Clause
+- **Peter Sovietov** — [Ayumi](https://github.com/true-grue/ayumi), AY-3-8910 / YM2149 emulation, MIT license
+- **Schism Tracker contributors** — [Schism Tracker](https://github.com/schismtracker/schismtracker), S3M / IT player, GPL v2
+- **Steve Folta** — original [SFZero](https://github.com/stevefolta/SFZero) SFZ/SF2 sample player, MIT license
+- **Timothy Lamb** — [Ym2149Synth](https://github.com/trash80/Ym2149Synth), voice engine and soft envelope firmware, GPL v3
 
 JUCE integration, UI, AAX/AU/VST3 plumbing is developed separately.
 

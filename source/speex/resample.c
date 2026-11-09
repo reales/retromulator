@@ -96,6 +96,19 @@ static void speex_free(void *ptr) {free(ptr);}
 #define UINT32_MAX 4294967295U
 #endif
 
+#if defined(FLOATING_POINT) && !defined(USE_SSE) && !defined(USE_NEON) && !defined(RESAMPLE_NO_SIMD)
+#  if defined(__aarch64__)
+#    define USE_NEON
+#  elif defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#    define USE_SSE
+#  endif
+#endif
+
+/* A precomputed table per output phase is much faster than interpolating the sinc for every tap, use it while it fits */
+#ifndef RESAMPLE_DIRECT_MAX_COEFS
+#define RESAMPLE_DIRECT_MAX_COEFS (1u << 17)
+#endif
+
 #ifdef USE_SSE
 #include "resample_sse.h"
 #endif
@@ -644,7 +657,7 @@ static int update_filter(SpeexResamplerState *st)
       goto fail;
 #else
    /* Choose the resampling type that requires the least amount of memory */
-   use_direct = st->filt_len*st->den_rate <= st->filt_len*st->oversample+8
+   use_direct = (st->filt_len*st->den_rate <= st->filt_len*st->oversample+8 || st->filt_len*st->den_rate <= RESAMPLE_DIRECT_MAX_COEFS)
                 && INT_MAX/sizeof(spx_word16_t)/st->den_rate >= st->filt_len;
 #endif
    if (use_direct)

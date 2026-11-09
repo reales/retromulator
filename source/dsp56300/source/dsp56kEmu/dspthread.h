@@ -6,7 +6,12 @@
 #include <string>
 #include <thread>
 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
 #include "debuggerinterface.h"
+#include "dsp56kBase/threadtools.h"
 
 namespace dsp56k
 {
@@ -18,7 +23,13 @@ namespace dsp56k
 		using Guard = std::lock_guard<std::mutex>;
 		using Callback = std::function<void(uint32_t)>;
 
-		explicit DSPThread(DSP& _dsp, const char* _name = nullptr, std::shared_ptr<DebuggerInterface> _debugger = {});
+		// _initialPriority is the priority the worker runs at from thread start. Defaults to Highest (the
+		// realtime band) for steady-state audio; nova passes a lower boot priority and raises to Highest only
+		// once booted, because on macOS a thread that starts Highest cannot later drop off the RT band.
+		// _callback is installed BEFORE the worker starts. setCallback() takes the mutex the worker holds
+		// while it runs, so a caller that installs one afterwards blocks for as long as the worker does -
+		// forever if the worker is blocked on something only that caller can deliver.
+		explicit DSPThread(DSP& _dsp, const char* _name = nullptr, std::shared_ptr<DebuggerInterface> _debugger = {}, ThreadPriority _initialPriority = ThreadPriority::Highest, const Callback& _callback = {});
 		~DSPThread();
 		void join();
 		void terminate();
@@ -46,9 +57,16 @@ namespace dsp56k
 
 		DSP& m_dsp;
 		const std::string m_name;
+		const ThreadPriority m_initialPriority;
 
 		std::mutex m_mutex;
+#ifdef _WIN32
 		std::unique_ptr<std::thread> m_thread;
+#else
+		// pthread instead of std::thread so the stack size can be set, see the constructor
+		pthread_t m_thread = {};
+		bool m_threadStarted = false;
+#endif
 
 		bool m_runThread;
 

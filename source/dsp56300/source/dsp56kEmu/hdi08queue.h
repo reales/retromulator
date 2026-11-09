@@ -21,28 +21,47 @@ namespace dsp56k
 
 		void writeHostFlags(uint8_t _flag0, uint8_t _flag1);
 
+		// A host command, in order with the words and host flag changes around it: it waits for the DSP to see the
+		// flag change in front of it, as data words do, and for the DSP to enable host command interrupts (HCIE). The
+		// host does not wait for the DSP to take it: several may be pending, the DSP takes them one after the other
+		// and each vector reads the words written before it from the receive FIFO
+		void writeHostCommand(TWord _vector);
+
+		// By default a host flag change waits until the DSP has read every word in front of it. Some firmware leaves
+		// a word in the receive register that nothing reads, its flag changes waited forever. Off, a flag change
+		// waits only for the DSP to see the one before it
+		void setFlagsWaitForEmptyRx(const bool _wait) { m_flagsWaitForEmptyRx = _wait; }
+
 		void exec();
 
 		void addHDI08(HDI08& _hdi08);
 
 		bool rxEmpty() const;
 
+		// nothing waits in the queue any more: words, flags and host commands all went on to the DSP
+		bool empty() const;
+
 		size_t size() const { return m_hdi08.size(); }
 		HDI08* get(const size_t _index) const { return m_hdi08[_index]; }
 
 	private:
 		bool rxFull() const;
-		bool needsToWaitforHostFlags(uint8_t _flag0, uint8_t _flag1) const;
+		bool hasPendingHostFlags() const;
+		bool hostCommandsBlocked() const;
 		void sendPendingData();
 
 		static constexpr uint8_t HostFlagInvalid = 0xff;
 
-		struct Data
-		{
-			std::vector<TWord> data;
-			uint8_t hostFlag0 = 0;
-			uint8_t hostFlag1 = 0;
-		};
+		// m_dataRX entry encoding: a data word occupies bits 23..0 with bit 31 clear; a host-flag update
+		// carries no data, sets bit 31, and stores HF0 in bit 24 / HF1 in bit 25. Flag changes are queued
+		// as their own ordered entries (instead of being stamped onto the next data word) so a transition
+		// with no data behind it - e.g. an HF1 reboot pulse - is still delivered, and a 1->0 change is
+		// represented exactly instead of being OR-ed into a word that could keep the stale bit set.
+		static constexpr TWord DataMask   = 0x00ffffff;
+		static constexpr TWord FlagUpdate = 0x80000000;
+		static constexpr TWord HostCommand = 0x40000000;	// the vector in bits 23..0
+		static constexpr TWord FlagHf0    = 0x01000000;
+		static constexpr TWord FlagHf1    = 0x02000000;
 
 		std::vector<HDI08*> m_hdi08;
 		std::deque<TWord> m_dataRX;
@@ -50,8 +69,8 @@ namespace dsp56k
 		uint8_t m_lastHostFlag0 = HostFlagInvalid;
 		uint8_t m_lastHostFlag1 = HostFlagInvalid;
 
-		uint32_t m_nextHostFlags = 0;
+		bool m_flagsWaitForEmptyRx = true;
 
-		std::mutex m_mutex;
+		mutable std::mutex m_mutex;
 	};
 }

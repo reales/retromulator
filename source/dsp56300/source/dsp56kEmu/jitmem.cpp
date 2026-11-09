@@ -1,7 +1,9 @@
 #include "jitmem.h"
 
 #include "dsp.h"
+#include "externalbusdevice.h"
 #include "jitblock.h"
+#include "jitblockruntimedata.h"
 #include "jitdspvalue.h"
 #include "jitemitter.h"
 #include "jithelper.h"
@@ -38,6 +40,10 @@ namespace dsp56k
 		const auto p = makePtr(reg, _dst, ByteSize);
 		mov<ByteSize>(p, _src);
 	}
+
+	// used from other translation units (OMR store in the aarch64 helpers), keep explicit instantiations
+	template void Jitmem::mov<4>(void* _dst, const JitRegGP& _src) const;
+	template void Jitmem::mov<8>(void* _dst, const JitRegGP& _src) const;
 
 	void Jitmem::mov(uint64_t& _dst, const JitRegGP& _src) const
 	{
@@ -537,6 +543,16 @@ namespace dsp56k
 
 	void Jitmem::writeDspMemory(const JitRegGP& _offset, const DspValue& _srcX, const DspValue& _srcY) const
 	{
+		// The parallel X:Y write did not honour memoryWritesCallCpp, so it wrote straight to the memory
+		// buffer. Dual moves are the bulk of DSP56300 code, so a debug build asking for writes to go through
+		// C++ silently missed almost all of them. Route both halves through the single-area path, which does.
+		if(m_block.getConfig().memoryWritesCallCpp || g_debugMemoryWrites)
+		{
+			writeDspMemory(MemArea_X, _offset, _srcX);
+			writeDspMemory(MemArea_Y, _offset, _srcY);
+			return;
+		}
+
 		const SkipLabel skip(m_block.asm_());
 
 		if(!hasMmuSupport())
@@ -557,6 +573,15 @@ namespace dsp56k
 	{
 		if (_offset >= m_block.dsp().memory().sizeXY())
 			return noRef();
+
+		// Same gap as the register-offset parallel write above: honour memoryWritesCallCpp here too.
+		if(m_block.getConfig().memoryWritesCallCpp || g_debugMemoryWrites)
+		{
+			writeDspMemory(MemArea_X, _offset, _srcX);
+			if(_offset < m_block.dsp().memory().getBridgedMemoryAddress())
+				writeDspMemory(MemArea_Y, _offset, _srcY);
+			return noRef();
+		}
 
 		auto p = getMemAreaPtr(MemArea_X, _offset, noRef(), false);
 		writeDspMemory(p, _srcX);
@@ -647,8 +672,102 @@ namespace dsp56k
 		_dsp->getPeriph(_area)->write(_offset | 0xff0000, _value);
 	}
 
+	TWord callDSPExternalBusRead(DSP* const _dsp, const TWord _addr)
+	{
+		return _dsp->getExternalBusDevice()->read(_addr);
+	}
+
+	void callDSPExternalBusWrite(DSP* const _dsp, const TWord _addr, const TWord _value)
+	{
+		_dsp->getExternalBusDevice()->write(_addr, _value);
+	}
+
+	void callDSPExecPeripheralsWithinBlock(DSP* const _dsp)
+	{
+		// the interrupt func is the peripherals func only in default processing without a pending interrupt. The
+		// interpreter calls it before every instruction, so it does not run the peripherals in any other state either.
+		if(_dsp->getInterruptFunc() == _dsp->getExecPeripheralsFunc())
+			_dsp->getExecPeripheralsFunc()(_dsp);
+	}
+
+	/*	The interpreter runs the peripherals before every instruction, the trampoline only runs them between blocks, and
+		not at all between blocks that jump to each other directly. Without this, an instruction that accesses a peripheral
+		sees what was due when the chain was entered and misses everything that has happened since, for example a DMA
+		transfer that ends right before the instruction arms the channel again.
+		The block adds its instruction and cycle counts so that they are exact when such an instruction runs, see
+		JitBlock::emit(), so this is the step that the interpreter would have made before the instruction.
+	*/
+	void Jitmem::execPeripheralsWithinBlock() const
+	{
+		m_block.onPeripheralAccess();
+
+		// the interpreter does not run the peripherals between the two instructions of a fast interrupt either. Such a
+		// block may also run outside of the DSP's own processing, as a device that executes one while the DSP is halted
+		const auto* block = m_block.currentJitBlockRuntimeData();
+		if(!block || block->isFastInterrupt())
+			return;
+
+		// mostly nothing is due, and then the block does not leave the generated code
+		const SkipLabel notDue(m_block.asm_());
+		emitPeripheralsDueTest(notDue.get());
+
+		const FuncArg r0(m_block, 0);
+		makeDspPtr(r0);
+		m_block.stack().call(asmjit::func_as_ptr(&callDSPExecPeripheralsWithinBlock));
+	}
+
+	// the same test as the one the trampoline inlines, see JitTrampoline::generateExecLoopFunc
+	void Jitmem::emitPeripheralsDueTest(const asmjit::Label& _notDue) const
+	{
+		auto& a = m_block.asm_();
+		const auto& dsp = m_block.dsp();
+
+		const auto* periphFunc = reinterpret_cast<const void*>(dsp.getExecPeripheralsFunc());
+		const auto* targetClock = dsp.getPeriph(0)->getTargetClockPtr();
+
+		// This runs while an instruction is generated. A register taken from the pool could evict one that the instruction
+		// still holds, so only the scratch register is used - and a second one on AArch64, which cannot compare against
+		// memory, if the pool has one without evicting. Without it, the called function tests on its own.
+		const RegScratch scratch(m_block);
+
+#ifdef HAVE_ARM64
+		if(m_block.gpPool().empty())
+			return;
+
+		const RegGP temp(m_block);
+
+		a.mov(r64(temp), makePtr(temp, &dsp.getInterruptFunc(), sizeof(uint64_t)));
+		a.mov(r64(scratch), asmjit::Imm(periphFunc));
+		a.cmp(r64(temp), r64(scratch));
+		a.jnz(_notDue);
+
+		a.mov(r64(scratch), makePtr(scratch, targetClock, sizeof(uint64_t)));
+		a.mov(r64(temp), makePtr(temp, &dsp.getInstructionCounter(), sizeof(uint64_t)));
+		a.cmp(r64(temp), r64(scratch));
+#else
+		a.mov(r64(scratch), asmjit::Imm(periphFunc));
+		a.cmp(m_block.dspRegPool().makeDspPtr(&dsp.getInterruptFunc(), sizeof(uint64_t)), r64(scratch));
+		a.jnz(_notDue);
+
+		a.mov(r64(scratch), makePtr(scratch, targetClock, sizeof(uint64_t)));
+		a.cmp(m_block.dspRegPool().makeDspPtr(&dsp.getInstructionCounter(), sizeof(uint64_t)), r64(scratch));
+#endif
+		// due once the instruction counter has reached the target clock
+		a.jb(_notDue);
+	}
+
 	void Jitmem::readPeriph(DspValue& _dst, const EMemArea _area, TWord _offset, const Instruction _inst) const
 	{
+		// an absolute address was classified as "not plain memory" while compiling, it is either a
+		// peripheral or an external bus device
+		if(isExternalBusAddress(_offset))
+		{
+			readExternalBus(_dst, _offset);
+			return;
+		}
+
+		execPeripheralsWithinBlock();
+
 		_offset |= 0xff0000;
 
 		auto* periph = m_block.dsp().getPeriph(_area);
@@ -686,6 +805,8 @@ namespace dsp56k
 
 	void Jitmem::readPeriph(DspValue& _dst, const EMemArea _area, const JitReg32& _offset, Instruction _inst) const
 	{
+		execPeripheralsWithinBlock();
+
 		{
 			const FuncArg r0(m_block, 0);
 			const FuncArg r1(m_block, 1);
@@ -737,6 +858,8 @@ namespace dsp56k
 
 	void Jitmem::writePeriph(const EMemArea _area, const JitReg32& _offset, const DspValue& _value) const
 	{
+		execPeripheralsWithinBlock();
+
 		const FuncArg r0(m_block, 0);
 		const FuncArg r1(m_block, 1);
 		const FuncArg r2(m_block, 2);
@@ -768,6 +891,14 @@ namespace dsp56k
 
 	void Jitmem::writePeriph(const EMemArea _area, const TWord& _offset, const DspValue& _value) const
 	{
+		if(isExternalBusAddress(_offset))
+		{
+			writeExternalBus(_offset, _value);
+			return;
+		}
+
+		execPeripheralsWithinBlock();
+
 		const FuncArg r0(m_block, 0);
 		const FuncArg r1(m_block, 1);
 		const FuncArg r2(m_block, 2);
@@ -815,6 +946,104 @@ namespace dsp56k
 			{
 				writePeriph(_area, r32(_offset.get()), _value);
 			}
+		}
+	}
+
+	bool Jitmem::isExternalBusAddress(const TWord _addr) const
+	{
+		const auto& config = m_block.getConfig();
+		return _addr >= config.externalBusBegin && _addr < config.externalBusEnd;
+	}
+
+	void Jitmem::readExternalBus(DspValue& _dst, const TWord _offset) const
+	{
+		{
+			const FuncArg r0(m_block, 0);
+			const FuncArg r1(m_block, 1);
+
+			makeDspPtr(r0);
+			m_block.asm_().mov(r32(r1), asmjit::Imm(_offset));
+
+			m_block.stack().call(asmjit::func_as_ptr(&callDSPExternalBusRead));
+		}
+
+		if (!_dst.isRegValid())
+			_dst.temp(DspValue::Memory);
+
+		m_block.asm_().mov(r32(_dst.get()), r32(regReturnVal));
+	}
+
+	void Jitmem::writeExternalBus(const TWord _offset, const DspValue& _value) const
+	{
+		const FuncArg r0(m_block, 0);
+		const FuncArg r1(m_block, 1);
+		const FuncArg r2(m_block, 2);
+
+		if (_value.isImmediate())
+		{
+			makeDspPtr(r0);
+			m_block.asm_().mov(r32(r2), asmjit::Imm(_value.imm()));
+		}
+		else
+		{
+			auto assignArg = [this](const uint32_t _index, const JitRegGP& _dst, const JitRegGP& _src)
+			{
+				if(_index == 0)
+					makeDspPtr(_dst.as<JitReg64>());
+				else if(r32(_dst) != r32(_src))
+					m_block.asm_().mov(r32(_dst), r32(_src));
+			};
+
+			assignFuncArgs({r0, r2}, {regDspPtr, _value.get()}, assignArg);
+		}
+
+		m_block.asm_().mov(r32(r1), asmjit::Imm(_offset));
+
+		m_block.stack().call(asmjit::func_as_ptr(&callDSPExternalBusWrite));
+	}
+
+	void Jitmem::writeExternalBus(const JitReg32& _offset, const DspValue& _value) const
+	{
+		const FuncArg r0(m_block, 0);
+		const FuncArg r1(m_block, 1);
+		const FuncArg r2(m_block, 2);
+
+		auto assignArg = [this](const uint32_t _index, const JitRegGP& _dst, const JitRegGP& _src)
+		{
+			if(_index == 0)
+				makeDspPtr(_dst.as<JitReg64>());
+			else if(r32(_dst) != r32(_src))
+				m_block.asm_().mov(r32(_dst), r32(_src));
+		};
+
+		if (_value.isImmediate())
+		{
+			assignFuncArgs({r0.get(), r1.get()}, {regDspPtr, _offset.as<JitRegGP>()}, assignArg);
+			m_block.asm_().mov(r32(r2), asmjit::Imm(_value.imm()));
+		}
+		else
+		{
+			assignFuncArgs({r0.get(), r1.get(), r2.get()}, {regDspPtr, _offset.as<JitRegGP>(), _value.get()}, assignArg);
+		}
+
+		m_block.stack().call(asmjit::func_as_ptr(&callDSPExternalBusWrite));
+	}
+
+	void Jitmem::writeExternalBus(const DspValue& _offset, const DspValue& _value) const
+	{
+		if (_offset.isImm24())
+		{
+			writeExternalBus(_offset.imm24(), _value);
+		}
+		else if(JitStackHelper::isFuncArg(_offset.get(), 4))
+		{
+			const RegGP temp(m_block);
+			m_block.asm_().mov(r32(temp), r32(_offset.get()));
+			writeExternalBus(r32(temp), _value);
+		}
+		else
+		{
+			writeExternalBus(r32(_offset.get()), _value);
 		}
 	}
 

@@ -1,4 +1,5 @@
 #include "jitops.h"
+#include "jitdspmode.h"
 
 #include "jitops_move.inl"
 
@@ -10,6 +11,26 @@ namespace dsp56k
 		const auto ea = m_pcCurrentOp + pcRelativeAddressExt<Lra_xxxx>();
 
 		DspValue r(m_block, ea, DspValue::Immediate24);
+		decode_dddddd_write(ddddd, r);
+	}
+
+	void JitOps::op_Lra_Rn(TWord op)
+	{
+		// PC + Rn -> D, PC being the address of the LRA itself. The sum wraps at 24 bits and the CCR is unchanged.
+		const auto rrr = getFieldValue<Lra_Rn, Field_RRR>(op);
+		const auto ddddd = getFieldValue<Lra_Rn, Field_ddddd>(op);
+
+		DspValue r(m_block);
+		m_dspRegs.getR(r, rrr);
+		r.toTemp();
+
+		{
+			const RegGP pc(m_block);
+			m_asm.mov(r32(pc), asmjit::Imm(m_pcCurrentOp));
+			m_asm.add(r32(r), r32(pc));
+		}
+		m_asm.and_(r32(r), asmjit::Imm(0xffffff));
+
 		decode_dddddd_write(ddddd, r);
 	}
 
@@ -440,16 +461,16 @@ namespace dsp56k
 		decode_ddddd_pcr_write(ddddd, r);
 	}
 
-	void JitOps::op_Movem_ea(TWord op)
+	template <Instruction Inst> void JitOps::movem(const TWord op)
 	{
-		const auto write = getFieldValue<Movem_ea, Field_W>(op);
-		const auto dddddd = getFieldValue<Movem_ea, Field_dddddd>(op);
+		const auto write = getFieldValue<Inst, Field_W>(op);
+		const auto dddddd = getFieldValue<Inst, Field_dddddd>(op);
 
 		if (write)
 		{
-			copy24ToDDDDDD<Movem_ea>(op, dddddd, UsePooledTemp, [&](DspValue& r)
+			copy24ToDDDDDD<Inst>(op, dddddd, UsePooledTemp, [&](DspValue& r)
 			{
-				readMem<Movem_ea>(r, op, MemArea_P);
+				readMem<Inst>(r, op, MemArea_P);
 			});
 		}
 		else
@@ -458,8 +479,18 @@ namespace dsp56k
 
 			decode_dddddd_read(r, dddddd);
 
-			writePmem<Movem_ea>(op, r);
+			writePmem<Inst>(op, r);
 		}
+	}
+
+	void JitOps::op_Movem_ea(TWord op)
+	{
+		movem<Movem_ea>(op);
+	}
+
+	void JitOps::op_Movem_aa(TWord op)
+	{
+		movem<Movem_aa>(op);
 	}
 
 	void JitOps::op_Movep_ppea(TWord op)
@@ -505,23 +536,14 @@ namespace dsp56k
 	void JitOps::op_Movep_eapp(TWord op)
 	{
 		// 0000100sW1MMMRRR01pppppp
-		const TWord		pppppp		= getFieldValue<Movep_eapp,Field_pppppp>(op);
-		const EMemArea	periphArea	= getFieldValue<Movep_eapp,Field_s>(op) ? MemArea_Y : MemArea_X;
-		const auto		write		= getFieldValue<Movep_eapp,Field_W>(op);
+		const EMemArea periphArea = getFieldValue<Movep_eapp,Field_s>(op) ? MemArea_Y : MemArea_X;
+		movep_Pea<Movep_eapp>(op, periphArea, getFieldValue<Movep_eapp,Field_pppppp>(op) + 0xffffc0);
+	}
 
-		DspValue v(m_block);
-
-		if(write)
-		{
-			readMem<Movep_eapp>(v, op, MemArea_P);
-			m_block.mem().writePeriph(periphArea, pppppp + 0xffffc0, v);
-		}
-		else
-		{
-			m_block.mem().readPeriph(v, periphArea, pppppp + 0xffffc0, Movep_eapp);
-
-			writePmem<Movep_eapp>(op, v);
-		}
+	void JitOps::op_Movep_eaqq(TWord op)
+	{
+		// 000000001WMMMRRR0Sqqqqqq
+		movep_Pea<Movep_eaqq>(op, getFieldValueMemArea<Movep_eaqq>(op), getFieldValue<Movep_eaqq,Field_qqqqqq>(op) + 0xffff80);
 	}
 
 	void JitOps::op_Movep_SXqq(TWord op)
@@ -558,6 +580,14 @@ namespace dsp56k
 
 	void JitOps::copy24ToDDDDDD(const TWord _dddddd, const bool _usePooledTemp, const std::function<void(DspValue&)>& _readCallback, bool _readReg)
 	{
+		const auto registerIndex = _dddddd & 0x3f;
+		if(registerIndex == 0x0e || registerIndex == 0x0f)
+		{
+			DspValue source(m_block, _usePooledTemp);
+			_readCallback(source);
+			transfer24ToAlu(registerIndex - 0x0e, source);
+			return;
+		}
 		DspValue writeRef = decode_dddddd_ref(_dddddd, _readReg, true);
 
 		if(writeRef.isRegValid() && writeRef.getBitCount() == 56)

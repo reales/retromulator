@@ -50,6 +50,9 @@ namespace dsp56k
 
 		enum AddressesY
 		{
+			M_PCRE    = 0xFFFF9F, // Port E GPIO Control Register (the pins of ESAI_1)
+			M_PRRE    = 0xFFFF9E, // Port E Direction Register
+			M_PDRE    = 0xFFFF9D, // Port E GPIO Data Register
 			M_RSMB_1  = 0xFFFF9C, // ESAI_1 Receive Slot Mask Register B (RSMB)
 			M_RSMA_1  = 0xFFFF9B, // ESAI_1 Receive Slot Mask Register A (RSMA)
 			M_TSMB_1  = 0xFFFF9A, // ESAI_1 Transmit Slot Mask Register B (TSMB)
@@ -270,11 +273,16 @@ namespace dsp56k
 		void reset();
 		void setDSP(DSP* _dsp);
 
+		// The DSP has one DMA controller. ESAI_1 of a 56367 sits in the Y peripherals while the DMA sits
+		// in the X ones, so it is handed over once both exist.
+		void setDma(Dma* _dma) { m_dma = _dma; }
+
 		void execTX() override;
 		void execRX() override;
 
 		TWord hasEnabledTransmitters() const override { return getEnabledTransmitters(); }
 		TWord hasEnabledReceivers() const override { return getEnabledReceivers(); }
+		bool hasPendingInterrupts() const override;
 
 		uint32_t getTransmitFrameSync() const
 		{
@@ -314,6 +322,11 @@ namespace dsp56k
 			return m_tccr;
 		}
 
+		TWord readControlRegister() const
+		{
+			return m_cr;
+		}
+
 		void writeReceiveControlRegister(TWord _val);
 
 		void writeTransmitControlRegister(TWord _val);
@@ -323,12 +336,14 @@ namespace dsp56k
 		void writeControlRegister(TWord _val)
 		{
 			LOG("Write ESAI CR " << HEX(_val));
-			m_cr = _val;
+			// bits 3-5 and 9-23 are reserved and read as zero (56362 UM 8.3.5.4)
+			m_cr = _val & ((1 << M_ALC) | (1 << M_TEBE) | (1 << M_SYN) | (1 << M_OF2) | (1 << M_OF1) | (1 << M_OF0));
 		}
 
 		void writeReceiveClockControlRegister(TWord _val);
 
 		void writeTX(uint32_t _index, TWord _val);
+		void writeTSR();
 		TWord readRX(uint32_t _index);
 
 		TWord readTSMA() const
@@ -359,6 +374,10 @@ namespace dsp56k
 		static void setSymbols(Disassembler& _disasm, EMemArea _area);
 
 		EMemArea getMemArea() const { return m_area; }
+
+		// ESAI_1 of a DSP56367 is the one mapped into Y memory; it has its own interrupt vectors and its
+		// own pair of DMA request sources
+		bool isEsai1() const { return m_area == MemArea_Y; }
 
 		uint32_t getTxFrameCounter() const { return m_txFrameCounter; }
 
@@ -436,7 +455,7 @@ namespace dsp56k
 		IPeripherals& m_periph;
 		const EMemArea m_area;
 		const TWord m_vba;							// base address for interrupts differs between ESAI and ESAI_1 (on DSP 56367)
-		Dma* const m_dma;
+		Dma* m_dma;									// ESAI_1 lives in the Y peripherals and is wired to the DMA of the X ones, see setDma
 		Bitfield<uint32_t, SrBits, 18> m_sr;		// status register
 		TWord m_cr = 0;								// control register
 
@@ -453,9 +472,11 @@ namespace dsp56k
 		RxFrame m_rxFrame;
 		
 		uint32_t m_writtenTX = 0;
+		bool m_tsrWritten = false;					// the next slot is not transmitted, see writeTSR
 		uint32_t m_readRX = 0;
 		uint32_t m_txSlotCounter = 0;
 		uint32_t m_txFrameCounter = 0;
+		uint32_t m_txUnderrunSlots = 0;				// bit per transmit slot that underran when it was last sent
 		uint32_t m_rxSlotCounter = 0;
 		uint32_t m_rxFrameCounter = 0;
 

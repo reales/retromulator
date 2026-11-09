@@ -2,6 +2,7 @@
 
 namespace dsp56k
 {
+
 	HDI08Queue::HDI08Queue() = default;
 
 	void HDI08Queue::writeRX(const std::vector<TWord>& _data)
@@ -19,11 +20,8 @@ namespace dsp56k
 
 		std::lock_guard lock(m_mutex);
 
-		m_dataRX.push_back(_data[0] | m_nextHostFlags);
-		m_nextHostFlags = 0;
-
-		for(size_t i=1; i<_count; ++i)
-			m_dataRX.push_back(_data[i]);
+		for(size_t i=0; i<_count; ++i)
+			m_dataRX.push_back(_data[i] & DataMask);
 
 		sendPendingData();
 	}
@@ -38,9 +36,24 @@ namespace dsp56k
 		m_lastHostFlag0 = _flag0;
 		m_lastHostFlag1 = _flag1;
 
-		m_nextHostFlags |= static_cast<TWord>(_flag0) << 24;
-		m_nextHostFlags |= static_cast<TWord>(_flag1) << 25;
-		m_nextHostFlags |= 0x80000000;
+		TWord entry = FlagUpdate;
+		if(_flag0)
+			entry |= FlagHf0;
+		if(_flag1)
+			entry |= FlagHf1;
+
+		m_dataRX.push_back(entry);
+
+		sendPendingData();
+	}
+
+	void HDI08Queue::writeHostCommand(const TWord _vector)
+	{
+		std::lock_guard lock(m_mutex);
+
+		m_dataRX.push_back(HostCommand | (_vector & DataMask));
+
+		sendPendingData();
 	}
 
 	void HDI08Queue::exec()
@@ -54,6 +67,12 @@ namespace dsp56k
 	{
 		std::lock_guard lock(m_mutex);
 		m_hdi08.push_back(&_hdi08);
+	}
+
+	bool HDI08Queue::empty() const
+	{
+		std::lock_guard lock(m_mutex);
+		return m_dataRX.empty();
 	}
 
 	bool HDI08Queue::rxEmpty() const
@@ -79,11 +98,21 @@ namespace dsp56k
 		return false;
 	}
 
-	bool HDI08Queue::needsToWaitforHostFlags(uint8_t _flag0, uint8_t _flag1) const
+	inline bool HDI08Queue::hostCommandsBlocked() const
 	{
 		for (const auto* hdi08 : m_hdi08)
 		{
-			if(hdi08->needsToWaitForHostFlags(_flag0, _flag1))
+			if(!hdi08->hostCommandInterruptEnabled() || hdi08->hostCommandsFull())
+				return true;
+		}
+		return false;
+	}
+
+	inline bool HDI08Queue::hasPendingHostFlags() const
+	{
+		for (const auto* hdi08 : m_hdi08)
+		{
+			if(hdi08->hasPendingHostFlags01())
 				return true;
 		}
 		return false;
@@ -91,26 +120,65 @@ namespace dsp56k
 
 	void HDI08Queue::sendPendingData()
 	{
-		while(!m_dataRX.empty() && !rxFull())
+		while(!m_dataRX.empty())
 		{
 			auto d = m_dataRX.front();
 
-			if(d & 0x80000000)
+			if(d & FlagUpdate)
 			{
-				const auto hostFlag0 = static_cast<uint8_t>((d >> 24) & 1);
-				const auto hostFlag1 = static_cast<uint8_t>((d >> 25) & 1);
+				// Deliver the flag change through the pending-host-flags latch (applied when the DSP next
+				// reads its status register) and refuse to move on to the next flag until the DSP has
+				// consumed this one. This preserves flag PULSES: firmware announces an address by pulsing
+				// HF0 1->0, and the DSP has to catch the HF0=1 edge on one of its own reads (it raises HF3
+				// in response). Writing flags straight to the register, or overwriting a pending value the
+				// DSP has not read yet, collapses the pulse and the DSP never enters its address-receive
+				// state. Non-blocking: if the previous flag is still pending we leave this entry in place
+				// and retry on the next exec().
+				// Defer the flag change while (a) the previous flag is still pending (the DSP has not observed
+				// it yet - preserves the pulse) or (b) the DSP still has unread words in its RX from the
+				// previous phase (changing the flag now would re-tag those words - this is the old "wait for
+				// RX empty" guard). Retry on the next exec() (a DSP read pumps us via the callbacks).
+				bool defer = false;
+				for (auto* hdi08 : m_hdi08)
+				{
+					if(hdi08->hasPendingHostFlags01() || (m_flagsWaitForEmptyRx && hdi08->hasRXData()))
+					{
+						defer = true;
+						break;
+					}
+				}
+				if(defer)
+					break;
 
-				if(needsToWaitforHostFlags(hostFlag0, hostFlag1))
+				const uint32_t hf01 =
+					(((d & FlagHf0) ? 1u : 0u) << HDI08::HSR_HF0) |
+					(((d & FlagHf1) ? 1u : 0u) << HDI08::HSR_HF1);
+
+				for (auto* hdi08 : m_hdi08)
+					hdi08->setPendingHostFlags01(hf01);
+			}
+			else if(d & HostCommand)
+			{
+				// Waits like a data word for the flag change in front of it. Without HCIE the chip holds it pending, a
+				// full queue of external interrupts would block this thread, which may be the one to drain it
+				if(hasPendingHostFlags() || hostCommandsBlocked())
 					break;
 
 				for (auto* hdi08 : m_hdi08)
-					hdi08->setHostFlagsWithWait(hostFlag0, hostFlag1);
-
-				d &= 0xffffff;
+					hdi08->injectHostCommand(d & DataMask);
 			}
+			else
+			{
+				// A data word waits until the DSP has seen the flag change in front of it, just as the host waits
+				// for the DSP to answer that change before it sends the word. Delivered earlier, the word can reach
+				// the receive register while the DSP is still reacting to the flag, for example while a DMA channel
+				// that the DSP disarms in its answer is still armed, and that channel then takes the word as data.
+				if(rxFull() || hasPendingHostFlags())
+					break;
 
-			for (auto* hdi08 : m_hdi08)
-				hdi08->writeRX(&d, 1);
+				for (auto* hdi08 : m_hdi08)
+					hdi08->writeRX(&d, 1);
+			}
 
 			m_dataRX.pop_front();
 		}

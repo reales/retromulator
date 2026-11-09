@@ -1,6 +1,7 @@
 #include "esaiclock.h"
 
 #include <ios>
+#include <limits>
 
 #include "dsp.h"
 #include "dsp56kBase/logging.h"
@@ -16,10 +17,51 @@ namespace dsp56k
 
 	uint32_t EsxiClock::exec() noexcept
 	{
-		const auto diff = *m_dspInstructionCounter - m_lastClock;
+		if(!m_enabled)
+			return std::numeric_limits<uint32_t>::max();
+
+		// DSP::resetHW starts the counter over. The time since the last slot would come out negative, a huge unsigned
+		// number, and serving every slot that is "due" by then would never end. The clock starts over with the counter
+		if(*m_dspInstructionCounter < m_lastClock)
+			m_lastClock = *m_dspInstructionCounter;
+
+		auto diff = *m_dspInstructionCounter - m_lastClock;
 
 		if(diff < m_cyclesPerSample)
-			return (static_cast<uint32_t>(m_cyclesPerSample - diff)) >> static_cast<uint32_t>(m_clockSource);	// see explanation at end of this func
+			return instructionsForCycles(static_cast<uint32_t>(m_cyclesPerSample - diff));
+
+		/*	A clock that is behind serves its slots back to back (see the end of this function), where the chip has a slot
+			period between two of them. The DSP takes the request of one slot before the next one starts unless it masks
+			interrupts for that long. Back to back, a few masked instructions are enough, and the request that the next
+			slot raises while the previous one still waits is lost (DSP::injectInterrupt, one pending flag per source).
+			Firmware that counts its slots by its interrupts falls out of step then. The Virus B runs one transmit
+			interrupt per slot through a buffer of alternating left and right words, and a patch change, whose DO loop
+			kept the peripherals from running for a dozen slots, swapped its channels.
+
+			So a slot waits while the DSP has not taken a request that one of the interfaces raised less than a slot period
+			ago. A request that waits for longer than that waits because the firmware masks interrupts for that long, and
+			the next one joins it, as on the chip.
+
+			The wait is one tick of this clock at most, which is a slot period only for an interface with divider 0. An
+			interface with a divider has (divider + 1) ticks per slot and can still lose a request when a masked section
+			in a backlog lasts longer than a tick but not a slot, see EMU-141.
+		*/
+		std::array<bool, MaxEsais> pending{};
+
+		// Outside of a masked phase the DSP has taken every request by the time the peripherals run again, so the
+		// interfaces only need to be asked while one waits
+		const auto anyPending = m_periph.getDSP().hasPendingInterrupts();
+
+		if(anyPending)
+		{
+			for(size_t i=0; i<m_esais.size(); ++i)
+			{
+				pending[i] = m_esais[i].esai->hasPendingInterrupts();
+
+				if(pending[i] && *m_dspInstructionCounter - m_esais[i].requestTime < m_cyclesPerSample)
+					return 0;
+			}
+		}
 
 		m_lastClock += m_cyclesPerSample;
 
@@ -50,16 +92,78 @@ namespace dsp56k
 		for(size_t i=0; i<txCount; ++i) processTx[i]->execTX();
 		for(size_t i=0; i<rxCount; ++i) processRx[i]->execRX();
 
+		// The time of a request that this slot raised, not of one that joined an older one. With nothing pending before,
+		// whatever is pending now is new, and the time of an interface that raised nothing is never looked at
+		for(size_t i=0; i<m_esais.size(); ++i)
+		{
+			if(!anyPending || (!pending[i] && m_esais[i].esai->hasPendingInterrupts()))
+				m_esais[i].requestTime = *m_dspInstructionCounter;
+		}
+
+		if(m_tickCallback)
+			m_tickCallback();
+
+		// Behind by a whole slot or more: ask to be called again right away. One slot is still served per call,
+		// so the DSP keeps its chance to run - and to refill a transmit register - between two of them.
 		if(diff >= (m_cyclesPerSample<<1))
 			return 0;
 
 		const auto delay = static_cast<uint32_t>((m_cyclesPerSample << 1) - diff);
 
-		// if the clock source is not instructions but cycles, we will miss frames if we return the cycle delay here because
-		// peripherals are processed via instruction counts. Return only half of the cycles in this case
-		static_assert(static_cast<uint32_t>(ClockSource::Instructions) == 0);
-		static_assert(static_cast<uint32_t>(ClockSource::Cycles) == 1);
-		return delay >> static_cast<uint32_t>(m_clockSource);
+		return instructionsForCycles(delay);
+	}
+
+	/*	The DSP paces its peripherals by the instruction counter, so a clock that counts cycles has to convert its
+		delay. The ratio is not fixed - regular code runs about three cycles per instruction and a loop that polls a
+		peripheral register runs far more - so it is measured over the interval since the last call instead of
+		assumed to be two. Assuming two returned a deadline about one and a half times too long, the DSP overran it
+		by that much, and a clock that found itself a slot behind caught up at the speed of the DSP: two slots ran
+		an instruction apart. Firmware that writes its transmit register right after it sees the frame sync and then
+		arms a DMA channel for the rest of the frame found the frame moved on in between and sent its whole stream
+		one slot late, on a few percent of boots.
+
+		The estimate is rounded to be early rather than late, so the clock is served on the instruction its slot
+		belongs to or slightly before, never after.
+	*/
+	uint32_t EsxiClock::instructionsForCycles(const uint32_t _cycles) noexcept
+	{
+		if(m_clockSource == ClockSource::Instructions)
+			return _cycles;
+
+		const auto& dsp = m_periph.getDSP();
+
+		const auto instructions = dsp.getInstructionCounter();
+
+		// DSP::resetHW starts both counters over. The deltas below would wrap and the ratio come out of two
+		// numbers that are each nearly the whole range, which is any value at all - measured once as a full
+		// cycle per instruction, which is the deadline three times too long that this conversion exists to
+		// avoid. Start the measurement over with the counters. The reciprocal keeps its last measured value
+		// rather than falling back to the assumption of two: the DSP runs the same code after a reset, and a
+		// window later it is measured again either way.
+		if(instructions < m_ratioInstructions)
+		{
+			m_ratioInstructions = instructions;
+			m_ratioCycles = dsp.getCycles();
+		}
+
+		const auto deltaInstructions = instructions - m_ratioInstructions;
+
+		// This runs for every slot, so the ratio is measured over a window and kept as a reciprocal: what is left
+		// per call is a multiply. The window also keeps the estimate out of the noise of a single instruction.
+		if(deltaInstructions >= g_ratioWindow)
+		{
+			const auto cycles = dsp.getCycles();
+			const auto deltaCycles = cycles - m_ratioCycles;
+
+			m_ratioInstructions = instructions;
+			m_ratioCycles = cycles;
+
+			// round the ratio up and its reciprocal down, so the estimate never claims the DSP is slower than it is
+			const auto cyclesPerInstruction = std::max(static_cast<uint64_t>(1), (deltaCycles + deltaInstructions - 1) / deltaInstructions);
+			m_instructionsPerCycle = static_cast<uint32_t>((1u << g_ratioShift) / cyclesPerInstruction);
+		}
+
+		return static_cast<uint32_t>((static_cast<uint64_t>(_cycles) * m_instructionsPerCycle) >> g_ratioShift);
 	}
 
 	void EsxiClock::setPCTL(const TWord _val)
@@ -159,8 +263,10 @@ namespace dsp56k
 			if(!m_pctl)
 				return;
 
+			// PCTL field layout, see the DSP56300 family manual figure 6-4: bits 23-20 are PD[3-0],
+			// 19-16 are COD, PEN, PSTP and XTLD, 14-12 are DF[2-0] and 11-0 are MF[11-0].
 			const auto pd = ((m_pctl >> 20) & 15) + 1;
-			const auto df = 1 << ((m_pctl >> 12) & 3);
+			const auto df = 1 << ((m_pctl >> 12) & 7);	// three bits: the LPD divides by 2^0 to 2^7
 			const auto mf = (m_pctl & 0xfff) + 1;
 
 			m_speedHz = static_cast<uint64_t>(m_externalClockFrequency) * static_cast<uint64_t>(mf) / (static_cast<uint64_t>(pd) * static_cast<uint64_t>(df));
@@ -250,63 +356,7 @@ namespace dsp56k
 	{
 	}
 
-	template<bool ExpectedResult>
-	TWord EsaiClock::getRemainingInstructionsForTransmitFrameSync() const
-	{
-		if (static_cast<bool>(static_cast<Esai*>(getEsais().front().esai)->getTransmitFrameSync()) == ExpectedResult)
-		{
-			// already reached the desired value
-			return 0;
-		}
-
-		return getRemainingInstructionsForFrameSync();
-	}
-
-	template<bool ExpectedResult>
-	TWord EsaiClock::getRemainingInstructionsForReceiveFrameSync() const
-	{
-		if (static_cast<bool>(static_cast<Esai*>(getEsais().front().esai)->getReceiveFrameSync()) == ExpectedResult)
-		{
-			// already reached the desired value
-			return 0;
-		}
-
-		return getRemainingInstructionsForFrameSync();
-	}
-
 	EssiClock::EssiClock(Peripherals56303& _peripherals) : EsxiClock(_peripherals)
 	{
 	}
-
-	template<bool ExpectedResult>
-	TWord EssiClock::getRemainingInstructionsForTransmitFrameSync(uint32_t _esaiIndex) const
-	{
-		if (static_cast<Essi*>(getEsais()[_esaiIndex].esai)->getTransmitFrameSync() == ExpectedResult)
-		{
-			// already reached the desired value
-			return 0;
-		}
-		return getRemainingInstructionsForFrameSync();
-	}
-
-	template<bool ExpectedResult>
-	TWord EssiClock::getRemainingInstructionsForReceiveFrameSync(uint32_t _esaiIndex) const
-	{
-		if (static_cast<Essi*>(getEsais()[_esaiIndex].esai)->getReceiveFrameSync() == ExpectedResult)
-		{
-			// already reached the desired value
-			return 0;
-		}
-		return getRemainingInstructionsForFrameSync();
-	}
-
-	template TWord EssiClock::getRemainingInstructionsForTransmitFrameSync<true>(uint32_t) const;
-	template TWord EssiClock::getRemainingInstructionsForTransmitFrameSync<false>(uint32_t) const;
-	template TWord EssiClock::getRemainingInstructionsForReceiveFrameSync<true>(uint32_t) const;
-	template TWord EssiClock::getRemainingInstructionsForReceiveFrameSync<false>(uint32_t) const;
-
-	template TWord EsaiClock::getRemainingInstructionsForTransmitFrameSync<true>() const;
-	template TWord EsaiClock::getRemainingInstructionsForTransmitFrameSync<false>() const;
-	template TWord EsaiClock::getRemainingInstructionsForReceiveFrameSync<true>() const;
-	template TWord EsaiClock::getRemainingInstructionsForReceiveFrameSync<false>() const;
 }

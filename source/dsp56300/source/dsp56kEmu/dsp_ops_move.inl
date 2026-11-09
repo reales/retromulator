@@ -329,25 +329,29 @@ namespace dsp56k
 		const TWord ddddd		= getFieldValue<Movec_xx,Field_DDDDD>(op);
 		decode_ddddd_pcr_write( ddddd, TReg24(iiiiiiii) );
 	}
-	inline void DSP::op_Movem_ea(const TWord op)
+	template <Instruction Inst> void DSP::movem(const TWord op)
 	{
-		const auto	write	= getFieldValue<Movem_ea,Field_W>(op);
-		const TWord dddddd	= getFieldValue<Movem_ea,Field_dddddd>(op);
+		const auto	write	= getFieldValue<Inst,Field_W>(op);
+		const TWord dddddd	= getFieldValue<Inst,Field_dddddd>(op);
 
 		if( write )
 		{
-			const auto m = readMem<Movem_ea>(op, MemArea_P);
+			const auto m = readMem<Inst>(op, MemArea_P);
 			decode_dddddd_write( dddddd, TReg24(m));
 		}
 		else
 		{
-			const TWord ea = effectiveAddress<Movem_ea>(op);
+			const TWord ea = effectiveAddress<Inst>(op);
 			memWriteP(ea, decode_dddddd_read(dddddd).toWord() );
 		}
 	}
+	inline void DSP::op_Movem_ea(const TWord op)
+	{
+		movem<Movem_ea>(op);
+	}
 	inline void DSP::op_Movem_aa(const TWord op)
 	{
-		errNotImplemented("MOVE(M) S,P:aa");
+		movem<Movem_aa>(op);
 	}
 	inline void DSP::op_Movep_ppea(const TWord op)
 	{
@@ -359,16 +363,24 @@ namespace dsp56k
 
 		const TWord ea		= effectiveAddress<Movep_ppea>(op);
 
+		// The ea side may address a peripheral too, as with readMem/writeMem and in the JIT: firmware loads DMA offset
+		// registers with movep x:<<M_HORX,x:(r0) and r0 at DOR0 (helica1, dsp56300 PR #15)
 		if( write )
 		{
 			// TODO: remove the if here, use helper templates instead
 			if( mmmrrr == MMMRRR_ImmediateData )
 				memWritePeriphFFFFC0( s, pp, ea );
 			else
-				memWritePeriphFFFFC0( s, pp, memRead( S, ea ) );
+				memWritePeriphFFFFC0( s, pp, isPeripheralAddress(ea) ? memReadPeriph( S, ea, Movep_ppea ) : memRead( S, ea ) );
 		}
 		else
-			memWrite( S, ea, memReadPeriphFFFFC0( s, pp, Movep_ppea) );
+		{
+			const auto value = memReadPeriphFFFFC0( s, pp, Movep_ppea);
+			if( isPeripheralAddress(ea) )
+				memWritePeriph( S, ea, value );
+			else
+				memWrite( S, ea, value );
+		}
 	}
 	inline void DSP::op_Movep_Xqqea(const TWord op)
 	{
@@ -405,22 +417,26 @@ namespace dsp56k
 			writeMem<Movep_Yqqea>(op, memReadPeriphFFFF80( area, qAddr, Movep_Yqqea ));
 		}
 	}
+	template <Instruction Inst> void DSP::movep_Pea(const TWord op, const EMemArea _periphArea, const TWord _periphAddress)
+	{
+		const auto	write	= getFieldValue<Inst,Field_W>(op);
+		const auto	ea		= effectiveAddress<Inst>(op);
+
+		if(write)
+			memWritePeriph(_periphArea, _periphAddress, memRead(MemArea_P, ea));
+		else
+			memWriteP(ea, memReadPeriph(_periphArea, _periphAddress, Inst));
+	}
 	inline void DSP::op_Movep_eapp(const TWord op)
 	{
 		// 0000100sW1MMMRRR01pppppp
-		const TWord		pppppp		= getFieldValue<Movep_eapp,Field_pppppp>(op);
-		const EMemArea	periphArea	= getFieldValue<Movep_eapp,Field_s>(op) ? MemArea_Y : MemArea_X;
-		const auto		write		= getFieldValue<Movep_eapp,Field_W>(op);
-		const auto		ea			= effectiveAddress<Movep_ppea>(op);
-
-		if(write)
-			memWritePeriphFFFFC0(periphArea, pppppp, memRead(MemArea_P, ea));
-		else
-			memWriteP(ea, memReadPeriphFFFFC0(periphArea, pppppp, Movep_eapp));
+		const EMemArea periphArea = getFieldValue<Movep_eapp,Field_s>(op) ? MemArea_Y : MemArea_X;
+		movep_Pea<Movep_eapp>(op, periphArea, getFieldValue<Movep_eapp,Field_pppppp>(op) + 0xffffc0);
 	}
 	inline void DSP::op_Movep_eaqq(const TWord op)
 	{
-		errNotImplemented("MOVE");
+		// 000000001WMMMRRR0Sqqqqqq
+		movep_Pea<Movep_eaqq>(op, getFieldValueMemArea<Movep_eaqq>(op), getFieldValue<Movep_eaqq,Field_qqqqqq>(op) + 0xffff80);
 	}
 	inline void DSP::op_Movep_Spp(const TWord op)
 	{

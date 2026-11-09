@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <map>
 #include <set>
 
@@ -13,6 +15,10 @@ namespace dsp56kDebugger
 		StyledTextCtrl(wxWindow* _parent, wxStandardID _id, const wxPoint& _pos, const wxSize& _size);
 
 		bool isFocused() const;
+
+		// this one had the focus last of all StyledTextCtrls, also while a dialog has it
+		bool isLastFocused() const;
+
 	protected:
 		void setLineCount(uint32_t _count);
 		void replaceLines(int _line, const std::vector<std::string>& _lines);
@@ -29,6 +35,9 @@ namespace dsp56kDebugger
 		bool hasBookmark(int line) const;
 		void markerDefineBookmark(int _markerNumber);
 
+		// the last focused one until a StyledTextCtrl had the focus
+		void setAsDefaultFocus();
+
 	private:
 		void onSetFocus(wxFocusEvent&);
 		void onLoseFocus(wxFocusEvent&);
@@ -39,6 +48,8 @@ namespace dsp56kDebugger
 		std::set<int> m_bookmarks;
 
 		bool m_focused = false;
+
+		static StyledTextCtrl* s_lastFocused;
 
 		wxDECLARE_EVENT_TABLE();
 	};

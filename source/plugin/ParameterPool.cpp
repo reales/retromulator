@@ -848,7 +848,7 @@ namespace retromulator
             }
             else if(map && map->type == SynthType::DX7)
             {
-                // Yamaha voice parameter change; the device patches in its RX channel
+                // Yamaha voice parameter change; the device moves it to channel 1
                 ev.sysex = {0xf0, 0x43, 0x10, hi, lo, value, 0xf7};
             }
             else if(map && map->type == SynthType::Emu88)

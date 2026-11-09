@@ -61,8 +61,6 @@ namespace dsp56k
 				{XIO_IPRP, "M_IPRP"},
 				{XIO_IPRC, "M_IPRC"},
 
-				{0xFFFF90, "M_HCKR"},	// SHI Clock Control Register (HCKR)
-				{0xFFFF91, "M_HCSR"},	// SHI Control/Status Register (HCSR)
 			};
 
 			for (const auto& symbol : symbols)
@@ -112,8 +110,16 @@ namespace dsp56k
 
 	void IPeripherals::setDelayCycles(const uint32_t _delayCycles) noexcept
 	{
-		m_delayCycles = std::min(m_delayCycles, _delayCycles);
-		m_targetClock = m_dsp->getInstructionCounter() + m_delayCycles;
+		/*	A deadline may only move closer. The one that is set belongs to the peripheral that asked to run at that
+			instruction count, and carrying the remaining delay over to now would postpone it by everything that ran in
+			between. The ESAI is the one that suffers: its deadline is the next slot, and a caller in the middle of a
+			slot used to push it a full slot into the future, so the DSP read status flags of a slot that was over.
+		*/
+		// Pacing hint only (advisory); atomic-relaxed so a concurrent DSP-thread read is torn-free, ordering irrelevant.
+		const auto target = m_dsp->getInstructionCounter() + _delayCycles;
+
+		if(target < m_targetClock.load(std::memory_order_relaxed))
+			m_targetClock.store(target, std::memory_order_relaxed);
 	}
 
 	// _____________________________________________________________________________
@@ -370,7 +376,9 @@ namespace dsp56k
 
 	void Peripherals56303::terminate()
 	{
-		m_hi08.terminate();
+		// Not the HI08: the DSP never waits for host data, an empty receive register reads 0. Filling the receive FIFO
+		// made the DSP, which runs until its thread sees the request, take thousands of words that no host sent. The XT
+		// stores host words into a 32 word buffer by interrupt, and they overwrote the code pointer that follows it
 		m_essi0.terminate();
 		m_essi1.terminate();
 	}
@@ -382,12 +390,20 @@ namespace dsp56k
 	, m_esaiClock(*this)
 	, m_esai(*this, MemArea_X, &m_dma)
 	, m_hdi08(*this)
+	, m_shi(*this)
+	, m_dax(*this)
 	, m_timers(*this, Vba_TIMER0_Compare)
 	, m_disableTimers(false)
+	, m_deviceId(0x362)
 	{
 		m_esaiClock.setEsaiDivider(&m_esai, 0);
 		if(_peripherals56367)
+		{
 			m_esaiClock.setEsaiDivider(&_peripherals56367->getEsai(), 0);
+			// one DMA controller for both ESAIs, see Esai::setDma
+			_peripherals56367->getEsai().setDma(&m_dma);
+			m_peripherals56367 = _peripherals56367;
+		}
 	}
 
 	TWord Peripherals56362::read(const TWord _addr, const Instruction _inst)
@@ -404,6 +420,7 @@ namespace dsp56k
 		case Esai::M_RCR:	return m_esai.readReceiveControlRegister();
 		case Esai::M_RCCR:	return m_esai.readReceiveClockControlRegister();
 		case Esai::M_SAISR:	return m_esai.readStatusRegister();
+		case Esai::M_SAICR:	return m_esai.readControlRegister();
 		case Esai::M_TCR:	return m_esai.readTransmitControlRegister();
 		case Esai::M_TCCR:	return m_esai.readTransmitClockControlRegister();
 		case Esai::M_RX0:
@@ -439,15 +456,27 @@ namespace dsp56k
 		case 0xffffff:
 		case 0xfffffe:
 			return m_mem[_addr - XIO_Reserved_High_First];
-		case 0xFFFF93:			// SHI__HTX
-		case 0xFFFF94:			// SHI__HRX
-//			LOG("Read from " << HEX(_addr));
-			return 0;	//m_mem[_addr - XIO_Reserved_High_First];	// There is nothing connected.
+		case SHI::HCKR:
+		case SHI::HCSR:
+		case SHI::HSAR:
+		case SHI::HTX:
+		case SHI::HRX:
+			return m_shi.read(_addr);
+
+		case DAX::XCTR:
+		case DAX::XNADR:
+		case DAX::XADRA:
+		case DAX::XADRB:
+		case DAX::XSTR:
+		case DAX::PDRD:
+		case DAX::PRRD:
+		case DAX::PCRD:
+			return m_dax.read(_addr);
 
 //		case XIO_DSTR:					// DMA status reg
 //			return 0x3f;
 		case XIO_IDR:					// ID Register
-			return 0x362;
+			return m_deviceId;
 
 		case M_AAR0:
 		case M_AAR1:
@@ -587,12 +616,23 @@ namespace dsp56k
 		case Timers::M_TPLR:		m_timers.writeTPLR	(_val);		return;		// TIMER Prescaler Load Register
 		case Timers::M_TPCR:		m_timers.writeTPCR	(_val);		return;		// TIMER Prescalar Count Register
 		
-		case 0xFFFF91:			// SHI__HCSR
+		case SHI::HCKR:
+		case SHI::HCSR:
+		case SHI::HSAR:
+		case SHI::HTX:
+		case SHI::HRX:
+			m_shi.write(_addr, _val);
 			return;
-		case 0xFFFF93:			// SHI__HTX
-		case 0xFFFF94:			// SHI__HRX
-//			LOG("Write to " << HEX(_addr) << ": " << HEX(_val));
-//			m_mem[_addr - XIO_Reserved_High_First] = _val;	// Do not write!
+
+		case DAX::XCTR:
+		case DAX::XNADR:
+		case DAX::XADRA:
+		case DAX::XADRB:
+		case DAX::XSTR:
+		case DAX::PDRD:
+		case DAX::PRRD:
+		case DAX::PCRD:
+			m_dax.write(_addr, _val);
 			return;
 
 		case Esai::M_SAISR:			m_esai.writestatusRegister(_val);					return;
@@ -607,6 +647,7 @@ namespace dsp56k
 		case Esai::M_TX3:
 		case Esai::M_TX4:
 		case Esai::M_TX5:			m_esai.writeTX(_addr - Esai::M_TX0, _val);			return;
+		case Esai::M_TSR:			m_esai.writeTSR();									return;
 		case Esai::M_TSMA:			m_esai.writeTSMA(_val);								return;
 		case Esai::M_TSMB:			m_esai.writeTSMB(_val);								return;
 		case Esai::M_RSMA:			m_esai.writeRSMA(_val);								return;
@@ -654,8 +695,6 @@ namespace dsp56k
 
 //		case XIO_DSTR: m_dma.setDSTR(_val); return;		// DMA Status Register is read only
 
-		case 0xffffd2:	// DAX audio data register A
-			return;
 		default:
 			break;
 		}
@@ -668,11 +707,19 @@ namespace dsp56k
 
 	uint32_t Peripherals56362::exec() noexcept
 	{
+		// The DAX derives its own frame rate from XCS and these two clocks. ACI is a pin of its own
+		// and a board is free to drive it from something other than EXTAL, so passing EXTAL here is
+		// an assumption, not a fact - a device whose ACI runs at a different frequency has to say so
+		m_dax.setClocks(m_esaiClock.getSpeedInHz(), m_esaiClock.getExternalClockFrequency());
+
 		auto delay = m_esaiClock.exec();
+		delay = std::min(delay, m_dax.exec());
 		delay = std::min(delay, m_hdi08.exec());
 		if (!m_disableTimers)
 			delay = std::min(delay, m_timers.exec());
 		delay = std::min(delay, m_dma.exec());
+		if(m_execCallback)
+			delay = std::min(delay, m_execCallback());
 		return delay;
 	}
 
@@ -680,10 +727,15 @@ namespace dsp56k
 	{
 		m_esai.reset();
 		m_hdi08.reset();
+		m_shi.reset();
+		m_dax.reset();
 	}
 
 	void Peripherals56362::setSymbols(Disassembler& _disasm) const
 	{
+		SHI::setSymbols(_disasm);
+		DAX::setSymbols(_disasm);
+
 		auto addIR = [&](TWord _addr, const std::string& _symbol)
 		{
 			_disasm.addSymbol(Disassembler::MemP, _addr, "int_" + _symbol);
@@ -729,7 +781,7 @@ namespace dsp56k
 
 	void Peripherals56362::terminate()
 	{
-		m_hdi08.terminate();
+		// not the HDI08, see Peripherals56303::terminate
 		m_esai.terminate();
 	}
 
@@ -754,6 +806,7 @@ namespace dsp56k
 		case Esai::M_RCR_1:			return m_esai.readReceiveControlRegister();
 		case Esai::M_RCCR_1:		return m_esai.readReceiveClockControlRegister();
 		case Esai::M_SAISR_1:		return m_esai.readStatusRegister();
+		case Esai::M_SAICR_1:		return m_esai.readControlRegister();
 		case Esai::M_TCR_1:			return m_esai.readTransmitControlRegister();
 		case Esai::M_TCCR_1:		return m_esai.readTransmitClockControlRegister();
 		case Esai::M_RX0_1:
@@ -764,7 +817,16 @@ namespace dsp56k
 		case Esai::M_TSMB_1:		return m_esai.readTSMB();
 		case Esai::M_RSMA_1:		return m_esai.readRSMA();
 		case Esai::M_RSMB_1:		return m_esai.readRSMB();
+		case Esai::M_PCRE:			return m_portE.getControl();
+		case Esai::M_PDRE:			return m_portE.dspRead();
+		case Esai::M_PRRE:			return m_portE.getDirection();
 		default:
+			if(m_ioExtRead)
+			{
+				TWord v;
+				if(m_ioExtRead(_addr, v))
+					return v;
+			}
 			return m_mem[_addr - XIO_Reserved_High_First];
 		}
 	}
@@ -785,11 +847,17 @@ namespace dsp56k
 		case Esai::M_TX3_1:
 		case Esai::M_TX4_1:
 		case Esai::M_TX5_1:		m_esai.writeTX(_addr - Esai::M_TX0_1, _val);		return;
+		case Esai::M_TSR_1:		m_esai.writeTSR();									return;
 		case Esai::M_TSMA_1:	m_esai.writeTSMA(_val);								return;
 		case Esai::M_TSMB_1:	m_esai.writeTSMB(_val);								return;
 		case Esai::M_RSMA_1:	m_esai.writeRSMA(_val);								return;
 		case Esai::M_RSMB_1:	m_esai.writeRSMB(_val);								return;
+		case Esai::M_PCRE:		m_portE.setControl(_val);							return;
+		case Esai::M_PDRE:		m_portE.dspWrite(_val);								return;
+		case Esai::M_PRRE:		m_portE.setDirection(_val);							return;
 		default:
+			if(m_ioExtWrite && m_ioExtWrite(_addr, _val))
+				return;
 			break;
 		}
 		if (_addr != 0xffffd5)

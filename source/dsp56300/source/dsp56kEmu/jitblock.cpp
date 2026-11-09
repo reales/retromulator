@@ -27,9 +27,33 @@ namespace dsp56k
 
 	JitBlock::~JitBlock() = default;
 
-	void JitBlock::getInfo(JitBlockInfo& _info, const DSP& _dsp, const TWord _pc, const JitConfig& _config, const std::vector<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds)
+	TWord JitBlock::getInstructionLength(const DSP& _dsp, const TWord _pc)
 	{
 		const auto& opcodes = _dsp.opcodes();
+
+		TWord opA, opB;
+		_dsp.memory().getOpcode(_pc, opA, opB);
+
+		Instruction instA, instB;
+		opcodes.getInstructionTypes(opA, instA, instB);
+
+		const auto length = Opcodes::getOpcodeLength(opA, instA, instB);
+
+		if(!(Opcodes::getFlags(instA, instB) & (OpFlagRepDynamic | OpFlagRepImmediate)))
+			return length;
+
+		TWord repA, repB;
+		_dsp.memory().getOpcode(_pc + length, repA, repB);
+
+		return length + opcodes.getOpcodeLength(repA);
+	}
+
+	void JitBlock::getInfo(JitBlockInfo& _info, const DSP& _dsp, const TWord _pc, const JitConfig& _config, const MmuArray<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, std::vector<TWord>* _opCycles/* = nullptr*/)
+	{
+		const auto& opcodes = _dsp.opcodes();
+
+		if(_opCycles)
+			_opCycles->clear();
 
 		const bool isFastInterrupt = _pc < Vba_End;
 
@@ -45,21 +69,78 @@ namespace dsp56k
 
 		auto& numWords = _info.memSize;
 		auto& numInstructions = _info.instructionCount;
-		auto& numCycles = _info.cycleCount;
 
 		auto& terminationReason = _info.terminationReason;
 
 		_info.pc = _pc;
 
+		/*	Whether a loop is a DO FOREVER is a property of the DO that opened it, so it can be
+			settled here instead of testing SR_FV at runtime on every iteration of every loop. Both
+			forever opcodes are fixed 24 bit words with no operand fields, so comparing the word is
+			exact.
+		*/
+		auto isForeverLoop = [&_dsp](const TWord _doPc)
+		{
+			const auto op = _dsp.memory().get(MemArea_P, _doPc);
+			return op == g_opcodes[DoForever].m_mask1 || op == g_opcodes[DorForever].m_mask1;
+		};
+
+		/*	A block can end a loop without beginning it, so the opening DO has to be found through
+			the loop map rather than at a fixed offset. Loop ends are unique, one begin per end, so
+			the first match is the right one.
+		*/
+		auto markForeverLoopEndingAt = [&](const TWord _loopEnd)
+		{
+			if(_info.hasFlag(JitBlockInfo::Flags::IsLoopForever))
+				return;
+
+			for (const auto& loop : _loopStarts)
+			{
+				if(loop.second != _loopEnd)
+					continue;
+
+				if(isForeverLoop(loop.first))
+					_info.addFlag(JitBlockInfo::Flags::IsLoopForever);
+				break;
+			}
+		};
+
 		if(_loopStarts.find(_pc - 2) != _loopStarts.end())
 		{
 			assert(_pc == hiword(_dsp.regs().ss[_dsp.ssIndex()]).toWord());
 			_info.addFlag(JitBlockInfo::Flags::IsLoopBodyBegin);
+
+			// the DO sits immediately in front of the body, which is what the lookup above assumes
+			if(isForeverLoop(_pc - 2))
+				_info.addFlag(JitBlockInfo::Flags::IsLoopForever);
 		}
-		else
+
+		/*	There is no useful converse check here. That the top of the system stack holds this PC does
+			not make the block a loop body begin, and the three things it would have to be compared
+			against drift apart legitimately:
+
+			- the stack is shared by DO, JSR/BSR and interrupts, so its top entry is a loop start only
+			  when the last push came from a DO;
+			- m_loops is filled when a block containing a DO is COMPILED and dropped again by
+			  removeLoop, which a write to the P memory holding that DO triggers;
+			- the P memory a loop was built from can be replaced while the loop is still live in LA/LC
+			  and on the stack. A host that reloads a DSP program does exactly that: observed with
+			  LA=$71a and LC=$8e6 naming a live loop while P:$717-$719 had already been cleared to zero.
+
+			An assertion on the converse used to live here and had already grown a carve-out for PC 0,
+			which is the same false positive from an uninitialised stack.
+		*/
+
+		// true if any P word in [_begin, _end) belongs to a block already
+		auto isExistingCode = [&_cache](const TWord _begin, const TWord _end)
 		{
-			assert(_pc == 0 || _pc != hiword(_dsp.regs().ss[_dsp.ssIndex()]).toWord());
-		}
+			for(auto pc = _begin; pc < _end && pc < _cache.size(); ++pc)
+			{
+				if(_cache[pc].block)
+					return true;
+			}
+			return false;
+		};
 
 		auto writesM = RegisterMask::None;
 		auto readsM = RegisterMask::None;
@@ -74,9 +155,14 @@ namespace dsp56k
 				break;
 			}
 
-			// never overwrite code that already exists
-			if(pc < _cache.size() && _cache[pc].block)
+			/*	Never overwrite code that already exists, with any word of the instruction. A block can start on what is an
+				extension word here, or on the instruction that a REP repeats: code jumped there, or P memory was rewritten
+				with that word unchanged, which memWriteP does not report, so the block stayed. Two blocks cannot own one
+				word. The first instruction of a block is always clear, JitBlockChain::create makes room for it.
+			*/
+			if(isExistingCode(pc, pc + getInstructionLength(_dsp, pc)))
 			{
+				assert(numInstructions && "JitBlockChain::create makes room for the first instruction of a block");
 				terminationReason = JitBlockInfo::TerminationReason::ExistingCode;
 				break;
 			}
@@ -89,15 +175,50 @@ namespace dsp56k
 
 			opcodes.getInstructionTypes(opA, instA, instB);
 
+			const auto flags = Opcodes::getFlags(instA, instB);
+
 			auto written = RegisterMask::None;
 			auto read = RegisterMask::None;
 
 			Opcodes::getRegisters(written, read, opA, instA, instB);
 
+			// A DO loads LA from its own operand and ENDDO restores the enclosing loop's, both agree with the loop registry.
+			// Any other LA write can move the end of the running loop, see Jit::checkLoopEnd.
+			if(any(written, RegisterMask::LA) && !(flags & OpFlagDo) && instA != Enddo)
+				_info.addFlag(JitBlockInfo::Flags::WritesLA);
+
+			/*	JitOps::rep_exec emits the repeated instruction as part of the REP and continues after both,
+				so the two have to be scanned as one. Scanned separately, anything that ends a block between
+				them - code that already exists at the repeated instruction, a volatile P address, a loop end -
+				leaves the block one word short: it runs the REP with its instruction and then continues AT
+				the repeated instruction, which runs a second time.
+			*/
+			TWord repeatedLength = 0;
+			TWord repeatedCycles = 0;
+
+			if(flags & (OpFlagRepDynamic | OpFlagRepImmediate))
+			{
+				const auto pcRepeated = pc + Opcodes::getOpcodeLength(opA, instA, instB);
+
+				TWord repA, repB;
+				_dsp.memory().getOpcode(pcRepeated, repA, repB);
+
+				Instruction repInstA, repInstB;
+				opcodes.getInstructionTypes(repA, repInstA, repInstB);
+
+				auto repWritten = RegisterMask::None;
+				auto repRead = RegisterMask::None;
+				Opcodes::getRegisters(repWritten, repRead, repA, repInstA, repInstB);
+
+				written |= repWritten;
+				read |= repRead;
+
+				repeatedLength = Opcodes::getOpcodeLength(repA, repInstA, repInstB);
+				repeatedCycles = calcCycles(repInstA, repInstB, pcRepeated, repA, _dsp.memory().getBridgedMemoryAddress(), 1);
+			}
+
 			const auto writtenM = (written & RegisterMask::M);
 			const auto readM = read & RegisterMask::M;
-
-			const auto flags = Opcodes::getFlags(instA, instB);
 
 			// a jsr in a fast interrupt modifies the MR because it disables scaling mode bits, loop flag and sixteen-bit arithmetic mode
 			if(isFastInterrupt && (written & RegisterMask::SSL) != RegisterMask::None)
@@ -133,7 +254,7 @@ namespace dsp56k
 
 			// for a volatile P address, if you have some code, break now. if not, generate this one op, and then return.
 			if (_volatileP.find(pc) != _volatileP.end() || 
-				(_volatileP.find(pc+1) != _volatileP.end() && Opcodes::getOpcodeLength(opA, instA, instB) == 2))
+				(_volatileP.find(pc+1) != _volatileP.end() && (Opcodes::getOpcodeLength(opA, instA, instB) == 2 || repeatedLength)))
 			{
 				terminationReason = JitBlockInfo::TerminationReason::VolatileP;
 				if (numInstructions)
@@ -157,10 +278,26 @@ namespace dsp56k
 
 			numWords += Opcodes::getOpcodeLength(opA, instA, instB);
 			++numInstructions;
-			numCycles += calcCycles(instA, instB, pc, opA, _dsp.memory().getBridgedMemoryAddress(), 1);
+
+			if(_opCycles)
+				_opCycles->push_back(calcCycles(instA, instB, pc, opA, _dsp.memory().getBridgedMemoryAddress(), 1) + repeatedCycles);
+
+			if(repeatedLength)
+			{
+				numWords += repeatedLength;
+				++numInstructions;
+			}
 
 			if(getLoopEndAddr(_info.loopEnd, instA, pc, opB))
+			{
 				_info.loopBegin = pc;
+
+				// An LA write moved this loop's end in the registry while it ran. Running the DO again loads LA from the
+				// operand, and only a check after the block can take that back into the registry.
+				const auto it = _loopStarts.find(pc);
+				if(it != _loopStarts.end() && it->second != _info.loopEnd)
+					_info.addFlag(JitBlockInfo::Flags::LoopEndMoved);
+			}
 
 			if(!isRep)
 			{
@@ -169,6 +306,33 @@ namespace dsp56k
 					terminationReason = JitBlockInfo::TerminationReason::Branch;
 					_info.branchTarget = getBranchTarget(instA, opA, opB, pc);
 					_info.branchIsConditional = hasField(instA, Field_CCCC) || hasField(instA, Field_bbbbb);
+
+					/*	A call or jump can be the loop's last instruction. The loop-end check further
+						down never sees it, because we break here first - so record it now. The block
+						still terminates as a Branch, but emit() has to run the loop bookkeeping
+						BEFORE the branch executes, the way hardware retires the loop at fetch.
+					*/
+					if(_config.supportBranchAtLoopEnd && _loopEnds.find(_pc + numWords) != _loopEnds.end())
+					{
+						// we break out before the loop-end check below, so classify the loop here too
+						markForeverLoopEndingAt(_pc + numWords);
+
+						/*	Unconditional only: a conditional branch gets its fall-through chained
+							directly to the block at pcLast, which bypasses the loop-back we would
+							write into the PC. Such a loop keeps the old, wrong behaviour - say so
+							rather than let the next device that enables this find out by itself.
+						*/
+						if(_info.branchIsConditional)
+						{
+							LOG("Conditional branch at the end of a DO loop at " << HEX(pc) << ", supportBranchAtLoopEnd does not cover this - the loop will run a single iteration and leave LA/LC on the stack");
+							assert(false && "conditional branch at a DO loop end is not supported");
+						}
+						else
+						{
+							_info.addFlag(JitBlockInfo::Flags::BranchAtLoopEnd);
+						}
+					}
+
 					break;
 				}
 				if(flags & OpFlagPopPC)
@@ -195,15 +359,34 @@ namespace dsp56k
 				}
 			}
 
+			const auto writesPMem = writesToPMemory(instA, opA) || writesToPMemory(instB, opA);
+
 			// always terminate block if loop end has reached
 			if(_loopEnds.find(_pc + numWords) != _loopEnds.end())
 			{
-				assert((_pc + numWords) == static_cast<TWord>(_dsp.regs().la.var + 1));
+				/*	la only describes the loop the DSP is inside right now, while a block is classified by
+					the loop registry, which is what makes the classification position independent. The two
+					can legitimately disagree: ENDDO leaves a loop but execution carries on through the
+					addresses it covered, so a block ending at that address is compiled with the loop already
+					gone. Only check the correspondence when we really are in a loop.
+
+					Still incomplete: do_end restores LF from the stack along with LA/LC, so LF only
+					ends up clear when the loop ENDDO left was the outermost one. An ENDDO inside a
+					nested loop restores LF=1 and the outer LA, and a block ending at the inner loop's
+					end trips this again. The guard narrows the false positive, it does not remove it -
+					the real invariant is that la describes this instant while the registry describes
+					the block, and the two are allowed to disagree.
+				*/
+				assert(!(_dsp.regs().sr.var & SR_LF) || (_pc + numWords) == static_cast<TWord>(_dsp.regs().la.var + 1));
 				terminationReason = JitBlockInfo::TerminationReason::LoopEnd;
+				// The loop end wins over the P write as the reason, but the write still has to be reported
+				if(writesPMem)
+					_info.addFlag(JitBlockInfo::Flags::WritesPMemAtLoopEnd);
+				markForeverLoopEndingAt(_pc + numWords);
 				break;
 			}
 
-			if(writesToPMemory(instA, opA) || writesToPMemory(instB, opA))
+			if(writesPMem)
 			{
 				terminationReason = JitBlockInfo::TerminationReason::WritePMem;
 				break;
@@ -224,7 +407,7 @@ namespace dsp56k
 		}
 	}
 
-	bool JitBlock::emit(JitBlockRuntimeData& _rt, JitBlockChain* _chain, const TWord _pc, const std::vector<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, bool _profilingSupport)
+	bool JitBlock::emit(JitBlockRuntimeData& _rt, JitBlockChain* _chain, const TWord _pc, const MmuArray<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, bool _profilingSupport)
 	{
 		JitBlockGenerating generating(_rt);
 		m_currentJitBlockRuntimeData = &_rt;
@@ -235,6 +418,7 @@ namespace dsp56k
 		auto& childAddr = _rt.m_child;
 
 		m_chain = _chain;
+		m_coldCode.clear();
 
 		const bool isFastInterrupt = _pc < Vba_End;
 		const auto fastInterruptMode = isFastInterrupt ? (m_config.dynamicFastInterrupts ? JitOps::FastInterruptMode::Dynamic : JitOps::FastInterruptMode::Static) : JitOps::FastInterruptMode::None;
@@ -242,7 +426,6 @@ namespace dsp56k
 		dspAsm.clear();
 
 		// needed so that the dsp register is available
-		m_asm.mov(regDspPtr, g_funcArgGPs[0]);
 		dspRegPool().makeDspPtr(&m_dsp.getInstructionCounter(), sizeof(uint64_t));
 
 #ifdef HAVE_X86_64
@@ -267,7 +450,7 @@ namespace dsp56k
 
 		uint32_t blockFlags = 0;
 
-		getInfo(info, dsp(), _pc, m_config, _cache, _volatileP, _loopStarts, _loopEnds);
+		getInfo(info, dsp(), _pc, m_config, _cache, _volatileP, _loopStarts, _loopEnds, &m_opCycles);
 
 		const auto pcNext = _pc + info.memSize;
 
@@ -293,13 +476,19 @@ namespace dsp56k
 		uint32_t& ccrWrite = info.ccrWrite;
 		uint32_t& ccrOverwrite = info.ccrOverwrite;
 
-		_rt.m_encodedCycles = info.cycleCount;
+		// counted up per instruction, so that we know how much of the block runs before each of them
+		_rt.m_encodedCycles = 0;
 
 		TWord pMemSize = 0;
+		size_t opIndex = 0;
+		m_peripheralAccesses.clear();
 
 		while(pMemSize < info.memSize)
 		{
 			opPC = _pc + pMemSize;
+
+			const PeripheralAccess opStart{m_asm.cursor(), _rt.m_encodedInstructionCount, _rt.m_encodedCycles};
+			m_opAccessesPeripherals = false;
 
 			m_dsp.memory().getOpcode(opPC, opA, opB);
 
@@ -338,6 +527,26 @@ namespace dsp56k
 
 			JitOps ops(*this, _rt, fastInterruptMode);
 
+			/*	A call as the loop's last instruction: hardware retires the loop at fetch, so the
+				return address it pushes is already the loop start (or, on the last iteration, the
+				instruction after the loop). Emit that bookkeeping BEFORE the branch and make its
+				push take the PC register, rather than trying to rewrite the pushed entry after the
+				fact - the call's own frame would be sitting on top of the DO's by then.
+			*/
+			if(info.hasFlag(JitBlockInfo::Flags::BranchAtLoopEnd))
+			{
+				Instruction lastA, lastB;
+				m_dsp.opcodes().getInstructionTypes(opA, lastA, lastB);
+				const auto opLen = Opcodes::getOpcodeLength(opA, lastA, lastB);
+
+				if(pMemSize + opLen == info.memSize)
+				{
+					ops.emitLoopEndBeforeBranch(info.hasFlag(JitBlockInfo::Flags::IsLoopBodyBegin) != 0,
+						info.hasFlag(JitBlockInfo::Flags::IsLoopForever) != 0, _pc, opPC + opLen);
+					ops.setPushPCFromReg(true);
+				}
+			}
+
 			if (m_config.splitOpsByNops)	m_asm.nop();
 			ops.emit(opPC, opA, opB);
 			if (m_config.splitOpsByNops)	m_asm.nop();
@@ -357,12 +566,16 @@ namespace dsp56k
 			}
 
 			blockFlags |= ops.getResultFlags();
-			
+
+			if(m_opAccessesPeripherals)
+				m_peripheralAccesses.push_back(opStart);
+
 			_rt.m_singleOpWordA = opA;
 			_rt.m_singleOpWordB = opB;
 
 			pMemSize += ops.getOpSize();
 			++_rt.m_encodedInstructionCount;
+			_rt.m_encodedCycles += m_opCycles[opIndex++];
 
 			_rt.m_lastOpSize = ops.getOpSize();
 
@@ -374,14 +587,21 @@ namespace dsp56k
 			ccrOverwrite |= ccrO;
 		}
 
+		assert(opIndex == m_opCycles.size());
 		assert(_rt.getEncodedCycleCount() >= _rt.getEncodedInstructionCount());
+
+		auto* const cursorAfterOps = m_asm.cursor();
 
 		if (info.terminationReason == JitBlockInfo::TerminationReason::PopPC)
 			blockFlags |= JitOps::PopPC;
 
 		const auto isLoopStart = info.hasFlag(JitBlockInfo::Flags::IsLoopBodyBegin);
 		const auto isLoopEnd = info.terminationReason == JitBlockInfo::TerminationReason::LoopEnd;
-		const auto isLoopBody = isLoopStart && isLoopEnd;
+		// A P write is reported after the block returns and only the last address is kept, and a block is compiled for the
+		// addressing and SR modes at its start and switches to code for a changed mode only after it returns, so a loop
+		// that writes P memory, an Mn or the MR must not iterate inside the block
+		const auto isLoopBody = isLoopStart && isLoopEnd && !info.hasFlag(JitBlockInfo::Flags::WritesPMemAtLoopEnd) && !info.hasFlag(JitBlockInfo::Flags::ModeChange);
+		const auto isLoopForever = info.hasFlag(JitBlockInfo::Flags::IsLoopForever) != 0;
 
 		bool childIsConditional = false;
 
@@ -401,7 +621,9 @@ namespace dsp56k
 
 				if (branchTarget != g_invalidAddress)
 				{
-					assert(branchTarget == g_dynamicAddress || branchTarget < m_dsp.memory().sizeP());
+					// A branch out of P memory - back into a bootstrap ROM that is not emulated, which a device then stands
+					// in for - is fine as long as blocks are not linked: getChildBlock() does not look at the target then
+					assert(branchTarget == g_dynamicAddress || branchTarget < m_dsp.memory().sizeP() || !m_config.linkJitBlocks);
 
 					const auto pcLast = pcFirst + pMemSize;
 
@@ -453,14 +675,49 @@ namespace dsp56k
 			}
 		}
 
-		m_asm.setCursor(cursorInsertIncreaseInstructionCount);
-		increaseInstructionCount(asmjit::Imm(_rt.getEncodedInstructionCount()));
-		increaseCycleCount(asmjit::Imm(_rt.getEncodedCycleCount()));
+		/*	A block adds the instructions and cycles that it runs when it starts. An instruction that accesses a peripheral
+			lets the peripherals catch up first (Jitmem::execPeripheralsWithinBlock), and for that the counts have to be
+			exact when it runs. In a block that has such instructions, the counts are added in pieces instead: each one
+			right before such an instruction, and the rest after the last instruction of the block.
+		*/
+		auto addCounts = [this](asmjit::BaseNode* _cursor, const TWord _instructions, const TWord _cycles)
+		{
+			m_asm.setCursor(_cursor);
+			increaseInstructionCount(asmjit::Imm(_instructions));
+			increaseCycleCount(asmjit::Imm(_cycles));
+		};
+
+		TWord countedInstructions = 0;
+		TWord countedCycles = 0;
+
+		for (const auto& access : m_peripheralAccesses)
+		{
+			if(access.instructions == countedInstructions)
+				continue;
+
+			addCounts(access.cursor, access.instructions - countedInstructions, access.cycles - countedCycles);
+
+			countedInstructions = access.instructions;
+			countedCycles = access.cycles;
+		}
+
+		addCounts(m_peripheralAccesses.empty() ? cursorInsertIncreaseInstructionCount : cursorAfterOps,
+			_rt.getEncodedInstructionCount() - countedInstructions, _rt.getEncodedCycleCount() - countedCycles);
+
 		m_asm.setCursor(m_asm.lastNode());
 
 		auto jumpIfLoop = [&](const asmjit::Label& _ifTrue, const JitReg32& _regPC, const JitReg32& _regLC, const JitReg32& _temp)
 		{
 			if (!isLoopBody)
+				return false;
+
+			/*	A DO FOREVER has no loop counter, so there is nothing to bound the in-block jump
+				with - maxDoIterations tests LC and LC never moves. Such a block would spin without
+				ever returning to the dispatcher and interrupts and peripherals would starve, so
+				leave the block every iteration instead. Decided when the block is compiled, so an
+				ordinary counted DO pays nothing for it.
+			*/
+			if (isLoopForever)
 				return false;
 
 			const SkipLabel skip(m_asm);
@@ -469,6 +726,23 @@ namespace dsp56k
 			{
 				assert(asmjit::Support::isPowerOf2(m_config.maxDoIterations));
 				m_asm.test_(_regLC, asmjit::Imm(m_config.maxDoIterations-1));
+				m_asm.jz(skip);
+			}
+
+			// while an interrupt is queued, leave at this iteration boundary and let the dispatcher take it
+			if(m_config.doLoopExitOnPendingInterrupt)
+			{
+				const auto* execInterrupts = asmjit::func_as_ptr(&dspExecInterrupts);
+				const RegGP func(*this);
+#ifdef HAVE_ARM64
+				const RegGP expected(*this);
+				m_asm.mov(r64(func), m_mem.makePtr(r64(func), &m_dsp.getInterruptFunc(), sizeof(uint64_t)));
+				m_asm.mov(r64(expected), asmjit::Imm(execInterrupts));
+				m_asm.cmp(r64(func), r64(expected));
+#else
+				m_asm.mov(r64(func), asmjit::Imm(execInterrupts));
+				m_asm.cmp(m_dspRegPool.makeDspPtr(&m_dsp.getInterruptFunc(), sizeof(uint64_t)), r64(func));
+#endif
 				m_asm.jz(skip);
 			}
 
@@ -528,7 +802,7 @@ namespace dsp56k
 			RegGP temp(*this);
 
 			const auto& sr = r32(m_dspRegPool.get(PoolReg::DspSR, true, true));
-			                 r32(m_dspRegPool.get(PoolReg::DspLA, true, true));	// we don't use it here but do_end does
+			const auto& la = r32(m_dspRegPool.get(PoolReg::DspLA, true, true));
 			const auto& lc = r32(m_dspRegPool.get(PoolReg::DspLC, true, true));
 
 			m_dspRegPool.lock(PoolReg::DspSR);
@@ -537,14 +811,18 @@ namespace dsp56k
 
 			DSPReg pc(*this, PoolReg::DspPC, true, true);
 
-			// check loop flag
+			ops.jumpIfNotLoopEnd(skip, sr, la, r32(temp), pcNext);
 
-			m_asm.bitTest(sr, SRB_LF);
-			m_asm.jz(skip);
-
-			m_asm.cmp(lc, asmjit::Imm(1));
-			m_asm.jle(enddo);
-			m_asm.dec(lc);
+			/*	A DO FOREVER never ends on the loop counter - it does not even load one - and is
+				left only by ENDDO. Which kind of loop this is was settled when the block was
+				compiled, so a counted DO emits exactly what it always did.
+			*/
+			if(!isLoopForever)
+			{
+				m_asm.cmp(lc, asmjit::Imm(1));
+				m_asm.jle(enddo);
+				m_asm.dec(lc);
+			}
 
 			if(isLoopBody)
 			{
@@ -630,7 +908,7 @@ namespace dsp56k
 
 			// we can keep our PC reg if its volatile. If It's not, it will be destroyed on stack.popAll() below => we need to copy it to a safe place
 			// Also, we need to make sure that our PC reg is not the first function argument because we replace it with the Jit*
-			if(JitStackHelper::isNonVolatile(regPC) || r64(regPC) == g_funcArgGPs[0])
+			if(JitStackHelper::blockMustPreserve(regPC) || r64(regPC) == g_funcArgGPs[0])
 			{
 				scratch.acquire();
 				asm_().mov(r32(scratch), regPC);
@@ -648,7 +926,7 @@ namespace dsp56k
 			// Basically the same rules that we use for the PC reg above apply to LC too:
 			// we can keep our LC reg if its volatile. If It's not, it will be destroyed on stack.popAll() below => we need to copy it to a safe place
 			// Also, we need to make sure that our LC reg is not the first function argument because we replace it with the Jit*
-			if(JitStackHelper::isNonVolatile(regLC) || r64(regLC) == g_funcArgGPs[0])
+			if(JitStackHelper::blockMustPreserve(regLC) || r64(regLC) == g_funcArgGPs[0])
 			{
 				std::vector<RegGP> temps;
 
@@ -656,7 +934,7 @@ namespace dsp56k
 				while(!m_gpPool.empty())
 				{
 					temps.emplace_back(*this);
-					if(JitStackHelper::isNonVolatile(temps.back()))
+					if(JitStackHelper::blockMustPreserve(temps.back()))
 						continue;
 
 					tempLC = std::move(temps.back());
@@ -665,12 +943,30 @@ namespace dsp56k
 				}
 
 				assert(tempLC.isValid());
-				assert(!JitStackHelper::isNonVolatile(tempLC));
+				assert(!JitStackHelper::blockMustPreserve(tempLC));
 
 				asm_().mov(r32(tempLC), regLC);
 				regLC = r32(tempLC);
 			}
 		}
+
+		// The PC in memory is only ever observed after returning to C++. If every exit of this block transfers to a
+		// child, and those children leave a correct PC behind, our own store is dead and can be dropped.
+		// The conditional-child-without-nonBranchChild case falls through to a ret() below, so it does not qualify.
+		// Children are always fully generated blocks (circular references yield nullptr), so this induction terminates,
+		// and a parent is invalidated whenever a child is, so the flag cannot go stale.
+		const auto exitsOnlyToChildren = child ? (!childIsConditional || nonBranchChild != nullptr) : (nonBranchChild != nullptr);
+
+		const auto childrenEstablishPc = exitsOnlyToChildren
+			&& (!child || child->establishesPc())
+			&& (!nonBranchChild || nonBranchChild->establishesPc());
+
+		const auto pcWritten = m_dspRegPool.isWritten(PoolReg::DspPC);
+
+		if(pcWritten && childrenEstablishPc)
+			m_dspRegPool.discardWritten(PoolReg::DspPC);
+
+		_rt.setEstablishesPc(pcWritten || childrenEstablishPc);
 
 		m_dspRegPool.releaseAll();
 
@@ -689,8 +985,6 @@ namespace dsp56k
 		if(child || nonBranchChild)
 		{
 			lj = profileBegin("jump");
-			// first func arg needs to point to DspRegs*
-			asm_().mov(g_funcArgGPs[0], regDspPtr);
 		}
 
 		if (child)
@@ -731,6 +1025,9 @@ namespace dsp56k
 		}
 
 		profileEnd(lj);
+
+		// every path above ends in an unconditional exit, so nothing falls into the out-of-line code
+		emitColdCode();
 
 		m_currentJitBlockRuntimeData = nullptr;
 		return true;
@@ -817,6 +1114,14 @@ namespace dsp56k
 		m_dspRegPool.reset();
 		m_scratchLocked = false;
 		m_shiftLocked = false;
+		m_coldCode.clear();
+	}
+
+	void JitBlock::emitColdCode()
+	{
+		for(const auto& code : m_coldCode)
+			code();
+		m_coldCode.clear();
 	}
 
 	JitBlock::JitBlockGenerating::JitBlockGenerating(JitBlockRuntimeData& _block): m_block(_block)
@@ -851,12 +1156,14 @@ namespace dsp56k
 			return getJumpTarget(tempReg, _child);
 		};
 
+		auto temp = initTemp();
+
 		if(_cc == JitCondCode::kMaxValue)
 		{
 #ifdef HAVE_ARM64
-			m_asm.br(initTemp());
+			m_asm.br(temp);
 #else
-			m_asm.jmp(initTemp());
+			m_asm.jmp(temp);
 #endif
 		}
 		else
@@ -867,10 +1174,10 @@ namespace dsp56k
 
 #ifdef HAVE_ARM64
 			m_asm.b(cc, l);
-			m_asm.br(initTemp());
+			m_asm.br(temp);
 #else
 			m_asm.j(cc, l);
-			m_asm.jmp(initTemp());
+			m_asm.jmp(temp);
 #endif
 			m_asm.bind(l);
 		}
@@ -878,8 +1185,8 @@ namespace dsp56k
 
 	void JitBlock::jumpToOneOf(const JitCondCode _ccTrue, const JitBlockRuntimeData* _childTrue, const JitBlockRuntimeData* _childFalse) const
 	{
-		auto regTrue = getJumpTarget(r64(regDspPtr == r64(g_funcArgGPs[1]) ? r64(g_funcArgGPs[3]) : r64(g_funcArgGPs[1])), _childTrue);
-		auto regFalse = getJumpTarget(r64(regDspPtr == r64(g_funcArgGPs[2]) ? r64(g_funcArgGPs[3]) : r64(g_funcArgGPs[2])), _childFalse);
+		auto regTrue = getJumpTarget(r64(g_funcArgGPs[1]), _childTrue);
+		auto regFalse = getJumpTarget(r64(g_funcArgGPs[2]), _childFalse);
 
 #ifdef HAVE_ARM64
 		m_asm.csel(regFalse, regTrue, regFalse, _ccTrue);

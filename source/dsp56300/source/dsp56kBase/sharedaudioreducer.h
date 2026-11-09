@@ -1,0 +1,162 @@
+#pragma once
+
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <mutex>
+
+#include "conditionvariable.h"
+
+namespace dsp56k
+{
+	// Multi-producer ring buffer that sums frames from all producers.
+	//
+	// Lock-free producer path: each producer writes to its own lane.
+	// The last producer to arrive does the reduction (summation) and
+	// calls the completion callback.
+	//
+	// Backpressure uses a condition variable with a fast-path atomic
+	// check — the mutex is only taken when producers are actually
+	// blocked (buffer full), which is rare in steady-state operation.
+	template<typename TFrame, uint32_t Capacity, uint32_t MaxProducers, typename TReduceFunc>
+	class SharedAudioReducer
+	{
+	public:
+		static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
+
+		using CompletionCallback = std::function<void(uint64_t, const TFrame&)>;
+
+		SharedAudioReducer()
+		{
+			for(auto& slot : m_data)
+			{
+				slot.contributions.store(0, std::memory_order_relaxed);
+				for(auto& lane : slot.lanes)
+					::memset(&lane, 0, sizeof(lane));
+			}
+		}
+
+		void setCompletionCallback(CompletionCallback _callback)
+		{
+			m_completionCallback = std::move(_callback);
+		}
+
+		// All producers must be registered before the first addFrame: the completion fires on
+		// contributions == m_producerCount, so a producer arriving while others already run leaves
+		// in-flight slots short of the new count forever - none of them ever completes again.
+		//
+		// Note that completions need no serialization: the completing thread is itself a required
+		// contributor to the next slot, so that slot cannot fill - and cannot complete - until the
+		// callback has returned and the thread has written its own lane. Do not add a lock around the
+		// callback; holding one while it blocks on a stage buffer deadlocks against terminate() at
+		// teardown (learned the hard way).
+		uint32_t addProducer()
+		{
+			assert(m_readCount.load(std::memory_order_relaxed) == 0 && "addProducer after frames were produced");
+			const auto idx = m_producerCount++;
+			assert(idx < MaxProducers);
+			m_writeCounts[idx].store(0, std::memory_order_relaxed);
+			return idx;
+		}
+
+		void addFrame(const uint32_t _index, const TFrame& _frame)
+		{
+			if(m_terminated)
+				return;
+
+			auto& writeCount = m_writeCounts[_index];
+			const auto wc = writeCount.load(std::memory_order_relaxed);
+
+			// Fast path: no backpressure, skip mutex entirely
+			if(wc - m_readCount.load(std::memory_order_acquire) >= Capacity)
+			{
+				std::unique_lock<std::mutex> lock(m_readMtx);
+				// seq_cst against the completion: it either sees this waiter, or this check sees its read count
+				m_waiters.fetch_add(1, std::memory_order_seq_cst);
+				m_readCv.wait(lock, [&]()
+				{
+					return m_terminated || wc - m_readCount.load(std::memory_order_seq_cst) < Capacity;
+				});
+				m_waiters.fetch_sub(1, std::memory_order_relaxed);
+				if(m_terminated)
+					return;
+			}
+
+			auto& slot = m_data[wrap(wc)];
+
+			slot.lanes[_index] = _frame;
+
+			std::atomic_thread_fence(std::memory_order_release);
+
+			writeCount.store(wc + 1, std::memory_order_release);
+
+			const auto contrib = slot.contributions.fetch_add(1, std::memory_order_acq_rel) + 1;
+			if(contrib == m_producerCount)
+			{
+				// Seed with a zeroed accumulator and reduce every lane (including lane 0) so the reduce
+				// function transforms each producer's frame uniformly (0 + Sum == Sum for a plain additive
+				// reduction; required when the reduce function e.g. sign-extends before accumulating).
+				TFrame result{};
+
+				for(uint32_t p = 0; p < m_producerCount; ++p)
+					m_reduceFunc(result, slot.lanes[p]);
+
+				m_completionCallback(wc, result);
+
+				slot.contributions.store(0, std::memory_order_relaxed);
+				m_readCount.store(wc + 1, std::memory_order_seq_cst);
+
+				// only a producer that ran out of room waits for this, most frames complete without one
+				if(m_waiters.load(std::memory_order_seq_cst))
+				{
+					{
+						std::lock_guard<std::mutex> lock(m_readMtx);
+					}
+					m_readCv.notify_all();
+				}
+			}
+		}
+
+		void terminate()
+		{
+			m_terminated = true;
+			{
+				std::lock_guard<std::mutex> lock(m_readMtx);
+			}
+			m_readCv.notify_all();
+		}
+
+		bool isTerminated() const { return m_terminated; }
+		uint32_t producerCount() const { return m_producerCount; }
+		uint64_t readCount() const { return m_readCount.load(std::memory_order_relaxed); }
+
+	private:
+		static constexpr uint64_t wrap(const uint64_t _count)
+		{
+			return _count & (Capacity - 1);
+		}
+
+		struct Slot
+		{
+			std::atomic<uint32_t> contributions{0};
+			std::array<TFrame, MaxProducers> lanes{};
+		};
+
+		std::array<Slot, Capacity> m_data{};
+
+		std::atomic<uint64_t> m_readCount{0};
+		std::atomic<uint32_t> m_waiters{0};	// producers blocked on m_readCv
+		uint32_t m_producerCount = 0;
+		bool m_terminated = false;
+		std::array<std::atomic<uint64_t>, MaxProducers> m_writeCounts{};
+
+		std::mutex m_readMtx;
+		ConditionVariable m_readCv;
+
+		CompletionCallback m_completionCallback;
+		TReduceFunc m_reduceFunc;
+	};
+}

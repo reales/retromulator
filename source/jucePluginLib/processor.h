@@ -4,6 +4,7 @@
 
 #include "bypassBuffer.h"
 #include "controller.h"
+#include "hostAudioWorkgroup.h"
 #include "midiports.h"
 
 #include "bridgeLib/types.h"
@@ -227,6 +228,7 @@ namespace pluginLib
 		std::string m_remoteHost;
 		uint32_t m_remotePort = 0;
 		bridgeLib::SessionId m_remoteSessionId;
+		HostAudioWorkgroup m_hostAudioWorkgroup;
 		synthLib::MidiRoutingMatrix m_midiRoutingMatrix;
 		std::string m_programName;
 	};

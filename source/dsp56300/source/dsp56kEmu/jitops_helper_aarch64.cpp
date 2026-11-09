@@ -18,7 +18,7 @@ namespace dsp56k
 		else
 			assert(_dst.getBitCount() == 24);
 
-		m_asm.ubfx(r64(_dst), r64(m_dspRegs.getALU(_aluIndex)), asmjit::Imm(0), asmjit::Imm(24));
+		m_asm.ubfx(r64(_dst), r64(m_dspRegs.getALU(_aluIndex)), asmjit::Imm(0 + g_aluBitOffset), asmjit::Imm(24));
 	}
 
 	void JitOps::getALU1(DspValue& _dst, uint32_t _aluIndex) const
@@ -28,7 +28,7 @@ namespace dsp56k
 		else
 			assert(_dst.getBitCount() == 24);
 
-		m_asm.ubfx(r64(_dst), r64(m_dspRegs.getALU(_aluIndex)), asmjit::Imm(24), asmjit::Imm(24));
+		m_asm.ubfx(r64(_dst), r64(m_dspRegs.getALU(_aluIndex)), asmjit::Imm(24 + g_aluBitOffset), asmjit::Imm(24));
 	}
 
 	void JitOps::setALU0(const uint32_t _aluIndex, const DspValue& _src) const
@@ -39,11 +39,11 @@ namespace dsp56k
 		{
 			const RegGP t(m_block);
 			m_asm.mov(t, asmjit::Imm(_src.imm24()));
-			m_asm.bfi(d, r64(t), asmjit::Imm(0), asmjit::Imm(24));
+			m_asm.bfi(d, r64(t), asmjit::Imm(0 + g_aluBitOffset), asmjit::Imm(24));
 		}
 		else
 		{
-			m_asm.bfi(d, r64(_src), asmjit::Imm(0), asmjit::Imm(24));
+			m_asm.bfi(d, r64(_src), asmjit::Imm(0 + g_aluBitOffset), asmjit::Imm(24));
 		}
 	}
 
@@ -54,11 +54,11 @@ namespace dsp56k
 		{
 			const RegGP t(m_block);
 			m_asm.mov(t, asmjit::Imm(_src.imm24()));
-			m_asm.bfi(d, r64(t), asmjit::Imm(24), asmjit::Imm(24));
+			m_asm.bfi(d, r64(t), asmjit::Imm(24 + g_aluBitOffset), asmjit::Imm(24));
 		}
 		else
 		{
-			m_asm.bfi(d, r64(_src), asmjit::Imm(24), asmjit::Imm(24));
+			m_asm.bfi(d, r64(_src), asmjit::Imm(24 + g_aluBitOffset), asmjit::Imm(24));
 		}
 	}
 
@@ -69,11 +69,11 @@ namespace dsp56k
 		{
 			const RegGP t(m_block);
 			m_asm.mov(t, asmjit::Imm(_src.imm24()));
-			m_asm.bfi(d, r64(t), asmjit::Imm(48), asmjit::Imm(8));
+			m_asm.bfi(d, r64(t), asmjit::Imm(48 + g_aluBitOffset), asmjit::Imm(8));
 		}
 		else
 		{
-			m_asm.bfi(d, r64(_src), asmjit::Imm(48), asmjit::Imm(8));
+			m_asm.bfi(d, r64(_src), asmjit::Imm(48 + g_aluBitOffset), asmjit::Imm(8));
 		}
 	}
 
@@ -144,7 +144,10 @@ namespace dsp56k
 		const RegGP r(m_block);
 		m_block.dspRegPool().movDspReg(r, m_block.dsp().regs().omr);
 		m_asm.bfi(r, _src, asmjit::Imm(8), asmjit::Imm(8));
-		m_block.dspRegPool().movDspReg(m_block.dsp().regs().omr, r);
+		// Store the actual OMR backing field explicitly.  Using the generic
+		// RegType/JitReg overload here selected the wrong SRegs slot on ARM64
+		// under register pressure (PC, eight bytes before OMR).
+		m_block.mem().mov<sizeof(m_block.dsp().regs().omr.var)>(&m_block.dsp().regs().omr.var, r);
 	}
 
 	void JitOps::decSP() const
@@ -176,7 +179,7 @@ namespace dsp56k
 
 		if(mode)
 		{
-			int shift = 24;
+			int shift = 24 + g_aluBitOffset;
 			if(mode->testSR(SRB_S1))
 				--shift;
 			if(mode->testSR(SRB_S0))
@@ -186,9 +189,11 @@ namespace dsp56k
 		else
 		{
 			const ShiftReg shifter(m_block);
+			// sign-extended first, Scale Up of the left-aligned value pushed bit 55 out of the host word
+			m_asm.asr(_dst, _src, asmjit::Imm(g_aluBitOffset));
 			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S1);
 			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
-			m_asm.lsl(_dst, _src, shifter.get());
+			m_asm.lsl(_dst, _dst, shifter.get());
 
 			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S0);
 			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
@@ -198,19 +203,75 @@ namespace dsp56k
 		}
 		
 		{
+			// Scale Up leaves 33 significant bits, a 32 bit compare would truncate them
 			const RegGP tester(m_block);
-			m_asm.mov(r32(tester), r32(_dst));
+			m_asm.mov(r64(tester), r64(_dst));
 
 			{
 				// lower limit
 				const RegScratch limit(m_block);
 
-				m_asm.mov(r32(limit), asmjit::Imm(0xff800000));
+				m_asm.mov(r64(limit), asmjit::Imm(-0x800000));
+				m_asm.cmp(r64(tester), r64(limit));
+				m_asm.csel(r64(_dst), r64(limit), r64(_dst), asmjit::arm::CondCode::kLT);
+
+				// upper limit
+				m_asm.mvn(r64(limit), r64(limit)); // = 0x007fffff
+				m_asm.cmp(r64(tester), r64(limit));
+				m_asm.csel(r64(_dst), r64(limit), r64(_dst), asmjit::arm::CondCode::kGT);
+			}
+
+			m_asm.cmp(r64(tester), r64(_dst));
+			ccr_update_ifNotZero(CCRB_L);
+			m_asm.and_(r32(_dst), asmjit::Imm(0x00ffffff));
+		}
+	}
+
+	void JitOps::transferSaturation16(const JitReg64& _dst, const JitReg64& _src)
+	{
+		// Sixteen-bit Arithmetic mode (FM 3.5.1.2): scaling, limiting to 16 bits, the limited word on bus
+		// bits 15..0 with its sign extension on bits 23..16
+		const auto* mode = m_block.getMode();
+
+		if(mode)
+		{
+			int shift = 32 + g_aluBitOffset;
+			if(mode->testSR(SRB_S1))
+				--shift;
+			if(mode->testSR(SRB_S0))
+				++shift;
+			m_asm.asr(_dst, _src, asmjit::Imm(shift));
+		}
+		else
+		{
+			const ShiftReg shifter(m_block);
+			// sign-extended first, Scale Up of the left-aligned value pushed bit 55 out of the host word
+			m_asm.asr(_dst, _src, asmjit::Imm(g_aluBitOffset));
+			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S1);
+			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
+			m_asm.lsl(_dst, _dst, shifter.get());
+
+			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S0);
+			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
+			m_asm.asr(_dst, _dst, shifter.get());
+
+			m_asm.asr(r64(_dst), r64(_dst), asmjit::Imm(32));
+		}
+
+		{
+			const RegGP tester(m_block);
+			m_asm.mov(r32(tester), r32(_dst));
+
+			{
+				const RegScratch limit(m_block);
+
+				// lower limit
+				m_asm.mov(r32(limit), asmjit::Imm(0xffff8000));
 				m_asm.cmp(r32(tester), r32(limit));
 				m_asm.csel(r32(_dst), r32(limit), r32(_dst), asmjit::arm::CondCode::kLT);
 
 				// upper limit
-				m_asm.mvn(r32(limit), r32(limit)); // = 0x007fffff
+				m_asm.mvn(r32(limit), r32(limit)); // = 0x00007fff
 				m_asm.cmp(r32(tester), r32(limit));
 				m_asm.csel(r32(_dst), r32(limit), r32(_dst), asmjit::arm::CondCode::kGT);
 			}
@@ -234,7 +295,11 @@ namespace dsp56k
 
 		const auto* mode = m_block.getMode();
 
-		m_asm.lsl(_dst, _src, asmjit::Imm(8));
+		// the pre-shift only puts bit 55 at bit 63; left-aligned it is already there
+		if constexpr (g_leftAlignedAlu)
+			m_asm.mov(r64(_dst), r64(_src));
+		else
+			m_asm.lsl(_dst, _src, asmjit::Imm(8));
 
 		if(mode)
 		{
@@ -247,6 +312,10 @@ namespace dsp56k
 		}
 		else
 		{
+			// down to a sign-extended 56 bit value first, then scale: scaling the left-aligned register made Scale Up
+			// push bit 55 out of the host word before the limiter saw it
+			m_asm.asr(_dst, _dst, asmjit::Imm(8));
+
 			const ShiftReg shifter(m_block);
 			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S1);
 			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
@@ -255,8 +324,6 @@ namespace dsp56k
 			m_asm.bitTest(m_dspRegs.getSR(JitDspRegs::Read), SRB_S0);
 			m_asm.cset(shifter, asmjit::arm::CondCode::kNotZero);
 			m_asm.asr(_dst, _dst, shifter.get());
-
-			m_asm.asr(_dst, _dst, asmjit::Imm(8));
 		}
 		
 		{

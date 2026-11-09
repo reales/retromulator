@@ -10,8 +10,11 @@
 #include "jittypes.h"
 #include "jitconfig.h"
 
+#include <functional>
 #include <vector>
 #include <set>
+
+#include "dsp56kBase/mmuarray.h"
 
 namespace asmjit
 {
@@ -38,9 +41,13 @@ namespace dsp56k
 		JitBlock(JitEmitter& _a, DSP& _dsp, JitRuntimeData& _runtimeData, JitConfig&& _config);
 		~JitBlock();
 
-		static void getInfo(JitBlockInfo& _info, const DSP& _dsp, TWord _pc, const JitConfig& _config, const std::vector<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds);
+		// _opCycles receives the cycles of every instruction of the block, a REP together with one run of what it repeats
+		static void getInfo(JitBlockInfo& _info, const DSP& _dsp, TWord _pc, const JitConfig& _config, const MmuArray<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, std::vector<TWord>* _opCycles = nullptr);
 
-		bool emit(JitBlockRuntimeData& _rt, JitBlockChain* _chain, TWord _pc, const std::vector<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, bool _profilingSupport);
+		// P words that the instruction at _pc takes up in a block. A REP comes with the instruction it repeats, see JitOps::rep_exec
+		static TWord getInstructionLength(const DSP& _dsp, TWord _pc);
+
+		bool emit(JitBlockRuntimeData& _rt, JitBlockChain* _chain, TWord _pc, const MmuArray<JitCacheEntry>& _cache, const std::set<TWord>& _volatileP, const std::map<TWord, TWord>& _loopStarts, const std::set<TWord>& _loopEnds, bool _profilingSupport);
 
 		JitEmitter& asm_() { return m_asm; }
 		DSP& dsp() { return m_dsp; }
@@ -63,6 +70,9 @@ namespace dsp56k
 		void increaseInstructionCount(const asmjit::Operand& _count);
 		void increaseCycleCount(const asmjit::Operand& _count);
 		void increaseUint64(const asmjit::Operand& _count, const uint64_t& _target);
+
+		// the instruction that is being generated accesses a peripheral, see emit()
+		void onPeripheralAccess() { m_opAccessesPeripherals = true; }
 
 		const JitConfig& getConfig() const { return m_config; }
 
@@ -96,6 +106,11 @@ namespace dsp56k
 
 		void reset(JitConfig&& _config);
 
+		// Code for rare paths, reached through a branch and jumping back by itself. It is emitted once the block has
+		// ended with an unconditional exit, so the common path falls straight through without a taken branch.
+		void addColdCode(std::function<void()>&& _code) { m_coldCode.push_back(std::move(_code)); }
+		void emitColdCode();
+
 	private:
 		class JitBlockGenerating
 		{
@@ -121,6 +136,7 @@ namespace dsp56k
 		JitDspRegs m_dspRegs;
 		JitDspRegPool m_dspRegPool;
 		Jitmem m_mem;
+		std::vector<std::function<void()>> m_coldCode;
 
 		JitConfig m_config;
 		JitBlockChain* m_chain = nullptr;
@@ -130,5 +146,18 @@ namespace dsp56k
 
 		JitDspMode* m_mode = nullptr;
 		JitBlockRuntimeData* m_currentJitBlockRuntimeData = nullptr;
+
+		std::vector<TWord> m_opCycles;
+
+		// an instruction that accesses a peripheral: where its code starts and how much the block runs before it
+		struct PeripheralAccess
+		{
+			asmjit::BaseNode* cursor;
+			TWord instructions;
+			TWord cycles;
+		};
+
+		std::vector<PeripheralAccess> m_peripheralAccesses;
+		bool m_opAccessesPeripherals = false;
 	};
 }

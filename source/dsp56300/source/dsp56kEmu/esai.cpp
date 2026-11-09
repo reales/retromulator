@@ -10,9 +10,6 @@ namespace dsp56k
 	{
 		m_tx.fill(0);
 		m_rx.fill(0);
-
-		m_sr.set(M_TFS);
-		m_sr.set(M_TDE);
 	}
 
 	void Esai::reset()
@@ -24,10 +21,9 @@ namespace dsp56k
 		m_tccr = 0;
 		m_rccr = 0;
 
-		// Reset status register to power-on state (TFS and TDE set)
+		// Reset clears the status register, TFS and TDE included: the first slot sets them (56362 UM 8.3.6.10,
+		// 8.3.6.12). The 56300 simulator reads SAISR $000000 after reset and after TE is set
 		m_sr = 0;
-		m_sr.set(M_TFS);
-		m_sr.set(M_TDE);
 
 		// Reset TX/RX data registers
 		m_tx.fill(0);
@@ -39,9 +35,11 @@ namespace dsp56k
 
 		// Reset counters
 		m_writtenTX = 0;
+		m_tsrWritten = false;
 		m_readRX = 0;
 		m_txSlotCounter = 0;
 		m_txFrameCounter = 0;
+		m_txUnderrunSlots = 0;
 		m_rxSlotCounter = 0;
 		m_rxFrameCounter = 0;
 
@@ -105,11 +103,17 @@ namespace dsp56k
 		if(!slotActive)
 			return;
 
+		// Exception first, then even slot data, then data (56362 UM table D-3). At the start of an even slot TDE and
+		// TEDE are both set, and the handler of the even slot interrupt clears both when it writes TX
 		if (m_sr.test(M_TUE) && m_tcr.test(M_TEIE))
 		{
 			injectInterrupt(Vba_ESAI_Transmit_Data_with_Exception_Status);
 
 			m_sr.clear(M_TUE);
+		}
+		else if (m_sr.test(M_TEDE) && m_tcr.test(M_TEDIE))
+		{
+			injectInterrupt(Vba_ESAI_Transmit_Even_Data);
 		}
 		else if (m_tcr.test(M_TIE))
 		{
@@ -136,10 +140,15 @@ namespace dsp56k
 
 		if(slotActive)
 		{
+			// exception first, then even slot data, then data, as on the transmit side
 			if (m_sr.test(M_ROE) && m_rcr.test(M_REIE))
 			{
 				injectInterrupt(Vba_ESAI_Receive_Data_With_Exception_Status);
 				m_sr.clear(M_ROE);
+			}
+			else if (m_sr.test(M_REDF) && m_rcr.test(M_REDIE))
+			{
+				injectInterrupt(Vba_ESAI_Receive_Even_Data);
 			}
 			else if (m_rcr.test(M_RIE))
 			{
@@ -153,7 +162,17 @@ namespace dsp56k
 		{
 			m_rxSlotCounter = 0;
 			++m_rxFrameCounter;
+
+			// after the last slot of a frame ended, whatever the slot masks say, and in network mode only, but not on demand
+			// (RDC = 0) (56362 UM, RCR RLIE). Firmware may run its whole per-sample processing from this interrupt
+			if(m_rcr.test(M_RLIE) && (m_rcr & M_RMOD) && getRxWordCount())
+				injectInterrupt(Vba_ESAI_Receive_Last_Slot);
 		}
+	}
+
+	bool Esai::hasPendingInterrupts() const
+	{
+		return m_periph.getDSP().hasPendingInterrupt(Vba_ESAI_Receive_Data + m_vba, Vba_ESAI_Transmit_Last_Slot + m_vba);
 	}
 
 	const TWord& Esai::readStatusRegister() const
@@ -168,6 +187,18 @@ namespace dsp56k
 		m_rcr = _val;
 		if(rem != getEnabledReceivers())
 		{
+			// A receiver that becomes enabled starts operating at the beginning of the
+			// next frame (56362 manual, RE description), it does not join mid-frame.
+			// Align the slot counter accordingly - without this, the slot a receiver
+			// perceives as slot 0 depends on emulation timing at enable, and multi-DSP
+			// TDM setups ended up with a random slot rotation per boot (audibly:
+			// swapped stereo sides / audio landing in the wrong time slots).
+			if(!rem)
+			{
+				m_rxSlotCounter = 0;
+				m_rxFrame.clear();
+			}
+
 			// Note: cannot cast m_periph directly here because we might be a Y peripheral
 			if(auto* p = dynamic_cast<Peripherals56362*>(m_periph.getDSP().getPeriph(0)))
 				p->getEsaiClock().restartClock();
@@ -183,10 +214,36 @@ namespace dsp56k
 		m_tcr = _val;
 		if(tem != getEnabledTransmitters())
 		{
+			// see writeReceiveControlRegister - transmitters likewise start on the
+			// next frame boundary when enabled
+			if(!tem)
+			{
+				m_txSlotCounter = 0;
+				m_txFrame.clear();
+				m_txUnderrunSlots = 0;
+			}
+
 			// Note: cannot cast m_periph directly here because we might be a Y peripheral
 			if(auto* p = dynamic_cast<Peripherals56362*>(m_periph.getDSP().getPeriph(0)))
-				p->getEsaiClock().restartClock();
-			execTX();
+			{
+				auto& clock = p->getEsaiClock();
+				clock.restartClock();
+				// A board that has not supplied any serial clocks yet (clock disabled by the board
+				// code, see EsxiClock::setEnabled) must not see a synthesized slot transfer: the
+				// transmit interrupt would fire before the firmware has loaded its vectors. Whether
+				// the clock is internal (TCKD=1) or external (TCKD=0) does not matter here, the
+				// emulated clock runs either way.
+				if(!clock.isEnabled())
+					return;
+			}
+
+			/*	The synthesized slot transfer starts the frame of a transmitter section that has just been switched on. A
+				transmitter that is enabled while others already run joins them at the next frame sync (56362 manual,
+				TE0-TE5) and adds no slot. Firmware that sets TE0-TE3 one bit at a time would otherwise move its frame
+				by three slots against the receive frame of the same ESAI.
+			*/
+			if(!tem)
+				execTX();
 		}
 	}
 
@@ -231,7 +288,23 @@ namespace dsp56k
 //			if (m_hasReadStatus)
 				m_sr.clear(M_TUE);
 			m_sr.clear(M_TDE);
+			m_sr.clear(M_TEDE, M_TODE);
 		}
+	}
+
+	/*	TSR is a null data register (56362 UM 8.3.11): writing it services the transmitters like writing all enabled TX
+		registers - TDE, TEDE, TODE and TUE clear - but the next slot is not transmitted. TDE comes back at that slot as if
+		data had gone out (8.3.6.12). Firmware counts slots with it: wait for TDE, write TSR, repeat, so that a transmit
+		DMA it enables then lines its first word up with slot 0.
+	*/
+	void Esai::writeTSR()
+	{
+		m_tsrWritten = true;
+		m_writtenTX = getEnabledTransmitters();
+
+		m_sr.clear(M_TUE);
+		m_sr.clear(M_TDE);
+		m_sr.clear(M_TEDE, M_TODE);
 	}
 
 	TWord Esai::readRX(const uint32_t _index)
@@ -244,6 +317,7 @@ namespace dsp56k
 		if(!m_readRX)
 		{
 			m_sr.clear(M_RDF, M_ROE);
+			m_sr.clear(M_REDF, M_RODF);
 		}
 
 		return m_rx[_index];
@@ -342,8 +416,12 @@ namespace dsp56k
 		m_readRX = rem;
 		m_sr.set(M_RDF);
 
+		// REDF or RODF: whether the data arrived in an even or an odd slot (56362 UM 8.3.6.8, 8.3.6.9)
+		m_sr.set((m_rxSlotCounter & 1) ? M_RODF : M_REDF);
+		m_sr.clear((m_rxSlotCounter & 1) ? M_REDF : M_RODF);
+
 		if(m_dma)
-			m_dma->trigger(DmaChannel::RequestSource::EsaiReceiveData);
+			m_dma->trigger(isEsai1() ? DmaChannel::RequestSource::Esai1ReceiveData : DmaChannel::RequestSource::EsaiReceiveData);
 	}
 
 	void Esai::writeSlotToFrame()
@@ -353,21 +431,45 @@ namespace dsp56k
 		if(!tem)
 			return;
 
-		m_txFrame[m_txSlotCounter] = m_tx;
+		// a slot that TSR was written for is not driven, the transmit pins are high impedance
+		if(m_tsrWritten)
+			m_txFrame[m_txSlotCounter] = TxSlot{};
+		else
+			m_txFrame[m_txSlotCounter] = m_tx;
+		m_tsrWritten = false;
 
 //		m_tx.fill(0);
 
+		// Firmware may enable slots that it does not write every frame, and the hardware underruns in them just the
+		// same (TUE set, the previous word sent again). Report when a slot starts and stops underrunning, not per frame
+		const auto slotBit = 1u << m_txSlotCounter;
+
 		if((m_writtenTX & tem) != tem)
 		{
-			LOG("ESAI transmit underrun, written is " << HEX(m_writtenTX) << ", enabled is " << HEX(tem));
+			if(!(m_txUnderrunSlots & slotBit))
+			{
+				LOG("ESAI transmit underrun in slot " << m_txSlotCounter << " from frame " << m_txFrameCounter
+					<< ", written is " << HEX(m_writtenTX) << ", enabled is " << HEX(tem));
+			}
+			m_txUnderrunSlots |= slotBit;
 			m_sr.set(M_TUE);
+		}
+		else if(m_txUnderrunSlots & slotBit)
+		{
+			LOG("ESAI transmit underrun in slot " << m_txSlotCounter << " ended in frame " << m_txFrameCounter);
+			m_txUnderrunSlots &= ~slotBit;
 		}
 
 		m_sr.set(M_TDE);
+
+		// TEDE or TODE: whether TX emptied at the start of an even or an odd slot (56362 UM 8.3.6.13, 8.3.6.14)
+		m_sr.set((m_txSlotCounter & 1) ? M_TODE : M_TEDE);
+		m_sr.clear((m_txSlotCounter & 1) ? M_TEDE : M_TODE);
+
 		m_writtenTX = 0;
 
 		if(m_dma)
-			m_dma->trigger(DmaChannel::RequestSource::EsaiTransmitData);
+			m_dma->trigger(isEsai1() ? DmaChannel::RequestSource::Esai1TransmitData : DmaChannel::RequestSource::EsaiTransmitData);
 	}
 
 	void Esai::writeTSMA(const TWord _tsma)
@@ -423,6 +525,9 @@ namespace dsp56k
 		constexpr std::pair<int, const char*> symbolsY[] =
 		{
 			// ESAI_1
+			{M_PCRE		, "M_PCRE"},
+			{M_PRRE		, "M_PRRE"},
+			{M_PDRE		, "M_PDRE"},
 			{M_RSMB_1	, "M_RSMB_1"},
 			{M_RSMA_1	, "M_RSMA_1"},
 			{M_TSMB_1	, "M_TSMB_1"},

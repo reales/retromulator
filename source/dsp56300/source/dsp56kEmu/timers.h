@@ -120,12 +120,17 @@ namespace dsp56k
 		void writeTPCR(TWord _val);
 
 		const TWord& readTCSR(int _index) const			{ return m_timers[_index].m_tcsr; }
+
 		const TWord& readTLR(int _index) const			{ return m_timers[_index].m_tlr; }
 		const TWord& readTCPR(int _index) const			{ return m_timers[_index].m_tcpr; }
 		const TWord& readTCR(int _index) const			{ return m_timers[_index].m_tcr; }
 
 		const TWord& readTPLR() const					{ return m_tplr; }
 		const TWord& readTPCR() const					{ return m_tpcr; }
+
+		// Level of the TIO pin of a timer, as seen by the DI bit of its TCSR. In capture mode the selected edge
+		// sets TCF. ponytail: the other input modes (event counter, width, period) do not react to the pin yet
+		void setInputPin(int _index, bool _level);
 
 		void setDSP(const DSP* _dsp);
 
@@ -165,6 +170,10 @@ namespace dsp56k
 
 		TWord m_tplr = 0;							// Timer Prescaler Load
 		TWord m_tpcr = 0;							// Timer Prescaler Count
+
+		// prescaler input clocks that did not make up a whole prescaler output tick yet, carried
+		// into the next exec so a long TPLR period is not lost to truncation every time round
+		uint32_t m_prescalerRemainder = 0;
 
 		uint64_t m_lastClock = 0;
 		std::array<Timer,3> m_timers;

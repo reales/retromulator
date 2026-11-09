@@ -46,18 +46,19 @@ namespace dsp56k
 			m_dsp.regs().r[1].var = static_cast<int32_t>(m_address);
 
 			m_dsp.regs().sr.var &= ~0xff;	// ccr is cleared before jump to r1
-			m_dsp.setPC(m_address);			// jmp (r1)
 
 			m_state = State::Data;
 			return false;
 		case State::Data:
 			m_dsp.memory().set(MemArea_P, m_address, _val);
-			m_dsp.getJit().notifyProgramMemWrite(m_address);
+			// the DSP may have decoded this address before, e.g. when a new program is booted over a running one
+			m_dsp.clearOpcodeCache(m_address);
 			++m_address;
 			if(0 == --m_remaining)
 			{
 				LOG("DSP Boot: finished");
 				m_state = State::Finished;
+				m_dsp.setPC(m_initialPC);		// jmp (r1), the boot loader jumps once it has read every word
 				return true;
 			}
 			return false;

@@ -31,6 +31,32 @@ namespace dsp56k
 			return false;
 		}
 
+		// pool registers are handed out front to back, so every volatile must be listed before the first non-volatile
+		template<typename A, typename B> constexpr bool volatilesFirst(const A& _pool, const B& _nonVolatiles)
+		{
+			bool seenNonVolatile = false;
+
+			for (const auto& p : _pool)
+			{
+				bool isNonVolatile = false;
+
+				for (const auto& nv : _nonVolatiles)
+				{
+					if (p.equals(nv))
+					{
+						isNonVolatile = true;
+						break;
+					}
+				}
+
+				if (isNonVolatile)
+					seenNonVolatile = true;
+				else if (seenNonVolatile)
+					return false;
+			}
+			return true;
+		}
+
 		template<typename A, typename B> constexpr bool contains(const A& _a, const B& _b)
 		{
 			for (const auto& a : _a)
@@ -51,8 +77,10 @@ namespace dsp56k
 
 		// these are important as we do not have to push anything on the stack for simple functions if we can use volatiles only
 		static_assert(!contains(g_nonVolatileGPs, *g_regGPTemps.begin()), "first temp must be volatile");
-		static_assert(!contains(g_nonVolatileGPs, regDspPtr), "register for DSP pointer must be volatile");
+		static_assert(contains(g_nonVolatileGPs, regDspPtr), "register for DSP pointer must be non-volatile");
 		static_assert(!contains(g_nonVolatileGPs, g_dspPoolGps[0]), "first pool reg must be volatile");
+		static_assert(volatilesFirst(g_dspPoolGps, g_nonVolatileGPs), "GP pool registers must list all volatiles before the first non-volatile");
+		static_assert(volatilesFirst(g_dspPoolXmms, g_nonVolatileXMMs), "XMM pool registers must list all volatiles before the first non-volatile");
 	}
 #endif
 	constexpr bool g_traceOps = false;
@@ -82,12 +110,17 @@ namespace dsp56k
 		Jit::toJitPtr(_jit)->runCheckPMemWriteAndModeChange(_pc);
 	}
 
+	void funcRunCheckLoopEnd(JitDspPtr* _jit, const TWord _pc) noexcept
+	{
+		Jit::toJitPtr(_jit)->runCheckLoopEnd(_pc);
+	}
+
 	void funcRun(JitDspPtr* _jit, TWord _pc) noexcept
 	{
 		Jit::toJitPtr(_jit)->run(_pc);
 	}
 
-	Jit::Jit(DSP& _dsp) : m_dsp(_dsp), m_rt(new JitRuntime())
+	Jit::Jit(DSP& _dsp) : m_dsp(_dsp), m_trampoline(_dsp), m_rt(new JitRuntime())
 	{
 		m_emitters.reserve(16);
 		m_blockRuntimeDatas.reserve(0x10000);
@@ -120,6 +153,10 @@ namespace dsp56k
 		{
 			LOG("No profiler detected");
 		}
+
+		// a build without a JIT backend, a 32 bit one for example, runs the interpreter and cannot generate this code
+		if constexpr (g_jitSupported)
+			m_trampoline.generateCode();
 	}
 
 	Jit::~Jit()
@@ -165,9 +202,10 @@ namespace dsp56k
 		// duplicated entries are allowed as the same code might be generated in multiple chains because it is run in different DSP modes. But in this case, the loop end must be identical
 		const auto itBegin = m_loops.find(_begin);
 
+		// The end can also differ when an LA write moved it while the loop ran, see checkLoopEnd. The registry keeps the
+		// moved end then, and the DO block is compiled to check it when it runs.
 		if(itBegin != m_loops.end())
 		{
-			assert(itBegin->second == _end);
 			assert(m_loopEnds.find(itBegin->second) != m_loopEnds.end());
 			return;
 		}
@@ -176,6 +214,12 @@ namespace dsp56k
 
 		m_loops.insert(std::make_pair(_begin, _end));
 		m_loopEnds.insert(_end);
+
+		/*	Code can jump into the tail of a loop before its DO has ever run. What was compiled then holds LA without the loop
+			end code, so the loop ran its body once and left without retiring. Recompile it, as for a moved loop end.
+		*/
+		for (auto& it : m_chains)
+			it.second->forgetLoopEnd(_end);
 	}
 
 	void Jit::removeLoop(const JitBlockInfo& _info)
@@ -223,16 +267,19 @@ namespace dsp56k
 
 	void Jit::notifyProgramMemWrite(const TWord _offset)
 	{
-		for (auto& it : m_chains)
-			it.second->notifyPMemWrite(_offset, it.second.get() == m_currentChain);
+		m_dsp.memory().forEachAlias(_offset, [this](const TWord _addr)
+		{
+			for (auto& it : m_chains)
+				it.second->notifyPMemWrite(_addr, it.second.get() == m_currentChain);
 
-		m_maxUsedPAddress = std::max(m_maxUsedPAddress, static_cast<size_t>(_offset));
+			m_maxUsedPAddress = std::max(m_maxUsedPAddress, static_cast<size_t>(_addr));
+		});
 	}
 
 	void Jit::run(const TWord _pc) noexcept
 	{
 		const auto* block = m_currentChain->getBlockUnsafe(_pc);
-		block->getFunc()(&m_dsp.regs(), _pc);
+		m_trampoline.execOne(&m_dsp.regs(), _pc, block->getFunc());
 
 		if(g_traceOps && m_dsp.m_trace)
 		{
@@ -266,6 +313,13 @@ namespace dsp56k
 		checkModeChange();
 	}
 
+	void Jit::runCheckLoopEnd(const TWord _pc) noexcept
+	{
+		run(_pc);
+		checkModeChange();
+		checkLoopEnd();
+	}
+
 	JitConfig Jit::getConfig(const TWord _pc) const
 	{
 		auto& globalConfig = getConfig();
@@ -286,12 +340,16 @@ namespace dsp56k
 	{
 		const auto& i = e.block->getInfo();
 
-		if(i.terminationReason == JitBlockInfo::TerminationReason::WritePMem)
+		if(i.terminationReason == JitBlockInfo::TerminationReason::WritePMem || i.hasFlag(JitBlockInfo::Flags::WritesPMemAtLoopEnd))
 		{
 			if(i.hasFlag(JitBlockInfo::Flags::ModeChange))
 				return &funcRunCheckPMemWriteAndModeChange;
 			return &funcRunCheckPMemWrite;
 		}
+
+		// a block that may move a loop end cannot be linked to: the check has to run after it, see checkLoopEnd
+		if(i.hasFlag(JitBlockInfo::Flags::WritesLA) || i.hasFlag(JitBlockInfo::Flags::LoopEndMoved))
+			return &funcRunCheckLoopEnd;
 
 		if(i.hasFlag(JitBlockInfo::Flags::ModeChange))
 			return &funcRunCheckModeChange;
@@ -313,17 +371,87 @@ namespace dsp56k
 		if (pMemWriteAddr == g_pcInvalid)
 			return;
 
-		for (const auto& it : m_chains)
+		// see JitConfig::trackVolatilePMemory
+		if (m_config.trackVolatilePMemory)
 		{
-			if (it.second->getBlock(pMemWriteAddr))
+			for (const auto& it : m_chains)
 			{
-				m_volatileP.insert(pMemWriteAddr);
-				break;
+				if (it.second->getBlock(pMemWriteAddr))
+				{
+					m_volatileP.insert(pMemWriteAddr);
+					break;
+				}
 			}
 		}
 
 		notifyProgramMemWrite(pMemWriteAddr);
 		m_dsp.notifyProgramMemWrite(pMemWriteAddr);
+	}
+
+	/*	The DSP ends a loop by comparing the address it fetches with LA, so writing LA moves the end of the running loop -
+		from the loop body, a subroutine or an interrupt, further out or further in. Blocks are compiled against the loop
+		registry instead, so bring the registry in line with LA for the innermost active loop.
+
+		That loop is the topmost stack entry holding a loop body start: a DO pushes LA:LC and then its body start:SR, and
+		the DO sits two words in front of the body. A long interrupt clears LF but keeps LA, so the stack rather than LF
+		decides. Not modelled: the one instruction the DSP has already fetched when LA changes is still compared with the
+		old value, which only matters for a write directly in front of the old or the new loop end.
+	*/
+	void Jit::checkLoopEnd() noexcept
+	{
+		const auto& regs = m_dsp.regs();
+
+		for(auto i = static_cast<int>(m_dsp.ssIndex()); i > 0; --i)
+		{
+			const TWord bodyStart = hiword(regs.ss[i]).toWord();
+
+			if(bodyStart < 2)
+				continue;
+
+			const auto it = m_loops.find(bodyStart - 2);
+
+			if(it == m_loops.end())
+				continue;
+
+			const TWord end = (regs.la.var + 1) & 0xffffff;
+
+			if(it->second != end)
+				moveLoopEnd(it->first, end);
+			return;
+		}
+	}
+
+	void Jit::moveLoopEnd(const TWord _begin, const TWord _end)
+	{
+		const auto oldEnd = m_loops[_begin];
+
+		if(m_loopEnds.find(_end) != m_loopEnds.end())
+		{
+			LOG("LA write moves the loop starting at " << HEX(_begin) << " to end at " << HEX(_end) << ", where another loop ends already, ignored");
+			return;
+		}
+
+		m_loopEnds.erase(oldEnd);
+		m_loopEnds.insert(_end);
+		m_loops[_begin] = _end;
+
+		// Recompile what was compiled against the old end: the block that ends there carries the loop end code, a block
+		// running across the new end would carry on past it, and the DO block has to know whether its operand still matches.
+		// Destroying blocks that hold a DO takes the loop out of the registry, so put it back afterwards.
+		destroy(oldEnd - 1);
+		destroy(_end - 1);
+		destroy(_begin);
+
+		// A destroyed single instruction block is kept for reuse, keyed by nothing but its opcode, and would come back with
+		// the loop end it was compiled for. Drop those at both ends, a two word instruction starts one word earlier, and at the DO.
+		for (auto& it : m_chains)
+		{
+			for (const TWord pc : { oldEnd - 1, oldEnd - 2, _end - 1, _end - 2, _begin })
+				it.second->releaseSingleOpCache(pc);
+		}
+
+		if(m_loops.find(_begin) == m_loops.end())
+			addLoop(_begin, _end);
 	}
 
 	void Jit::checkModeChange() noexcept

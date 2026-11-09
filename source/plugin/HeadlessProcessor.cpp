@@ -33,7 +33,6 @@
 #include "virusLib/romloader.h"
 #include "virusLib/romfile.h"
 #include "dx7Lib/device.h"
-#include "dx7Lib/romloader.h"
 #include "matrixLib/device.h"
 #include "matrixLib/patch.h"
 #include "matrixLib/romBankGenerator.h"
@@ -46,6 +45,7 @@
 #include "board/SlotLinks.h"
 #include "hosted/HostedDevice.h"
 #include "fx/FxChain.h"
+#include "rack/RackHost.h"
 #include "LicenseChecker.h"
 #endif
 #include "synthLib/romLoader.h"
@@ -242,7 +242,7 @@ namespace retromulator
         case SynthType::XT:       return xt::RomLoader::findROM().isValid();
         case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
-        case SynthType::DX7:       return true; // runs firmware-free without a ROM
+        case SynthType::DX7:       return true; // runs firmware-free, never loads a ROM
         case SynthType::Matrix:    return true; // runs firmware-free, never loads a ROM
         case SynthType::Emu88:
         {
@@ -782,6 +782,7 @@ namespace retromulator
             addMidiEvent(ev);
         });
         m_fxChain = std::make_unique<fx::Chain>();
+        m_rackHost = std::make_unique<rack::RackHost>(*this);
         m_midiInParser = std::make_unique<board::MidiInParser>(
             [this](const std::string& name) -> std::string
             {
@@ -795,6 +796,9 @@ namespace retromulator
             },
             [this](const SynthType type)
             {
+                // every rack sees the same host MIDI, so only the owner follows a core select
+                if(m_rackChild)
+                    return;
                 // The editor also loads the first bank, as when the core is picked by hand.
                 if(auto* editor = dynamic_cast<RetroEditor*>(getActiveEditor()))
                     editor->selectCoreFromMidi(type);
@@ -836,6 +840,11 @@ namespace retromulator
 
     HeadlessProcessor::~HeadlessProcessor()
     {
+#ifdef CUSTOM
+        m_rackAlive.reset();
+        if(m_rackHost)
+            m_rackHost->removeAllRacks();
+#endif
         m_playlistTimer.reset();
         m_coreAsync.reset();
 
@@ -849,9 +858,14 @@ namespace retromulator
         if(m_renderThread && m_renderThread->joinable())
             m_renderThread->join();
 
-        if(m_savedEditorWidth > 0 && m_savedEditorHeight > 0)
+        bool ownsSettings = true;
+#ifdef CUSTOM
+        ownsSettings = !m_rackChild;
+#endif
+        if(ownsSettings && m_savedEditorWidth > 0 && m_savedEditorHeight > 0)
             saveEditorSizeToSettings(m_savedEditorWidth, m_savedEditorHeight);
 
+        suspendCore(true);
         suspendProcessing(true);
 
         // the hosted plugin's parameters still have the pool as a listener
@@ -868,6 +882,8 @@ namespace retromulator
             setSynthTypeEditorOnly(type);
             return;
         }
+        // before the fields change: processBlock reads them (a rack child renders on a worker)
+        suspendCore(true);
         m_editorOnly  = false;
         m_synthType   = type;
         m_romPath     = romPath;
@@ -903,8 +919,6 @@ namespace retromulator
                 board::applySlotLinks(type, *m_board, *m_paramPool);
         }
 #endif
-
-        suspendProcessing(true);
 
         if(type == SynthType::None)
         {
@@ -982,6 +996,9 @@ namespace retromulator
                     if(auto* dev = getHostedDevice(); dev && m_paramPool)
                         m_paramPool->bindHosted(&dev->getPlugin());
                     pollHostedPreset();
+                    // Nordic keeps its last edit buffer while showing Internal: a new core plays the shown program
+                    if(!keepDevice && m_hostedBank >= 0)
+                        selectHostedPreset(m_hostedBank, std::max(0, m_currentProgram));
                 }
 #endif
             }
@@ -992,7 +1009,7 @@ namespace retromulator
         refreshFxLatency();
 #endif
 
-        suspendProcessing(false);
+        suspendCore(false);
         updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
     }
 
@@ -1061,6 +1078,12 @@ namespace retromulator
         m_midiOutCore = enabled;
         if(save)
             writeSettingsBool("midiOutCoreOutput", enabled);
+#ifdef CUSTOM
+        if(m_rackHost && !m_rackChild)
+            for(int i = 1; i < m_rackHost->getNumRacks(); ++i)
+                if(auto* child = m_rackHost->getRack(i))
+                    child->setMidiOutCore(enabled, false);
+#endif
     }
 
     int HeadlessProcessor::latencyBlocksFor(const SynthType type)
@@ -1095,6 +1118,8 @@ namespace retromulator
         }
 
         // ── Prepare state on the calling (GUI) thread ────────────────────────
+        // before the fields change, as in setSynthType
+        suspendCore(true);
         const bool wasHosted = isHostedCore(m_synthType) && !m_editorOnly;
         m_isBooting.store(true);
         m_synthType   = type;
@@ -1126,8 +1151,6 @@ namespace retromulator
         }
 #endif
 
-        suspendProcessing(true);
-
         // Detach the old device from Plugin without deleting it — device destructors
         // join DSP threads which can block for a long time. We'll delete on the boot thread.
         getPlugin().releaseDevice();
@@ -1140,7 +1163,7 @@ namespace retromulator
         getPlugin().setDevice(dummy);
         m_device.reset(dummy);
 
-        suspendProcessing(false);
+        suspendCore(false);
 
         // Delete old device on a fire-and-forget thread — its DSP thread join
         // can block for a long time and must not delay the new device boot.
@@ -1174,8 +1197,8 @@ namespace retromulator
             if(!oldDeviceReady->load())
                 fprintf(stderr, "[Boot] WARNING: old device destruction timed out, proceeding anyway\n");
 
-            fprintf(stderr, "[Boot] async: suspendProcessing(true)\n");
-            suspendProcessing(true);
+            fprintf(stderr, "[Boot] async: suspendCore(true)\n");
+            suspendCore(true);
 
             fprintf(stderr, "[Boot] async: rebootDevice for type %d\n", static_cast<int>(type));
             bool ok = rebootDevice();
@@ -1239,8 +1262,8 @@ namespace retromulator
                 }
             }
 
-            fprintf(stderr, "[Boot] async: suspendProcessing(false)\n");
-            suspendProcessing(false);
+            fprintf(stderr, "[Boot] async: suspendCore(false)\n");
+            suspendCore(false);
             m_isBooting.store(false);
 
             // Skip the callback during shutdown: it would run after `this` is gone.
@@ -1263,6 +1286,10 @@ namespace retromulator
 #if JucePlugin_Build_Standalone && JUCE_IOS
         if(wrapperType != wrapperType_Standalone)
             return;
+#  ifdef CUSTOM
+        if(m_rackChild)
+            return;
+#  endif
 
         const auto type = m_synthType;
         juce::MessageManager::callAsync([type]()
@@ -1545,7 +1572,7 @@ namespace retromulator
 
         // DX7 bulk voice dump: m_bankMessages contains 32 x 128-byte packed voice entries
         // (split from the original 4104-byte bulk dump in loadPreset).
-        // Send the original bulk dump sysex to load all 32 voices into the DX7 firmware,
+        // Send the original bulk dump sysex to load all 32 voices into the DX7,
         // then a MIDI program change to select the specific voice.
         if(m_synthType == SynthType::DX7 && m_bankMessages.size() == 32 &&
            m_sysexData.size() >= 4104)
@@ -1554,18 +1581,6 @@ namespace retromulator
             synthLib::SMidiEvent bulkEv(synthLib::MidiEventSource::Editor);
             bulkEv.sysex.assign(m_sysexData.begin(), m_sysexData.begin() + 4104);
             getPlugin().addMidiEvent(bulkEv);
-
-            // Force firmware to reload voice parameters by first selecting a
-            // different voice, then the target. Without this, the firmware may
-            // skip reloading if the current voice number already matches.
-            const auto* dx = dynamic_cast<const dx7Emu::Device*>(m_device.get());
-            if(!dx || !dx->isClean())
-            {
-                const uint8_t dummy = static_cast<uint8_t>(((index & 0x1f) + 1) % 32);
-                synthLib::SMidiEvent pcDummy(synthLib::MidiEventSource::Editor,
-                    0xC0, dummy, 0x00);
-                getPlugin().addMidiEvent(pcDummy);
-            }
 
             synthLib::SMidiEvent pc(synthLib::MidiEventSource::Editor,
                 0xC0, static_cast<uint8_t>(index & 0x1f), 0x00);
@@ -3084,7 +3099,7 @@ namespace retromulator
     {
         // Live audio must not touch the board while this runs: there is one device and
         // the render drives it at its own pace.
-        suspendProcessing(true);
+        suspendCore(true);
         // Preferred device rate 0, as the live path passes: the board picks its native
         // rate and the resampler bridges to 48 kHz.
         getPlugin().setHostSamplerate(static_cast<float>(kMidiRenderRate), 0.0f);
@@ -3105,7 +3120,7 @@ namespace retromulator
             dev->setOfflineRender(false);
         getPlugin().setHostSamplerate(static_cast<float>(getSampleRate()), 0.0f);
         getPlugin().setBlockSize(static_cast<uint32_t>(getBlockSize()));
-        suspendProcessing(false);
+        suspendCore(false);
     }
 
     void HeadlessProcessor::renderMidiToWav(const juce::URL& destUrl, const RenderFormat format)
@@ -3493,16 +3508,8 @@ namespace retromulator
 
     void HeadlessProcessor::applyDx7Controllers(synthLib::Device* dev)
     {
-        auto* dx = dynamic_cast<dx7Emu::Device*>(dev);
-        if(!dx)
-            return;
-        if(dx->isClean())
-        {
+        if(auto* dx = dynamic_cast<dx7Emu::Device*>(dev))
             dx->setFunctions(m_dx7Fn);
-            return;
-        }
-        for(int n = 0; n < 4; ++n)
-            dx->setController(n, dx7Ctrl(m_dx7Fn, n).range, dx7Ctrl(m_dx7Fn, n).assign);
     }
 
     // ── Trackermeister ──────────────────────────────────────────────────────
@@ -3788,7 +3795,7 @@ namespace retromulator
         if(!dev)
             return false;
 
-        suspendProcessing(true);
+        suspendCore(true);
         // The player runs at any of the common rates, so 48 kHz is asked for directly
         // and no resampler sits between the sinc interpolation and the file.
         getPlugin().setHostSamplerate(static_cast<float>(kTrackerRenderRate), static_cast<float>(kTrackerRenderRate));
@@ -3812,7 +3819,7 @@ namespace retromulator
         }
         getPlugin().setHostSamplerate(static_cast<float>(getSampleRate()), 0.0f);
         getPlugin().setBlockSize(static_cast<uint32_t>(getBlockSize()));
-        suspendProcessing(false);
+        suspendCore(false);
     }
 
     void HeadlessProcessor::renderTrackerSong(const juce::URL& destUrl, const RenderFormat format,
@@ -4124,7 +4131,8 @@ namespace retromulator
 #ifdef CUSTOM
     hosted::Device* HeadlessProcessor::getHostedDevice() const
     {
-        if(!isHostedCore(m_synthType) || m_editorOnly)
+        // a failed load leaves the previous core's device in place, maybe another hosted plugin
+        if(!isHostedCore(m_synthType) || m_editorOnly || m_deviceError != synthLib::DeviceError::None)
             return nullptr;
         return dynamic_cast<hosted::Device*>(m_device.get());
     }
@@ -4154,18 +4162,29 @@ namespace retromulator
         if(!dev)
             return;
         m_registered.store(license::isRegistered(), std::memory_order_relaxed);
-        char name[256] = {};
-        dev->getLink().getCurrentName(name, static_cast<int32_t>(sizeof(name)));
-        int32_t bank = -1, preset = -1;
         auto& link = dev->getLink();
+        char name[256] = {};
+        link.getCurrentName(name, static_cast<int32_t>(sizeof(name)));
+        int32_t bank = -1, preset = -1;
         link.getCurrentPreset(&bank, &preset);
 
         // the host's program list is the loaded preset's folder
-        if(bank >= 0 && (bank != m_hostedBank || m_programNames.empty()))
+        bool listed = false;
+        if(bank < 0)
+        {
+            if(m_hostedBank >= 0)
+            {
+                m_hostedBank = -1;
+                m_programNames.clear();
+            }
+        }
+        else if(bank != m_hostedBank || m_programNames.empty())
         {
             m_hostedBank = bank;
             m_programNames.clear();
+            listed = true;
             const int count = link.getPresetCount(bank);
+            m_programNames.reserve(static_cast<size_t>(std::max(0, count)));
             for(int i = 0; i < count; ++i)
             {
                 char presetName[256] = {};
@@ -4176,6 +4195,14 @@ namespace retromulator
 
         const std::string n(name);
         const int program = std::max(0, static_cast<int>(preset));
+        // renamed or saved in the plugin's own editor: only that entry is read again
+        if(!listed && bank >= 0 && preset >= 0 && static_cast<size_t>(preset) < m_programNames.size()
+           && n != m_patchName && program == m_currentProgram)
+        {
+            char presetName[256] = {};
+            if(link.getPresetName(bank, preset, presetName, static_cast<int32_t>(sizeof(presetName))) == retroHosted::kOk)
+                m_programNames[static_cast<size_t>(preset)] = presetName;
+        }
         if(n != m_patchName || program != m_currentProgram)
         {
             m_patchName = n;
@@ -4531,26 +4558,85 @@ namespace retromulator
 
     void HeadlessProcessor::audioWorkgroupContextChanged(const juce::AudioWorkgroup& _wg)
     {
-        const juce::SpinLock::ScopedLockType sl(m_audioWorkgroupLock);
-        m_audioWorkgroup = _wg;
+        {
+            const juce::SpinLock::ScopedLockType sl(m_audioWorkgroupLock);
+            m_audioWorkgroup = _wg;
+        }
+#ifdef CUSTOM
+        if(m_rackHost)
+            m_rackHost->setAudioWorkgroup(_wg);
+#endif
+    }
+
+    void HeadlessProcessor::suspendCore(const bool suspend)
+    {
+        if(suspend)
+        {
+            // the lock waits out a block already inside the core
+            const juce::ScopedLock sl(m_coreLock);
+            m_coreSuspended.fetch_add(1, std::memory_order_acq_rel);
+            return;
+        }
+        int n = m_coreSuspended.load();
+        while(n > 0 && !m_coreSuspended.compare_exchange_weak(n, n - 1))
+        {
+        }
     }
 
     void HeadlessProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
     {
-#ifdef CUSTOM
-        // a hosted plugin's tempo sync follows the host
-        if(isHostedCore(m_synthType))
-            if(auto* dev = getHostedDevice())
-                dev->setHostPlayHead(getPlayHead());
+        // a core change, boot or offline render holds the core: only this rack goes silent
+        const juce::ScopedTryLock coreLock(m_coreLock);
+        const bool coreRuns = coreLock.isLocked() && m_coreSuspended.load(std::memory_order_acquire) == 0;
 
-        if(m_synthType == SynthType::Discovery && isNonRealtime() && !m_registered.load(std::memory_order_relaxed))
+#ifdef CUSTOM
+        if(coreRuns)
         {
-            buffer.clear();
-            midi.clear();
-            return;
+            // a hosted plugin's tempo sync follows the host
+            if(isHostedCore(m_synthType))
+                if(auto* dev = getHostedDevice())
+                    dev->setHostPlayHead(getPlayHead());
+
+            if(m_synthType == SynthType::Discovery && isNonRealtime() && !m_registered.load(std::memory_order_relaxed))
+            {
+                buffer.clear();
+                midi.clear();
+                return;
+            }
+        }
+
+        // children get the block as the host sent it, before rack 0 filters or consumes MIDI
+        const bool racks = !m_rackChild && m_rackHost->isActive();
+        if(racks)
+        {
+            m_rackHost->setNonRealtime(isNonRealtime());
+            m_rackHost->beginBlock(buffer, midi, buffer.getNumSamples(), getPlayHead());
+            m_rackHost->filterOwnerMidi(midi);
         }
 #endif
 
+        if(coreRuns)
+            processCore(buffer, midi);
+        else
+        {
+            buffer.clear();
+            midi.clear();
+        }
+
+#ifdef CUSTOM
+        if(racks)
+            m_rackHost->endBlock(buffer, midi);
+        m_fxChain->process(buffer, midi, getPlayHead());
+        // a child's None core would pass its input on to the owner's MIDI out
+        if(m_rackChild && coreRuns && m_synthType == SynthType::None)
+            midi.clear();
+        if(coreRuns && m_midiInParser)
+            m_midiInParser->appendEcho(midi);
+#endif
+    }
+
+    void HeadlessProcessor::processCore(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+    {
         if(m_synthType == SynthType::CA72)
             if(auto* dev = getCA72Device())
             {
@@ -4647,13 +4733,8 @@ namespace retromulator
         }
         else
             Processor::processBlock(buffer, midi);
-        m_fxChain->process(buffer, midi, getPlayHead());
 #else
         Processor::processBlock(buffer, midi);
-#endif
-#ifdef CUSTOM
-        if(m_midiInParser)
-            m_midiInParser->appendEcho(midi);
 #endif
 
         if(trackerLoopKey && m_coreAsync)
@@ -4665,19 +4746,88 @@ namespace retromulator
     {
         Processor::prepareToPlay(sampleRate, maximumExpectedSamplesPerBlock);
         m_fxChain->prepare(sampleRate, maximumExpectedSamplesPerBlock);
+        m_rackHost->prepare(sampleRate, maximumExpectedSamplesPerBlock);
     }
 
     void HeadlessProcessor::releaseResources()
     {
         m_fxChain->release();
         Processor::releaseResources();
+        m_rackHost->release();
     }
 
     void HeadlessProcessor::updateLatencySamples()
     {
-        Processor::updateLatencySamples();
-        if(const int fx = m_fxChain->getLatencySamples())
-            setLatencySamples(getLatencySamples() + fx);
+        // as Processor::updateLatencySamples, but the host hears only the total
+        const int core = static_cast<int>(getProperties().isSynth ? getPlugin().getLatencyMidiToOutput()
+                                                                  : getPlugin().getLatencyInputToOutput());
+        m_coreLatencySamples.store(core, std::memory_order_relaxed);
+        int total = core;
+        if(!m_rackChild && m_rackHost)
+        {
+            m_rackHost->refreshLatency();
+            if(m_rackHost->getNumRacks() > 1)
+                total = std::max(core, m_rackHost->getAlignedLatencySamples());
+        }
+        total += m_fxChain->getLatencySamples();
+        setLatencySamples(total);
+    }
+
+    void HeadlessProcessor::restoreRacks(std::vector<uint8_t>&& racks)
+    {
+        bool pending = false;
+        {
+            const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+            pending = m_racksPending;
+        }
+        // a session without racks leaves none behind, and costs nothing when there are none
+        if(racks.empty() && !pending && !m_rackHost->isActive())
+            return;
+
+        if(juce::MessageManager::existsAndIsCurrentThread())
+        {
+            {
+                const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+                m_racksPending = false;
+                m_pendingRacks.clear();
+                ++m_racksSeq;
+            }
+            m_rackHost->setState(racks);
+            return;
+        }
+
+        // getStateInformation saves the pending racks until the message thread applies them
+        uint32_t seq = 0;
+        {
+            const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+            m_pendingRacks = std::move(racks);
+            m_racksPending = true;
+            seq = ++m_racksSeq;
+        }
+        juce::MessageManager::callAsync([this, alive = std::weak_ptr<bool>(m_rackAlive), seq]
+        {
+            if(!alive.lock())
+                return;
+            std::vector<uint8_t> state;
+            {
+                const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+                if(!m_racksPending || m_racksSeq != seq)
+                    return;
+                state = m_pendingRacks;
+            }
+            m_rackHost->setState(state);
+            const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+            if(m_racksSeq == seq)
+            {
+                m_racksPending = false;
+                m_pendingRacks.clear();
+            }
+        });
+    }
+
+    void HeadlessProcessor::updateRackLatency()
+    {
+        updateLatencySamples();
     }
 
     void HeadlessProcessor::refreshFxLatency()
@@ -4809,6 +4959,8 @@ namespace retromulator
     static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
     static constexpr int32_t kBoardEditsMagic = 0x54444542;      // 'BEDT'
     static constexpr int32_t kFxChainMagic = 0x48435846;         // 'FXCH'
+    static constexpr int32_t kRacksTailMagic = 0x30534B52;       // 'RKS0', unreleased builds after 2.2.1
+    static constexpr int32_t kRacksMagic = 0x31534B52;           // 'RKS1'
     // "E88D": the board. Written last, and read back from the tail before the device is
     // created, so the boot picks the right one without parsing the blocks in between.
     static constexpr int32_t kEmu88BoardMagic = 0x44383845;
@@ -5016,6 +5168,30 @@ namespace retromulator
                 appendString(destData, edits);
             }
         }
+
+        // ['RKS1':int32][length:int32][racks]. Last of the blocks read from the front, so
+        // 2.2.1 and earlier stop before it and still find the tail blocks below.
+        if(!m_rackChild)
+        {
+            std::vector<uint8_t> racks;
+            bool pending = false;
+            {
+                const std::lock_guard<std::mutex> lock(m_pendingRacksLock);
+                if(m_racksPending)
+                {
+                    racks = m_pendingRacks;
+                    pending = true;
+                }
+            }
+            if(!pending && m_rackHost->isActive())
+                m_rackHost->getState(racks);
+            if(!racks.empty())
+            {
+                appendInt32(destData, kRacksMagic);
+                appendInt32(destData, static_cast<int32_t>(racks.size()));
+                destData.append(racks.data(), racks.size());
+            }
+        }
 #endif
 
         // ['MXLL':int32][lfo1 last division:int32][lfo2 last division:int32]
@@ -5125,6 +5301,21 @@ namespace retromulator
         int offset = 0;
 
 #ifdef CUSTOM
+        // unreleased builds after 2.2.1 put the racks after the chain
+        std::vector<uint8_t> racks;
+        {
+            int32_t magic = 0, length = 0;
+            if(sizeInBytes >= 12)
+            {
+                std::memcpy(&magic, bytes + sizeInBytes - 4, 4);
+                std::memcpy(&length, bytes + sizeInBytes - 8, 4);
+            }
+            if(magic == kRacksTailMagic && length > 0 && length <= sizeInBytes - 12)
+            {
+                sizeInBytes -= length + 8;
+                racks.assign(bytes + sizeInBytes, bytes + sizeInBytes + length);
+            }
+        }
         {
             std::vector<uint8_t> chain;
             int32_t magic = 0, length = 0;
@@ -5245,9 +5436,6 @@ namespace retromulator
                 m_dx7Fn = dx7Emu::Device::unpackFunctions(w);
             }
         }
-        const auto* runningDx7 = dynamic_cast<const dx7Emu::Device*>(m_device.get());
-        const bool dx7EngineMatches = newType != SynthType::DX7
-            || (runningDx7 && runningDx7->isClean());
 
         // CA-72 panel visibility sits in the last eight bytes; per instance, shown by default
         m_corePanelHidden = false;
@@ -5262,7 +5450,7 @@ namespace retromulator
         // A patch fully describes these cores, so the one already running takes the session
         // without a reboot.
         const bool keepDevice = newType == m_synthType && romPath == m_romPath && !m_editorOnly
-            && m_deviceError == synthLib::DeviceError::None && m_device && dx7EngineMatches
+            && m_deviceError == synthLib::DeviceError::None && m_device
             && (newType == SynthType::Matrix || newType == SynthType::DX7 || newType == SynthType::OPL3
                 || newType == SynthType::Ayumi || newType == SynthType::OpenB3 || newType == SynthType::CA72
                 || newType == SynthType::OpenWurli || isHostedCore(newType));
@@ -5720,6 +5908,22 @@ namespace retromulator
             else
                 offset = linksStart;
         }
+
+        {
+            const int racksStart = offset;
+            int32_t racksMagic = 0, racksLength = 0;
+            if(readInt32(bytes, sizeInBytes, offset, racksMagic) && racksMagic == kRacksMagic
+               && readInt32(bytes, sizeInBytes, offset, racksLength) && racksLength > 0
+               && racksLength <= sizeInBytes - offset)
+            {
+                racks.assign(bytes + offset, bytes + offset + racksLength);
+                offset += racksLength;
+            }
+            else
+                offset = racksStart;
+        }
+        if(!m_rackChild)
+            restoreRacks(std::move(racks));
 #endif
 
         if(m_paramPool && !restoredSlots.empty())

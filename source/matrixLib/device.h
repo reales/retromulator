@@ -96,6 +96,9 @@ namespace matrixLib
 			std::vector<float> mono;
 			bool asleep = false;
 			uint32_t quietSamples = 0;
+			uint32_t stillSamples = 0;
+			float sleepGain = 1.0f;
+			std::array<int32_t, matrixClean::VoiceCount * 3> envSnap{};
 		};
 
 		void pushMidi(const synthLib::SMidiEvent& _ev, double _timeUs);
@@ -106,7 +109,7 @@ namespace matrixLib
 		void clearNotes(int _channel);
 		void wake(uint32_t _board, double _timeUs);
 		void updateSleep(uint32_t _board, size_t _samples);
-		bool envelopesDone(uint32_t _board) const;
+		uint32_t envelopeChanges(uint32_t _board);
 		void flushWrites(uint32_t _board);
 		void deriveAnalog();
 		void applyAnalog();

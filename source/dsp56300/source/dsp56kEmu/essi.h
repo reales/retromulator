@@ -172,6 +172,7 @@ namespace dsp56k
 
 		TWord hasEnabledTransmitters() const override	{ return m_crb.testMask(RegCRBbits::CRB_TE); }
 		TWord hasEnabledReceivers() const override		{ return m_crb.test(RegCRBbits::CRB_RE); }
+		bool hasPendingInterrupts() const override;
 
 		bool getReceiveFrameSync() const				{ return m_sr.test(SSISR_RFS); }
 		bool getTransmitFrameSync() const				{ return m_sr.test(SSISR_TFS); }
@@ -206,10 +207,12 @@ namespace dsp56k
 		std::string getCrbAsString() const;
 
 		const auto& getSR() const { return m_sr; }
+		const auto& getCRA() const { return m_cra; }
+		const auto& getCRB() const { return m_crb; }
+		TWord getTxWordCount() const;
+		TWord getRxWordCount() const;
 
 	private:
-		TWord getRxWordCount() const;
-		TWord getTxWordCount() const;
 
 		void injectInterrupt(TWord _interrupt) const;
 		void readSlotFromFrame();

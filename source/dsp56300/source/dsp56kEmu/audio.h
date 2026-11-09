@@ -1,8 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <vector>
 #include <array>
 #include <cstring> // memcpy
 
@@ -109,14 +113,34 @@ namespace dsp56k
 		using TxFrame = Frame<TxSlot>;
 		using RxFrame = Frame<RxSlot>;
 
-		Audio() : m_callback([](Audio*) {}) {}
+		// Callbacks receive a frame and a mutable frame index reference.
+		// The frame index is owned by Audio and initialized to 0.
+		// Callbacks are free to read and modify it to track position.
+		using ReadRxCallback = std::function<void(uint64_t&, RxFrame&)>;
+		using WriteTxCallback = std::function<void(uint64_t&, const TxFrame&)>;
+
+		explicit Audio(bool _useRingBuffers = true);
 
 		void terminate();
 
-		void setCallback(const AudioCallback& _ac, const int _callbackSamples)
+		// Published like setCallback() below: voice expansion swaps them while the DSP thread may be inside one
+		void setReadRxCallback(ReadRxCallback _callback) { publish(m_readRxCallback, m_readRxCallbacks, std::move(_callback)); }
+		void setWriteTxCallback(WriteTxCallback _callback) { publish(m_writeTxCallback, m_writeTxCallbacks, std::move(_callback)); }
+
+		bool hasRingBuffers() const { return m_useRingBuffers; }
+
+		// The DSP thread calls the current callback from writeTXimpl while the host thread swaps it
+		// here (boot hand-off, terminate()). Assigning the std::function in place let the DSP thread
+		// observe it mid-swap and throw bad_function_call, which nothing catches on a DSP thread, so
+		// the process aborted. Publish an immutable new callback with one atomic store instead and
+		// keep the replaced ones alive - setCallback is a boot/teardown operation, a handful of calls
+		// per instance, and only ever from the host/UC thread.
+		void setCallback(const AudioCallback& _ac)
 		{
-			m_callbackSamples = _callbackSamples;
-			m_callback = _ac ? _ac : [](Audio*) {};
+			auto cb = std::make_unique<AudioCallback>(_ac ? _ac : AudioCallback([](Audio*) {}));
+			auto* const c = cb.get();
+			m_callbacks.emplace_back(std::move(cb));
+			m_callback.store(c, std::memory_order_release);
 		}
 
 		void writeEmptyAudioIn(const size_t _len)
@@ -135,6 +159,16 @@ namespace dsp56k
 		template<typename T, typename TFunc>
 		void processAudioInput(const uint32_t _frames, const size_t _latency, const TFunc& _createRxFrame)
 		{
+			// one wakeup per block instead of one per frame when the DSP thread waits for input
+			if(_latency == m_latency && _frames > 0 && _frames <= RingBufferSize)
+			{
+				m_audioInputs.emplace_back(_frames, [&](const size_t _s, RxFrame& _frame)
+				{
+					_createRxFrame(_s, _frame);
+				});
+				return;
+			}
+
 			for (uint32_t s = 0; s < _frames; ++s)
 			{
 				// INPUT
@@ -193,13 +227,18 @@ namespace dsp56k
 		template<typename T, typename TFunc>
 		void processAudioOutput(const uint32_t _frames, const TFunc& _readOutputCbk)
 		{
-			for (uint32_t i = 0; i < _frames; ++i)
+			// One wait for many frames: a wait per frame woke this thread for every frame the DSP wrote. At most half
+			// of the ring at once, the DSP must find room for the frames after them
+			constexpr uint32_t maxChunk = static_cast<uint32_t>(decltype(m_audioOutputs)::capacity() / 2);
+
+			for (uint32_t i = 0; i < _frames;)
 			{
-				m_audioOutputs.waitNotEmpty();
-				m_audioOutputs.pop_front([&](TxFrame& _frame)
+				const auto count = std::min(_frames - i, maxChunk);
+				m_audioOutputs.pop_front(count, [&](const size_t _j, TxFrame& _frame)
 				{
-					_readOutputCbk(i, _frame);
+					_readOutputCbk(i + static_cast<uint32_t>(_j), _frame);
 				});
+				i += count;
 			}
 		}
 
@@ -258,9 +297,8 @@ namespace dsp56k
 		void readRXimpl(RxFrame& _values);
 		void writeTXimpl(const TxFrame& _values);
 
-		AudioCallback m_callback;
-
-		size_t m_callbackSamples = 0;
+		std::atomic<const AudioCallback*> m_callback;
+		std::vector<std::unique_ptr<AudioCallback>> m_callbacks;	// owns every callback ever set, see setCallback
 
 		static void incFrameSync(uint32_t& _frameSync)
 		{
@@ -274,8 +312,27 @@ namespace dsp56k
 			FrameSyncChannelRight = 0
 		};
 
+		bool m_useRingBuffers;
+
 		RingBuffer<RxFrame, RingBufferSize, true, false> m_audioInputs;
 		RingBuffer<TxFrame, RingBufferSize, true, false> m_audioOutputs;
 		size_t m_latency = 0;
+
+		std::atomic<bool> m_terminated{false};
+
+		template<typename T> static void publish(std::atomic<const T*>& _current, std::vector<std::unique_ptr<T>>& _owned, T&& _callback)
+		{
+			auto cb = std::make_unique<T>(std::move(_callback));
+			auto* const c = cb.get();
+			_owned.emplace_back(std::move(cb));
+			_current.store(c, std::memory_order_release);
+		}
+
+		std::atomic<const ReadRxCallback*> m_readRxCallback{nullptr};
+		std::atomic<const WriteTxCallback*> m_writeTxCallback{nullptr};
+		std::vector<std::unique_ptr<ReadRxCallback>> m_readRxCallbacks;
+		std::vector<std::unique_ptr<WriteTxCallback>> m_writeTxCallbacks;
+		uint64_t m_readFrameIndex = 0;
+		uint64_t m_writeFrameIndex = 0;
 	};
 }

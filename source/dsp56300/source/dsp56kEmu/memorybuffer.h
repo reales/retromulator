@@ -1,16 +1,26 @@
 #pragma once
 
-#include <map>
+#include <vector>
 
+#include "dsp56kBase/mmuhelper.h"
 #include "types.h"
 
 namespace dsp56k
 {
+	// A range of DSP addresses below the external memory address that shows external memory, in P, X and Y alike. On
+	// the chip, that is a chip select window over memory that decodes fewer address lines than the DSP drives
+	struct MemoryMirror
+	{
+		TWord address;	// first DSP address of the mirror
+		TWord size;		// number of words
+		TWord source;	// DSP address of the external memory word that appears at 'address'
+	};
+
 #ifdef __ANDROID__
 	class MemoryBuffer
 	{
 	public:
-		MemoryBuffer(TWord _pSize, TWord _xySize, TWord _externalMemAddress) {}
+		MemoryBuffer(TWord _pSize, TWord _xySize, TWord _externalMemAddress, const std::vector<MemoryMirror>& _mirrors) {}
 		~MemoryBuffer() {}
 
 		bool isValid() const { return false; }
@@ -23,16 +33,8 @@ namespace dsp56k
 	class MemoryBuffer
 	{
 	public:
-#ifdef _WIN32
-		using THandle = void*;
-		static constexpr THandle InvalidHandle = nullptr;
-#else
-		using THandle = int;
-		static constexpr THandle InvalidHandle = -1;
-#endif
-
-		MemoryBuffer(TWord _pSize, TWord _xySize, TWord _externalMemAddress);
-		~MemoryBuffer();
+		MemoryBuffer(TWord _pSize, TWord _xySize, TWord _externalMemAddress, const std::vector<MemoryMirror>& _mirrors);
+		~MemoryBuffer() = default;
 
 		bool isValid() const { return m_isValid; }
 
@@ -41,32 +43,13 @@ namespace dsp56k
 		TWord* ptrP() const { return m_p; }
 
 	private:
-		TWord* mapMem(TWord _offset, TWord _size, TWord* _ptr);
-		bool unmapMem(TWord*& _ptr);
-
-		TWord* createBasePtr(TWord _totalByteSize);
-		void freeBasePtr();
-
-		THandle createFileMapping(TWord _neededByteSize);
-		void destroyFileMapping();
-
-		THandle m_hFileMapping = InvalidHandle;
+		MmuHelper m_mmu;
 
 		TWord* m_x = nullptr;
 		TWord* m_y = nullptr;
 		TWord* m_p = nullptr;
 
-		TWord* m_xShared = nullptr;
-		TWord* m_yShared = nullptr;
-		TWord* m_pShared = nullptr;
-
 		bool m_isValid = false;
-		uint8_t* m_basePtr = nullptr;
-		TWord m_basePtrSize = 0;
-
-		std::map<TWord*, TWord> m_mappedSizes;	// ptr => size
 	};
 #endif
 }
-
-

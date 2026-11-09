@@ -4,6 +4,12 @@
 
 namespace dsp56kDebugger
 {
+	namespace
+	{
+		// marks the selected address; unlike SetSelection() it neither moves the caret nor scrolls the view
+		constexpr int g_selectedAddressIndicator = 0;
+	}
+
 	Memory::Memory(Debugger& _debugger, wxWindow* _parent, dsp56k::EMemArea _area)
 		: StyledTextCtrl(_parent, wxID_ANY, wxDefaultPosition, wxSize(700,600))
 		, DebuggerListener(_debugger)
@@ -15,6 +21,11 @@ namespace dsp56kDebugger
 		StyleSetBackground(1, *wxRED);
 
 		SetSelBackground(true, wxColour(255,230,150));
+
+		IndicatorSetStyle(g_selectedAddressIndicator, wxSTC_INDIC_ROUNDBOX);
+		IndicatorSetForeground(g_selectedAddressIndicator, wxColour(255,230,150));
+		IndicatorSetAlpha(g_selectedAddressIndicator, 255);
+		IndicatorSetUnder(g_selectedAddressIndicator, true);
 
 		initialize();
 
@@ -101,7 +112,19 @@ namespace dsp56kDebugger
 	{
 		int start, end;
 		addressToPositions(start, end, _addr);
-		SetSelection(start, end);
+
+		// update() calls this on every refresh, so it must not scroll the view away from where the user is
+		if(m_selectedIndicatorEnd > m_selectedIndicatorStart)
+		{
+			SetIndicatorCurrent(g_selectedAddressIndicator);
+			IndicatorClearRange(m_selectedIndicatorStart, m_selectedIndicatorEnd - m_selectedIndicatorStart);
+		}
+
+		SetIndicatorCurrent(g_selectedAddressIndicator);
+		IndicatorFillRange(start, end - start);
+
+		m_selectedIndicatorStart = start;
+		m_selectedIndicatorEnd = end;
 	}
 
 	void Memory::update(int _line, int _count)
@@ -160,7 +183,8 @@ namespace dsp56kDebugger
 
 	void Memory::evGotoAddress(dsp56k::TWord _addr)
 	{
-		if(isFocused())
+		// the dialog has just closed, the focus may not be back yet
+		if(isFocused() || isLastFocused())
 		{
 			const auto line = _addr / m_columnCount;
 			GotoLine(static_cast<int>(line));
@@ -194,7 +218,7 @@ namespace dsp56kDebugger
 		refresh();
 	}
 
-	wxBEGIN_EVENT_TABLE(Memory, wxStyledTextCtrl)
+	wxBEGIN_EVENT_TABLE(Memory, StyledTextCtrl)
 		EVT_LEFT_DOWN(Memory::onLeftMouseDown)
 	wxEND_EVENT_TABLE()
 }

@@ -54,6 +54,7 @@ namespace dsp56k
 		void transferSaturation_verify();
 
 		void transferSaturation48();
+		void transferSaturationScaleUp();
 
 		void testCCCC(const int64_t _value, const int64_t _compareValue, const bool _lt, bool _le, bool _eq, bool _ge, bool _gt, bool _neq);
 
@@ -74,8 +75,17 @@ namespace dsp56k
 
 		// host register pressure test
 		void parallelMoveXY();
+		void parallelAluMoveSameAccumulator();
+
+		void blockDestroyedWhileRunning();
+		void branchOutOfPMemory();
+		void receivePollAfterClockRestart();
+		void receivePollBtstBranchAfterClockRestart();
+		void doLoopExitOnPendingInterrupt();
 
 		void emit(TWord _opA, TWord _opB = 0, TWord _pc = 0) override;
+		void execStep() override { dsp.execJit(); }
+		using UnitTests::emit;
 
 		asmjit::JitRuntime m_rt;
 

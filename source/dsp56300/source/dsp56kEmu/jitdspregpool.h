@@ -20,6 +20,28 @@ namespace asmjit
 
 namespace dsp56k
 {
+	// Phase 1 of the left-aligned ALU work (see LEFT_ALIGNED_ALU.md). When enabled, ALU registers held in
+	// JIT host registers store the 56-bit value in bits 63..8, with bits 7..0 always zero. The DspRegs
+	// memory format stays right-aligned, so the interpreter remains an independent oracle; conversion
+	// happens here at the pool's load/store choke point.
+	static constexpr bool g_leftAlignedAlu = true;
+
+	// every accumulator bit position moves up by 8 when the ALU is stored left-aligned
+	static constexpr uint32_t g_aluBitOffset = g_leftAlignedAlu ? 8 : 0;
+
+	// A multiplier product needs one shift for the fractional multiply plus the left-alignment offset
+	// before it can meet the accumulator.
+	static constexpr uint32_t g_mpyProductShift = 1 + g_aluBitOffset;
+
+	// x64 gets that scale for free by folding it into the operand's sign extension, which already ends
+	// in a shift (see signextend24to64). aarch64 folds it into the accumulate instead - `add d, d, s,
+	// lsl #n` is one instruction either way - so there it must stay out of the operand.
+#ifdef HAVE_ARM64
+	static constexpr uint32_t g_mpyOperandShift = 0;
+#else
+	static constexpr uint32_t g_mpyOperandShift = g_mpyProductShift;
+#endif
+
 	class DspValue;
 	class JitBlock;
 
@@ -95,12 +117,26 @@ namespace dsp56k
 		void releaseTemp(PoolReg _reg);
 
 		bool isWritten(PoolReg _reg) const		{ return flagTest(m_writtenDspRegs, _reg); }
+
+		// drops a pending write-back without emitting the store. Only valid if the value is provably dead in memory
+		void discardWritten(const PoolReg _reg)	{ clearWritten(_reg); }
 		bool isLocked(PoolReg _reg) const		{ return flagTest(m_lockedGps, _reg); }
 
 		bool move(PoolReg _dst, PoolReg _src);
 		bool move(const JitRegGP& _dst, PoolReg _src);
 
-		void setIsParallelOp(bool _isParallelOp);
+		void setIsParallelOp(bool _isParallelOp, RegisterMask _moveRegs = RegisterMask::AB);
+
+		// A parallel op only needs the separate DspAwrite latch for an accumulator the parallel
+		// MOVE actually touches - that latch exists so the move's write wins over the ALU's
+		// write-back (see UnitTests::max_parallel). When the move does not name this accumulator
+		// at all, the ALU can work in place and skip both the extra register and the copy that
+		// seeds it. Gated on read OR write: the latch's exact role for a reading move is not
+		// something the tests pin down, so this stays on the conservative side.
+		bool aluNeedsWriteReg(const TWord _alu) const
+		{
+			return m_isParallelOp && any(m_parallelMoveRegs, _alu ? RegisterMask::B : RegisterMask::A);
+		}
 
 		bool isParallelOp() const
 		{
@@ -387,8 +423,10 @@ namespace dsp56k
 
 		std::vector<PoolReg> m_availableTemps;
 		std::list<JitReg128> m_usedXmRegs;
+		size_t m_spillXmmCount = 0;
 
 		bool m_isParallelOp = false;
+		RegisterMask m_parallelMoveRegs = RegisterMask::AB;
 		bool m_repMode = false;
 		bool m_dirty = false;
 

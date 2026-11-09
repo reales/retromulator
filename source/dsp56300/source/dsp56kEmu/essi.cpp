@@ -18,8 +18,8 @@ namespace dsp56k
 		m_tx.fill(0);
 		m_rx.fill(0);
 
-		m_sr.set(SSISR_TDE);
-		m_sr.set(SSISR_TFS);
+		// SSISR starts at zero, TDE and TFS included: the first slot sets them (56303 UM, SSISR reset values). The
+		// 56300 simulator reads SSISR $000000 after reset
 	}
 
 	void Essi::reset()
@@ -463,6 +463,12 @@ namespace dsp56k
 	void Essi::injectInterrupt(TWord _interrupt) const
 	{
 		m_periph.getDSP().injectInterrupt(_interrupt + m_index * EssiAddressOffset);
+	}
+
+	bool Essi::hasPendingInterrupts() const
+	{
+		const auto offset = m_index * EssiAddressOffset;
+		return m_periph.getDSP().hasPendingInterrupt(Vba_ESSI0receivedata + offset, Vba_ESSI0transmitlastslot + offset);
 	}
 
 	void Essi::readSlotFromFrame()

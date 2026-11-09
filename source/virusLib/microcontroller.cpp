@@ -320,6 +320,7 @@ bool Microcontroller::sendPreset(const uint8_t program, const TPreset& preset, c
 		}
 
 		m_pendingPresetWrites.emplace_back(SPendingPresetWrite{program, isMulti, preset});
+		m_pendingPresetWriteCount.store(m_pendingPresetWrites.size(), std::memory_order_release);
 
 		return true;
 	}
@@ -378,6 +379,10 @@ void Microcontroller::setSamplerate(const float _samplerate)
 	}
 
 	std::lock_guard lock(m_mutex);
+	// an audio device restart repeats the rate, and the repeated command drops the patch the DSP just received
+	if(v == m_samplerateCommand)
+		return;
+	m_samplerateCommand = v;
 	m_hdi08.writeRX({0xF4F473, 0x401000 + v});
 }
 
@@ -1089,6 +1094,10 @@ void Microcontroller::process()
 {
 	m_hdi08.exec();
 
+	// called for every audio frame, the host thread holds the lock in readMidiOut
+	if(m_pendingPresetWriteCount.load(std::memory_order_acquire) == 0)
+		return;
+
 	std::lock_guard lock(m_mutex);
 
 	if(m_loadingState || m_pendingPresetWrites.empty() || !m_hdi08.rxEmpty() || waitingForPresetReceiveConfirmation())
@@ -1096,6 +1105,7 @@ void Microcontroller::process()
 
 	const auto preset = m_pendingPresetWrites.front();
 	m_pendingPresetWrites.pop_front();
+	m_pendingPresetWriteCount.store(m_pendingPresetWrites.size(), std::memory_order_release);
 
 	sendPreset(preset.program, preset.data, preset.isMulti);
 }

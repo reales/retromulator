@@ -24,6 +24,7 @@ namespace matrixLib
 
 		constexpr float SleepPeak = 3.1623e-6f;   // -110 dBFS
 		constexpr float SleepSeconds = 0.1f;
+		constexpr float SleepFadeSeconds = 0.02f;
 
 		constexpr float LimitThreshold = 0.95f;
 		constexpr float LimitReleaseS = 0.15f;
@@ -517,50 +518,88 @@ namespace matrixLib
 		}
 	}
 
-	bool Device::envelopesDone(const uint32_t _board) const
+	// EnvLevel: an envelope moved since the last call, EnvStage: one entered a new running
+	// stage. Idle and release at zero count as one state
+	constexpr uint32_t EnvLevel = 1, EnvStage = 2;
+
+	uint32_t Device::envelopeChanges(const uint32_t _board)
 	{
 		using Stage = matrixClean::Envelope::Stage;
-		const auto& core = m_boards[_board]->core;
+		auto& unit = *m_boards[_board];
+		uint32_t changes = 0;
 		for(uint32_t v = 0; v < matrixClean::VoiceCount; ++v)
 			for(uint32_t e = 0; e < 3; ++e)
 			{
-				const auto& env = core.envelope(v, e);
-				if(env.stage() != Stage::Idle && !(env.stage() == Stage::Release && env.level() == 0))
-					return false;
+				const auto& env = unit.core.envelope(v, e);
+				const bool done = env.stage() == Stage::Idle || (env.stage() == Stage::Release && env.level() == 0);
+				const int32_t key = done ? -1 : (static_cast<int32_t>(env.stage()) << 20) | env.level();
+				auto& snap = unit.envSnap[v * 3 + e];
+				if(key != snap)
+					changes |= EnvLevel | (!done && (key >> 20) != (snap >> 20) ? EnvStage : 0);
+				snap = key;
 			}
-		return true;
+		return changes;
 	}
 
 	void Device::wake(const uint32_t _board, const double _timeUs)
 	{
 		auto& unit = *m_boards[_board];
 		unit.quietSamples = 0;
+		unit.stillSamples = 0;
+		unit.sleepGain = 1.0f;
 		if(!unit.asleep)
 			return;
 		unit.asleep = false;
 		unit.board.setIdle(_timeUs, false);
 	}
 
-	// Units 1 and 2 sleep (voice board idle: the voices are not rendered, Core, timers and CVs
-	// keep running) once no note is routed to them, every envelope of every voice is idle or
-	// at zero in release, and the output peak stayed under SleepPeak for SleepSeconds. Unit 0
-	// never sleeps, so up to six notes render exactly like one Matrix-1000
+	// Units 1 to 5 sleep (voice board idle: the voices are not rendered, Core, timers and CVs
+	// keep running) SleepSeconds after their last note, once the output stays under SleepPeak.
+	// Closed VCAs bleed above SleepPeak, so a unit whose envelopes all stopped moving fades out
+	// over SleepFadeSeconds instead. Unit 0 never sleeps, so up to six notes render exactly like
+	// one Matrix-1000
 	void Device::updateSleep(const uint32_t _board, const size_t _samples)
 	{
 		auto& unit = *m_boards[_board];
-		if(_board == 0 || unit.asleep || !m_sleepEnabled)
+		if(_board == 0 || !m_sleepEnabled)
 			return;
+		if(unit.asleep)
+		{
+			std::fill_n(unit.mono.data(), _samples, 0.0f);
+			return;
+		}
+		const bool moving = envelopeChanges(_board) != 0;
+		if(m_boardNotes[_board])
+		{
+			unit.quietSamples = 0;
+			unit.stillSamples = 0;
+			unit.sleepGain = 1.0f;
+			return;
+		}
 		float peak = 0.0f;
 		for(size_t i = 0; i < _samples; ++i)
 			peak = std::max(peak, std::fabs(unit.mono[i]));
-		if(m_boardNotes[_board] || peak >= SleepPeak || !envelopesDone(_board))
+		const auto n = static_cast<uint32_t>(_samples);
+		unit.quietSamples = peak < SleepPeak ? unit.quietSamples + n : 0;
+		unit.stillSamples = moving ? 0 : unit.stillSamples + n;
+		const auto hold = static_cast<uint32_t>(SleepSeconds * unit.board.getSamplerate());
+		if(unit.sleepGain >= 1.0f && unit.quietSamples < hold)
 		{
-			unit.quietSamples = 0;
-			return;
+			if(unit.stillSamples < hold)
+				return;
+			unit.sleepGain = 0.999999f;
 		}
-		unit.quietSamples += static_cast<uint32_t>(_samples);
-		if(unit.quietSamples < static_cast<uint32_t>(SleepSeconds * unit.board.getSamplerate()))
-			return;
+		if(unit.sleepGain < 1.0f)
+		{
+			const float step = 1.0f / (SleepFadeSeconds * unit.board.getSamplerate());
+			for(size_t i = 0; i < _samples; ++i)
+			{
+				unit.mono[i] *= unit.sleepGain;
+				unit.sleepGain = std::max(0.0f, unit.sleepGain - step);
+			}
+			if(unit.sleepGain > 0.0f)
+				return;
+		}
 		unit.asleep = true;
 		unit.board.setIdle(unit.board.getTimeUs(), true);
 	}
@@ -675,7 +714,7 @@ namespace matrixLib
 				unit.core.advance(t1);
 				flushWrites(b);
 				// an envelope the unit starts by itself (LFO or pedal trigger) wakes it
-				if(unit.asleep && !envelopesDone(b))
+				if(unit.asleep && (envelopeChanges(b) & EnvStage))
 					wake(b, t0);
 				unit.board.render(unit.mono.data(), _samples);
 				updateSleep(b, _samples);

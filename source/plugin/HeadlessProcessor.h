@@ -18,6 +18,7 @@
 #include <memory>
 #include <thread>
 #include <functional>
+#include <mutex>
 
 namespace akaiLib { class Device; }
 namespace openWurliLib { class Device; }
@@ -33,6 +34,7 @@ namespace matrixLib { class Device; }
 namespace retromulator::board { class MidiInParser; class Board; }
 namespace retromulator::hosted { class Device; }
 namespace retromulator::fx { class Chain; }
+namespace retromulator::rack { class RackHost; }
 #endif
 
 namespace retromulator
@@ -165,6 +167,15 @@ namespace retromulator
         fx::Chain& getFxChain() const { return *m_fxChain; }
         // Message thread. Reports the chain's latency on top of the core's when it changed.
         void refreshFxLatency();
+
+        // Extra racks: child processors mixed into this one. Children have no racks of their own.
+        rack::RackHost& getRackHost() const { return *m_rackHost; }
+        bool isRackChild() const { return m_rackChild; }
+        void setRackChild(bool child) { m_rackChild = child; }
+        // Core latency without this processor's fx chain: rack 0's share for alignment.
+        int getCoreLatencySamples() const { return m_coreLatencySamples.load(std::memory_order_relaxed); }
+        // Message thread. Re-reports latency after racks or a child's latency changed.
+        void updateRackLatency();
 #endif
 
         // 88emu (SC-88 family) device, or nullptr if another core is loaded.
@@ -490,6 +501,9 @@ namespace retromulator
         void processDeferredResend();
         // Watches program changes so the cached per-part programs follow the board.
         void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
+        // Any thread but audio, nests. Returns once the core is idle; until the matching false,
+        // processBlock leaves this core silent while the master chain and other racks play on.
+        void suspendCore(bool suspend);
         // Kept for the CA-72's voice threads, handed to its device in processBlock.
         void audioWorkgroupContextChanged(const juce::AudioWorkgroup& _wg) override;
 
@@ -522,6 +536,17 @@ namespace retromulator
         std::unique_ptr<board::Board> m_board;
         std::unique_ptr<board::MidiInParser> m_midiInParser;
         std::unique_ptr<fx::Chain> m_fxChain;
+        std::unique_ptr<rack::RackHost> m_rackHost;
+        bool m_rackChild = false;
+        std::atomic<int> m_coreLatencySamples{0};
+        // Expires with this processor, so a deferred rack restore can tell it is gone.
+        std::shared_ptr<bool> m_rackAlive = std::make_shared<bool>(true);
+        // Racks restored off the message thread, saved as they are until applied there.
+        std::mutex m_pendingRacksLock;
+        std::vector<uint8_t> m_pendingRacks;
+        bool m_racksPending = false;
+        uint32_t m_racksSeq = 0;
+        void restoreRacks(std::vector<uint8_t>&& racks);
 
         void prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock) override;
         void releaseResources() override;
@@ -731,6 +756,10 @@ namespace retromulator
         // Consumed by processDeferredResend (called each audio block) after setSynthType.
         // m_deviceBooted: once true, the boot-delay resend is never re-armed.
         std::atomic<bool> m_isBooting{false};
+        // Held by processBlock around the core; suspendCore takes it to wait for that block.
+        juce::CriticalSection m_coreLock;
+        std::atomic<int> m_coreSuspended{0};
+        void processCore(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
         juce::AudioWorkgroup m_audioWorkgroup;
         juce::SpinLock m_audioWorkgroupLock;
         std::atomic<bool> m_shuttingDown{false};

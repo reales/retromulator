@@ -9,7 +9,22 @@ namespace dsp56k
 
 	inline void DSP::op_Bchg_ea(const TWord op)
 	{
-		errNotImplemented("BCHG");
+		const EMemArea S = getFieldValueMemArea<Bclr_ea>(op);
+		const TWord bbbbb = getBit<Bclr_qq>(op);
+		const TWord ea = effectiveAddress<Bclr_ea>(op);
+
+		if(isPeripheralAddress(ea))
+		{
+			auto mem = memReadPeriph(S, ea, Bclr_ea);
+			sr_toggle(CCR_C, bittestandchange(mem, bbbbb));
+			memWritePeriph(S, ea, mem);
+		}
+		else
+		{
+			auto mem = memRead(S, ea);
+			sr_toggle(CCR_C, bittestandchange(mem, bbbbb));
+			memWrite(S, ea, mem);
+		}
 	}
 	inline void DSP::op_Bchg_aa(const TWord op)
 	{
@@ -108,7 +123,16 @@ namespace dsp56k
 
 	inline void DSP::op_BRKcc(const TWord op)
 	{
-		errNotImplemented("BRKcc");
+		if( !checkCondition<BRKcc>(op) )
+			return;
+
+		// Exit the current DO loop early. The manual gives this as
+		//   LA + 1 -> PC; SSL(LF,FV) -> SR; SP-1 -> SP; SSH -> LA; SSL -> LC; SP-1 -> SP
+		// PC has to be taken from the CURRENT LA, before do_end() restores LA from the stack.
+		setPC(reg.la.var + 1);
+
+		// LF and FV both come back off the stack in do_end(), which is what BRKcc wants too
+		do_end();
 	}
 
 	inline void DSP::op_Bset_ea(const TWord op)
@@ -229,13 +253,13 @@ namespace dsp56k
 	inline void DSP::op_Do_ea(const TWord op)
 	{
 		const auto addr = absAddressExt<Do_ea>();
-		const auto loopCount = effectiveAddress<Do_ea>(op);
+		const auto loopCount = readMem<Do_ea>(op);
 		do_exec(loopCount, addr);
 	}
 	inline void DSP::op_Do_aa(const TWord op)
 	{
 		const auto addr = absAddressExt<Do_aa>();
-		const auto loopCount = effectiveAddress<Do_aa>(op);
+		const auto loopCount = readMem<Do_aa>(op);
 		do_exec(loopCount, addr);
 	}
 	inline void DSP::op_Do_xxx(const TWord op)
@@ -257,7 +281,7 @@ namespace dsp56k
 	}
 	inline void DSP::op_DoForever(const TWord op)
 	{
-		errNotImplemented("DO FOREVER");
+		do_execForever(absAddressExt<DoForever>());
 	}
 	inline void DSP::op_Dor_ea(const TWord op)
 	{
@@ -267,8 +291,9 @@ namespace dsp56k
 	}
 	inline void DSP::op_Dor_aa(const TWord op)
 	{
-		const auto loopCount = effectiveAddress<Do_aa>(op);
-		const auto displacement = pcRelativeAddressExt<Dor_ea>();
+		// the loop count is the word stored at the short address, not the address itself
+		const auto loopCount = readMem<Dor_aa>(op);
+		const auto displacement = pcRelativeAddressExt<Dor_aa>();
 		do_exec(loopCount, pcCurrentInstruction + displacement);
 	}
 	inline void DSP::op_Dor_xxx(const TWord op)
@@ -287,7 +312,8 @@ namespace dsp56k
 	}
 	inline void DSP::op_DorForever(const TWord op)
 	{
-		errNotImplemented("DOR FOREVER");		
+		const auto displacement = pcRelativeAddressExt<DorForever>();
+		do_execForever(pcCurrentInstruction + displacement);
 	}
 	inline void DSP::op_Enddo(const TWord op)
 	{
@@ -319,12 +345,18 @@ namespace dsp56k
 	}
 	inline void DSP::op_Illegal(const TWord op)
 	{
-		errNotImplemented("ILLEGAL");
+		// only ILLEGAL itself stops in a debugger, not an undefined opcode that decodes as ILLEGAL,
+		// see JitOps::op_Illegal
+		if(match(Opcodes::getOpcodeInfoAt(Illegal), op))
+			op_Trap(op);
 	}
 
-	inline void DSP::op_Lra_Rn(const TWord op)
+	inline void DSP::op_Lra_Rn(const TWord op)	// 0000010011000RRR000ddddd
 	{
-		errNotImplemented("LRA");
+		// PC is the address of the LRA itself, the sum wraps at 24 bits and the CCR is unchanged
+		const TWord rrr = getFieldValue<Lra_Rn, Field_RRR>(op);
+		const TWord ddddd = getFieldValue<Lra_Rn, Field_ddddd>(op);
+		decode_ddddd_write(ddddd, TReg24((pcCurrentInstruction + reg.r[rrr].var) & 0xffffff));
 	}
 	inline void DSP::op_Lra_xxxx(const TWord op)	// 0000010001oooooo010ddddd
 	{
@@ -387,11 +419,59 @@ namespace dsp56k
 	}
 	inline void DSP::op_Norm(const TWord op)
 	{
-		errNotImplemented("NORM");
+		const auto rrr = getFieldValue<Norm, Field_RRR>(op);
+		const auto D = getFieldValue<Norm, Field_d>(op);
+
+		// NORM uses the condition codes produced by the preceding accumulator
+		// operation.  Materialize the lazy CCR cache before deciding which of
+		// the three paths to take.
+		const bool extension = sr_test(CCR_E);
+		const bool unnormalized = sr_test_noCache(CCR_U);
+		const bool zero = sr_test_noCache(CCR_Z);
+
+		// NORM leaves the carry bit unchanged (FM 13-146), the shift helpers write it. Rn is 16 bits wide
+		// in Sixteen-bit Compatibility mode.
+		const bool carry = sr_test_noCache(CCR_C) != 0;
+		const int addrMask = sr_test_noCache(SR_SC) ? 0xffff : TReg24::bitMask;
+
+		if(extension)
+		{
+			alu_asr(D, D, 1);
+			reg.r[rrr].var = (reg.r[rrr].var + 1) & addrMask;
+			sr_toggle(CCR_C, carry);
+		}
+		else if(unnormalized && !zero)
+		{
+			alu_asl(D, D, 1);
+			reg.r[rrr].var = (reg.r[rrr].var - 1) & addrMask;
+			sr_toggle(CCR_C, carry);
+		}
 	}
 	inline void DSP::op_Normf(const TWord op)
 	{
-		errNotImplemented("NORMF");
+		// NORMF S,D — if S[23]==0: ASR S,D; else: ASL -S,D
+		const auto sss = getFieldValue<Normf, Field_sss>(op);
+		const auto D = getFieldValue<Normf, Field_D>(op);
+
+		const TWord s = decode_sss_read<TWord>(sss);
+
+		// NORMF leaves C unchanged (FM 13-147, and the simulator keeps a set C set) but the ASR/ASL
+		// helpers below compute it, so put it back afterwards.
+		const auto carry = sr_test(CCR_C);
+
+		if(!bittest(s, 23))
+		{
+			// ASR
+			alu_asr(D, D, static_cast<int>(s));
+		}
+		else
+		{
+			// ASL with negated shift amount (24-bit sign-extended negation)
+			const auto negS = static_cast<int>((-signextend<int,24>(s)) & 0xffffff);
+			alu_asl(D, D, negS);
+		}
+
+		sr_toggle(CCR_C, carry != 0);
 	}
 
 	inline void DSP::op_Pflush(const TWord op)
@@ -428,11 +508,17 @@ namespace dsp56k
 	}
 	inline void DSP::op_Rep_ea(const TWord op)
 	{
-		errNotImplemented("REP");
+		const auto area = getFieldValueMemArea<Rep_ea>(op);
+		const auto ea = effectiveAddress<Rep_ea>(op);
+		const auto loopcount = memRead(area, ea);
+		rep_exec(loopcount);
 	}
 	inline void DSP::op_Rep_aa(const TWord op)
 	{
-		errNotImplemented("REP");
+		const auto area = getFieldValueMemArea<Rep_aa>(op);
+		const auto ea = getFieldValue<Rep_aa, Field_aaaaaa>(op);
+		const auto loopcount = memRead(area, ea);
+		rep_exec(loopcount);
 	}
 	inline void DSP::op_Rep_xxx(const TWord op)
 	{
@@ -460,7 +546,10 @@ namespace dsp56k
 	}
 	inline void DSP::op_Stop(const TWord op)
 	{
-		errNotImplemented("STOP");
+		LOG("STOP instruction at PC " << HEX(pcCurrentInstruction));
+		// STOP halts the processor clock until a hardware reset or external interrupt
+		// For emulation purposes, treat as a wait/halt
+		reg.pc.var = pcCurrentInstruction;
 	}
 	inline void DSP::op_Tcc_S1D1(const TWord op)
 	{
@@ -469,7 +558,9 @@ namespace dsp56k
 			const TWord JJJ = getFieldValue<Tcc_S1D1,Field_JJJ>(op);
 			const bool ab = getFieldValue<Tcc_S1D1,Field_d>(op);
 
-			decode_JJJ_readwrite( ab ? reg.b : reg.a, JJJ, !ab );
+			TReg56 d = getALU(ab);
+			decode_JJJ_readwrite( d, JJJ, !ab );
+			setALU(ab, d);
 		}
 	}
 	inline void DSP::op_Tcc_S1D1S2D2(const TWord op)
@@ -481,7 +572,9 @@ namespace dsp56k
 			const TWord ttt		= getFieldValue<Tcc_S1D1S2D2,Field_ttt>(op);
 			const bool ab		= getFieldValue<Tcc_S1D1S2D2,Field_d>(op);
 
-			decode_JJJ_readwrite( ab ? reg.b : reg.a, JJJ, !ab );
+			TReg56 d = getALU(ab);
+			decode_JJJ_readwrite( d, JJJ, !ab );
+			setALU(ab, d);
 			reg.r[TTT] = reg.r[ttt];
 		}
 	}
@@ -496,12 +589,14 @@ namespace dsp56k
 	}
 	inline void DSP::op_Trap(const TWord op)
 	{
-		errNotImplemented("TRAP");		
+		// TRAP, TRAPcc and ILLEGAL raise an interrupt on hardware. No emulated firmware relies on that, so they stop in
+		// an attached debugger instead and otherwise carry on with the next instruction.
+		nativeDebugBreak();
 	}
 	inline void DSP::op_Trapcc(const TWord op)
 	{
 		if(checkCondition<Trapcc>(op))
-			errNotImplemented("TRAPcc");
+			op_Trap(op);
 	}
 	inline void DSP::op_ResolveCache(const TWord op)
 	{
@@ -529,24 +624,8 @@ namespace dsp56k
 			exec_jump(cacheEntry.op, op);
 			return;
 		}
-		const auto* oiMove = m_opcodes.findParallelMoveOpcodeInfo(op);
-		if(!oiMove)
-		{
-			m_opcodes.findParallelMoveOpcodeInfo(op);		// retry here to help debugging
-			assert(0 && "illegal instruction");
-		}
-
-		const OpcodeInfo* oiAlu = nullptr;
-
-		if(op & 0xff)
-		{
-			oiAlu = m_opcodes.findParallelAluOpcodeInfo(op);
-			if(!oiAlu)
-			{
-				m_opcodes.findParallelAluOpcodeInfo(op);	// retry here to help debugging
-				assert(0 && "invalid instruction");						
-			}
-		}
+		const OpcodeInfo* oiAlu;
+		const auto* oiMove = m_opcodes.findParallelOpcodeInfo(op, oiAlu);
 
 		switch (oiMove->m_instruction)
 		{

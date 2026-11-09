@@ -24,7 +24,7 @@ extern "C"
 
 namespace dsp56k
 {
-	constexpr const char* g_opNames[] = 
+	const char* g_opNames[] = 
 	{
 		"abs",
 		"adc",
@@ -1420,7 +1420,7 @@ namespace dsp56k
 				const auto b	= getFieldValue(inst, Field_bbbbb, op);
 				const auto a	= getFieldValue(inst, Field_aaaaaa, op);
 				const auto S	= getFieldValue(inst, Field_S, op);
-				_dst << bit(b, memArea(S), a) << ',' << absAddr(memArea(S), a, false, false) << ',' << funcAbs(opB);
+				_dst << bit(b, memArea(S), a) << ',' << absAddr(memArea(S), a) << ',' << funcAbs(opB);
 			}
 			return 2;
 		case Jclr_pp:
@@ -2020,7 +2020,7 @@ namespace dsp56k
 			{
 				const TWord aa = getFieldValue<Rep_aa, Field_aaaaaa>(op);
 				const auto S = getFieldValueMemArea<Rep_aa>(op);
-				_dst << absAddr(S, aa, false, false);
+				_dst << absAddr(S, aa);
 			}
 			return 1;
 		case Rep_xxx: 
@@ -2219,8 +2219,9 @@ namespace dsp56k
 
 		if(Opcodes::isNonParallelOpcode(op))
 		{
+			// an undefined opcode decodes as ILLEGAL, see Opcodes::findNonParallelOpcodeInfo, but it is data here
 			const auto* oi = m_opcodes.findNonParallelOpcodeInfo(op);
-			if(oi)
+			if(oi && match(*oi, op))
 			{
 				m_line.opName = g_opNames[oi->m_instruction];
 				m_line.instA = oi->m_instruction;

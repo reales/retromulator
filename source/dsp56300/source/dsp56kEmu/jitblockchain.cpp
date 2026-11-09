@@ -5,7 +5,9 @@
 #include "jitblockruntimedata.h"
 #include "jitblock.h"
 #include "jitemitter.h"
+#include "jitoptimizer.h"
 #include "jitprofilingsupport.h"
+#include "dsp56kBase/profiler.h"
 #include "asmjit/core/jitruntime.h"
 #include "jitblockemitter.h"
 
@@ -20,33 +22,78 @@ namespace dsp56k
 		m_logger.reset(new AsmJitLogger());
 		m_errorHandler.reset(new AsmJitErrorHandler());
 
+		// Initialize MmuArrays with the full P memory size for lazy allocation
+		const auto& mem = _jit.dsp().memory();
+		const auto pSize = mem.sizeP();
+
+		m_jitFuncs.init(pSize, &funcCreate);
+		m_jitFuncs.setResizedCallback([this]() { onFuncsResized(); });
+
+		m_jitCache.init(pSize, [](JitCacheEntry* _ptr, size_t _count)
+		{
+			for (size_t i = 0; i < _count; ++i)
+				new (&_ptr[i]) JitCacheEntry();
+		});
+
 		if(_usedFuncSize)
 			ensureFuncSize(_usedFuncSize);
-
-//		const auto& mem = _jit.dsp().memory();
-//		const auto pSize = mem.sizeP();
-
-//		m_jitFuncs.resize(pSize, &funcCreate);
-//		m_jitCache.resize(pSize);
 	}
 
 	JitBlockChain::~JitBlockChain()
 	{
-		for (auto& e : m_jitCache)
+		// an entry holds a block or single op cache only where its MMU block was made private
+		m_jitCache.forEachPrivate([this](const size_t _i)
 		{
+			auto& e = m_jitCache[_i];
+
 			if(e.block)
 				destroy(e.block);
 
-			if(e.singleOpCache)
-			{
-				for (const auto& it : *e.singleOpCache)
-					release(it.second);
-
-				e.singleOpCache->clear();
-			}
-		}
+			releaseSingleOpCache(static_cast<TWord>(_i));
+		});
 
 		m_jitCache.clear();
+	}
+
+	void JitBlockChain::releaseSingleOpCache(const TWord _pc)
+	{
+		if(_pc >= m_jitCache.size())
+			return;
+
+		auto& e = m_jitCache[_pc];
+
+		if(!e.singleOpCache)
+			return;
+
+		for (const auto& it : *e.singleOpCache)
+			release(it.second);
+
+		delete e.singleOpCache;
+		e.singleOpCache = nullptr;
+	}
+
+	void JitBlockChain::forgetLoopEnd(const TWord _loopEnd)
+	{
+		const TWord la = _loopEnd - 1;
+
+		if(auto* block = getBlock(la))
+		{
+			// compiled with this loop end already, it ends there with the loop end code, see JitBlock::getInfo
+			const auto& info = block->getInfo();
+			const auto hasLoopEnd = block->getPCFirst() + block->getPMemSize() == _loopEnd &&
+				(info.terminationReason == JitBlockInfo::TerminationReason::LoopEnd || info.hasFlag(JitBlockInfo::Flags::BranchAtLoopEnd));
+
+			// code that is being generated links to it already, it goes when that is done, see create()
+			if(!hasLoopEnd && isBeingGeneratedRecursive(block))
+				m_loopEndsToForget.push_back(_loopEnd);
+			else if(!hasLoopEnd)
+				destroy(block);
+		}
+
+		// A destroyed single instruction block is kept for reuse by its opcode and would come back without the loop end. A two
+		// word instruction starts a word earlier.
+		releaseSingleOpCache(la);
+		releaseSingleOpCache(la - 1);
 	}
 
 	bool JitBlockChain::canBeDefaultExecuted(TWord _pc) const
@@ -65,7 +112,7 @@ namespace dsp56k
 		const auto first = _block->getPCFirst();
 		const auto last = first + _block->getPMemSize();
 
-		ensureSize(last - 1);
+		ensureSize(first, last - 1);
 
 		for (auto i = first; i < last; ++i)
 		{
@@ -85,7 +132,7 @@ namespace dsp56k
 		const auto first = _block->getPCFirst();
 		const auto last = first + _block->getPMemSize();
 
-		ensureSize(last - 1);
+		ensureSize(first, last - 1);
 
 		for(auto i=first; i<last; ++i)
 		{
@@ -101,7 +148,14 @@ namespace dsp56k
 	{
 //		LOG("Create @ " << HEX(_pc));// << std::endl << cacheEntry.block->getDisasm());
 
-		ensureCacheSize(_pc+1);
+		ensureCacheSize(_pc, _pc+1);
+
+		if(!makeRoomForFirstInstruction(_pc))
+		{
+			// only a block that is being generated can be in the way, and no code runs while blocks are being generated
+			assert(!_execute);
+			return;
+		}
 
 		auto& cacheEntry = m_jitCache[_pc];
 
@@ -146,6 +200,15 @@ namespace dsp56k
 		}
 
 		emit(_pc);
+
+		if(m_generatingBlocks.empty() && !m_loopEndsToForget.empty())
+		{
+			std::vector<TWord> loopEnds;
+			loopEnds.swap(m_loopEndsToForget);
+			for (const auto loopEnd : loopEnds)
+				forgetLoopEnd(loopEnd);
+		}
+
 		if(!_execute)
 			return;
 
@@ -156,16 +219,38 @@ namespace dsp56k
 			exec(_pc);
 	}
 
+	bool JitBlockChain::makeRoomForFirstInstruction(const TWord _pc)
+	{
+		/*	A block takes its first instruction whole, see JitBlock::getInfo, so a block that starts on a later word of it
+			has to go - unless it, or a block that jumps to it, is being generated. Then no block can start at _pc for now.
+		*/
+		const auto pcEnd = _pc + JitBlock::getInstructionLength(m_jit.dsp(), _pc);
+
+		for(auto pc = _pc + 1; pc < pcEnd; ++pc)
+		{
+			const auto block = getBlock(pc);
+
+			if(!block)
+				continue;
+
+			if(isBeingGeneratedRecursive(block))
+				return false;
+
+			destroy(block);
+		}
+		return true;
+	}
+
+	void JitBlockChain::exec(const TWord _pc, const TJitFunc& _f) const
+	{
+		m_jit.getTrampoline().execOne(&m_jit.dsp().regs(), _pc, _f);
+	}
+
 	void JitBlockChain::notifyPMemWrite(const TWord _addr, const bool _isCurrentChain)
 	{
 		destroy(_addr);
 		if(_isCurrentChain)
 			ensureFuncSize(_addr);
-	}
-
-	DspRegs& JitBlockChain::getDspRegs() const
-	{
-		return m_jit.dsp().regs();
 	}
 
 	void JitBlockChain::destroyParents(JitBlockRuntimeData* _block)
@@ -258,7 +343,7 @@ namespace dsp56k
 #endif
 		assert(m_codeSize >= _block->codeSize());
 		m_codeSize -= _block->codeSize();
-		m_jit.getRuntime()->release(_block->getFunc());
+		m_jit.getTrampoline().releaseCode(_block->getFunc());
 
 		m_jit.releaseBlockRuntimeData(_block);
 
@@ -287,7 +372,7 @@ namespace dsp56k
 		if(!_allowCreate && _pc >= m_jitCache.size())
 			return nullptr;
 
-		ensureSize(_pc);
+		ensureSize(_pc, _pc);
 
 		{
 			const auto& e = m_jitCache[_pc];
@@ -335,6 +420,24 @@ namespace dsp56k
 
 	JitBlockRuntimeData* JitBlockChain::emit(TWord _pc)
 	{
+		/*	Without dynamicFastInterrupts, every block below Vba_End is compiled as a fast interrupt: two words at most and
+			no PC update, the interrupted program's PC is restored by the caller. Blocks are compiled on first execution and
+			an interrupt sets the processing mode before its vector runs, so a vector block compiled in any other mode is
+			ordinary code in the vector region, reached by a jump or call. It would never advance the PC and the DSP spins
+			on it without any other symptom, so say so.
+		*/
+#ifndef NDEBUG
+		if(_pc < Vba_End && !m_jit.getConfig().dynamicFastInterrupts && m_jit.dsp().getProcessingMode() != DSP::FastInterrupt)
+		{
+			LOG("Ordinary code runs in the interrupt vector region at " << HEX(_pc) << " but JitConfig::dynamicFastInterrupts is "
+				"disabled. The JIT compiles it as fast interrupt code that does not advance the PC and the DSP will hang there. "
+				"Enable dynamicFastInterrupts for this device.");
+			assert(false && "ordinary code in the vector region with dynamicFastInterrupts disabled");
+		}
+#endif
+
+		const ProfilerScope profilerScope("JitBlockChain::emit");
+
 		auto* emitter = m_jit.acquireEmitter(_pc);
 
 //		m_logger->addFlags(asmjit::FormatFlags::kHexImms | /*asmjit::FormatFlags::kHexOffsets |*/ asmjit::FormatFlags::kMachineCode);
@@ -366,6 +469,12 @@ namespace dsp56k
 		}
 
 		m_generatingBlocks.erase(_pc);
+
+		if(m_jit.getConfig().enableOptimizer)
+		{
+			JitOptimizer optimizer(emitter->emitter);
+			optimizer.optimize();
+		}
 
 		emitter->emitter.finalize();
 
@@ -436,38 +545,11 @@ namespace dsp56k
 		return false;
 	}
 
-	bool ensureSizeCbk(const size_t _address, const std::function<void(size_t)>& _funcResize)
+	bool JitBlockChain::ensureSize(const size_t _first, const size_t _last)
 	{
-		// use increments of size 0x10000
-		constexpr size_t blockSizeShift = 16;
-		constexpr size_t blockSize = 1 << blockSizeShift;
-
-		const auto neededBlocks = (_address + blockSize) >> blockSizeShift;
-		const auto neededSize = neededBlocks << blockSizeShift;
-//		assert(_address < neededSize);
-
-		_funcResize(neededSize);
-
-		return true;
-	}
-	
-	bool JitBlockChain::ensureSize(const size_t _address)
-	{
-		if(_address < m_jitCache.size() && _address < m_jitFuncs.size())
-			return false;
-
-		return ensureSizeCbk(_address, [this](const size_t _size)
-		{
-			if(m_jitCache.size() < _size)
-			{
-				m_jitCache.resize(_size);
-			}
-			if(m_jitFuncs.size() < _size)
-			{
-				m_jitFuncs.resize(_size, &funcCreate);
-				onFuncsResized();
-			}
-		});
+		const auto a = m_jitCache.ensureBlocksForRange(_first, _last);
+		const auto b = m_jitFuncs.ensureBlocksForRange(_first, _last);
+		return a || b;
 	}
 
 	void JitBlockChain::onFuncsResized() const
@@ -475,26 +557,13 @@ namespace dsp56k
 		m_jit.onFuncsResized(*this);
 	}
 
-	bool JitBlockChain::ensureCacheSize(const size_t _address)
+	bool JitBlockChain::ensureCacheSize(const size_t _first, const size_t _last)
 	{
-		if(_address < m_jitCache.size())
-			return false;
-
-		return ensureSizeCbk(_address, [this](const size_t _size)
-		{
-			m_jitCache.resize(_size);
-		});
+		return m_jitCache.ensureBlocksForRange(_first, _last);
 	}
 
 	bool JitBlockChain::ensureFuncSize(const size_t _address)
 	{
-		if(_address < m_jitFuncs.size())
-			return false;
-
-		return ensureSizeCbk(_address, [this](const size_t _size)
-		{
-			m_jitFuncs.resize(_size, &funcCreate);
-			onFuncsResized();
-		});
+		return m_jitFuncs.ensureBlockForIndex(_address);
 	}
 }

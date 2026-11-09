@@ -1,5 +1,8 @@
+#include <iostream>
+#include "jitdspregpool.h"
 #include "jitunittests.h"
 
+#include "externalbusdevice.h"
 #include "jitasmjithelpers.h"
 #include "jitblock.h"
 #include "jitblockruntimedata.h"
@@ -9,6 +12,16 @@
 
 namespace dsp56k
 {
+	namespace
+	{
+		// The CCR emitters take an accumulator, so the test has to hand them one in whatever representation
+		// the JIT currently uses. Left-aligned puts the 56-bit value in bits 63..8.
+		constexpr uint64_t aluTestValue(const uint64_t _v)
+		{
+			return g_leftAlignedAlu ? (_v << 8) : _v;
+		}
+	}
+
 	static constexpr bool g_useDspMode = true;
 
 	JitUnittests::JitUnittests(bool _logging/* = true*/)
@@ -29,6 +42,7 @@ namespace dsp56k
 
 		runTest(&JitUnittests::transferSaturation_build, &JitUnittests::transferSaturation_verify);
 		transferSaturation48();
+		transferSaturationScaleUp();
 
 		{
 			constexpr auto T=true;
@@ -52,6 +66,13 @@ namespace dsp56k
 		rep_div();
 
 		parallelMoveXY();
+		parallelAluMoveSameAccumulator();
+
+		blockDestroyedWhileRunning();
+		branchOutOfPMemory();
+		receivePollAfterClockRestart();
+		receivePollBtstBranchAfterClockRestart();
+		doLoopExitOnPendingInterrupt();
 	}
 
 	JitUnittests::~JitUnittests()
@@ -131,6 +152,12 @@ namespace dsp56k
 			o.updateDirtyCCR();
 
 			pusher.end();
+
+			// out-of-line code for rare paths, which a real block emits after its exit: jump over it here
+			const auto afterColdCode = m_asm.newLabel();
+			m_asm.jmp(afterColdCode);
+			b.emitColdCode();
+			m_asm.bind(afterColdCode);
 		}
 
 		m_asm.ret();
@@ -154,7 +181,8 @@ namespace dsp56k
 			if(m_logging)
 				LOG("Running test code");
 
-			func(&dsp.regs(), 0xbadbc);
+			dsp.getJit().getTrampoline().execOne(&dsp.regs(), 0xbadbc, func);
+//			func(&dsp.getJit(), 0xbadbc);
 
 			if(m_logging)
 				LOG("Verifying test code");
@@ -192,10 +220,11 @@ namespace dsp56k
 
 	void JitUnittests::conversion_verify()
 	{
-		verify(m_checks[0] == 0x0000112233000000);
-		verify(m_checks[1] == 0x00ffffeedd000000);
-		verify(m_checks[2] == 0x00fffedcba000000);
-		verify(m_checks[3] == 0x0000445566000000);
+		// XY*to56 feeds ALU arithmetic, so the result follows the ALU representation
+		verify(m_checks[0] == aluTestValue(0x0000112233000000));
+		verify(m_checks[1] == aluTestValue(0x00ffffeedd000000));
+		verify(m_checks[2] == aluTestValue(0x00fffedcba000000));
+		verify(m_checks[3] == aluTestValue(0x0000445566000000));
 	}
 
 	void JitUnittests::signextend_build()
@@ -261,7 +290,7 @@ namespace dsp56k
 		{
 			RegGP r(*block);
 
-			block->asm_().mov(r, asmjit::Imm(m_checks[i]));
+			block->asm_().mov(r, asmjit::Imm(aluTestValue(m_checks[i])));
 			ops->ccr_u_update(r);
 			block->mem().mov(m_checks[i], block->regs().getSR(JitDspRegs::Read));
 		}
@@ -288,7 +317,7 @@ namespace dsp56k
 		{
 			RegGP r(*block);
 
-			block->asm_().mov(r, asmjit::Imm(m_checks[i]));
+			block->asm_().mov(r, asmjit::Imm(aluTestValue(m_checks[i])));
 			ops->ccr_e_update(r);
 			block->mem().mov(m_checks[i], block->regs().getSR(JitDspRegs::Read));
 
@@ -312,7 +341,7 @@ namespace dsp56k
 		{
 			RegGP r(*block);
 
-			block->asm_().mov(r, asmjit::Imm(m_checks[i]));
+			block->asm_().mov(r, asmjit::Imm(aluTestValue(m_checks[i])));
 			ops->ccr_n_update_by55(r);
 			block->mem().mov(m_checks[i], block->regs().getSR(JitDspRegs::Read));
 		}
@@ -337,7 +366,7 @@ namespace dsp56k
 		{
 			RegGP r(*block);
 
-			block->asm_().mov(r, asmjit::Imm(m_checks[i]));
+			block->asm_().mov(r, asmjit::Imm(aluTestValue(m_checks[i])));
 			block->asm_().clr(block->regs().getSR(JitDspRegs::Write));
 			ops->ccr_s_update(r);
 			block->mem().mov(m_checks[i], block->regs().getSR(JitDspRegs::Read));
@@ -493,15 +522,15 @@ namespace dsp56k
 	{
 		const RegGP temp(*block);
 
-		block->asm_().mov(temp, asmjit::Imm(0x00ff700000555555));
+		block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00ff700000555555)));
 		ops->transferSaturation24(temp, temp);
 		block->mem().mov(m_checks[0], temp);
 
-		block->asm_().mov(temp, asmjit::Imm(0x00008abbcc555555));
+		block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00008abbcc555555)));
 		ops->transferSaturation24(temp, temp);
 		block->mem().mov(m_checks[1], temp);
 
-		block->asm_().mov(temp, asmjit::Imm(0x0000334455667788));
+		block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x0000334455667788)));
 		ops->transferSaturation24(temp, temp);
 		block->mem().mov(m_checks[2], temp);
 	}
@@ -513,25 +542,56 @@ namespace dsp56k
 		verify(m_checks[2] == 0x334455);
 	}
 
+	// Scale Up on the path that reads S1 at run time, as without a known mode (sim56300, SR $000b00)
+	void JitUnittests::transferSaturationScaleUp()
+	{
+		const auto sr = dsp.regs().sr.var;
+		dsp.setSR(0x000b00);
+
+		runTest([&]()
+		{
+			const RegGP temp(*block);
+
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00807ffeff000000)));
+			ops->transferSaturation24(temp, temp);
+			block->mem().mov(m_checks[0], temp);
+
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00407ffeff000000)));
+			ops->transferSaturation24(temp, temp);
+			block->mem().mov(m_checks[1], temp);
+
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00807ffeff000000)));
+			ops->transferSaturation16(temp, temp);
+			block->mem().mov(m_checks[2], temp);
+		}, [&]()
+		{
+			verify(m_checks[0] == 0x800000);
+			verify(m_checks[1] == 0x7fffff);
+			verify(m_checks[2] == 0xff8000);
+		});
+
+		dsp.setSR(sr);
+	}
+
 	void JitUnittests::transferSaturation48()
 	{
 		runTest([&]()
 		{
 			const RegGP temp(*block);
 
-			block->asm_().mov(temp, asmjit::Imm(0x00ff700000555555));
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00ff700000555555)));
 			ops->transferSaturation48(temp, temp);
 			block->mem().mov(m_checks[0], temp);
 
-			block->asm_().mov(temp, asmjit::Imm(0x00008abbcc555555));
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00008abbcc555555)));
 			ops->transferSaturation48(temp, temp);
 			block->mem().mov(m_checks[1], temp);
 
-			block->asm_().mov(temp, asmjit::Imm(0x0000334455667788));
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x0000334455667788)));
 			ops->transferSaturation48(temp, temp);
 			block->mem().mov(m_checks[2], temp);
 
-			block->asm_().mov(temp, asmjit::Imm(0x00fffefefefefefe));
+			block->asm_().mov(temp, asmjit::Imm(aluTestValue(0x00fffefefefefefe)));
 			ops->transferSaturation48(temp, temp);
 			block->mem().mov(m_checks[3], temp);
 		}, [&]()
@@ -546,7 +606,7 @@ namespace dsp56k
 
 	void JitUnittests::testCCCC(const int64_t _value, const int64_t _compareValue, const bool _lt, bool _le, bool _eq, bool _ge, bool _gt, bool _neq)
 	{
-		dsp.regs().a.var = _value;
+		dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(_value)));
 		runTest([&]()
 		{
 			const RegGP r(*block);
@@ -616,46 +676,47 @@ namespace dsp56k
 		{
 			m_checks.fill(0);
 
-			dsp.regs().a.var = 0;
-			dsp.regs().b.var = 0;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0)));
+			dsp.setALU(true , TReg56(static_cast<TReg56::MyType>(0)));
 
 			int i=0;
 			const RegGP r(*block);
 
-			emit(0x50f400, 0x111111);	// move #$111111,a0
-			emit(0x51f400, 0x222222);	// move #$222222,b0
+			emit("move #$111111,a0");
+			emit("move #$222222,b0");
 
 			block->regs().getALU(r, 0);	block->mem().mov(m_checks[i++], r.get());
 			block->regs().getALU(r, 1);	block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x54f400, 0x111111);	// move #$111111,a1
-			emit(0x55f400, 0x222222);	// move #$222222,b1
+			emit("move #$111111,a1");
+			emit("move #$222222,b1");
 
 			block->regs().getALU(r, 0);	block->mem().mov(m_checks[i++], r.get());
 			block->regs().getALU(r, 1);	block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x56f400, 0x111111);	// move #$111111,a
-			emit(0x57f400, 0x222222);	// move #$222222,b
+			emit("move #$111111,a");
+			emit("move #$222222,b");
 
 			block->regs().getALU(r, 0);	block->mem().mov(m_checks[i++], r.get());
 			block->regs().getALU(r, 1);	block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x52f400, 0x111111);	// move #$111111,a2
-			emit(0x53f400, 0x222222);	// move #$222222,b2
+			emit("move #$111111,a2");
+			emit("move #$222222,b2");
 
 			block->regs().getALU(r, 0);	block->mem().mov(m_checks[i++], r.get());
 			block->regs().getALU(r, 1);	block->mem().mov(m_checks[i], r.get());
 		}, [&]()
 		{
 			int i=0;
-			verify(m_checks[i++] == 0x00000000111111);
-			verify(m_checks[i++] == 0x00000000222222);
-			verify(m_checks[i++] == 0x00111111111111);
-			verify(m_checks[i++] == 0x00222222222222);
-			verify(m_checks[i++] == 0x00111111000000);
-			verify(m_checks[i++] == 0x00222222000000);
-			verify(m_checks[i++] == 0x11111111000000);
-			verify(m_checks[i++] == 0x22222222000000);
+			// these read the raw accumulator, so the expected value follows the current representation
+			verify(m_checks[i++] == aluTestValue(0x00000000111111));
+			verify(m_checks[i++] == aluTestValue(0x00000000222222));
+			verify(m_checks[i++] == aluTestValue(0x00111111111111));
+			verify(m_checks[i++] == aluTestValue(0x00222222222222));
+			verify(m_checks[i++] == aluTestValue(0x00111111000000));
+			verify(m_checks[i++] == aluTestValue(0x00222222000000));
+			verify(m_checks[i++] == aluTestValue(0x11111111000000));
+			verify(m_checks[i++] == aluTestValue(0x22222222000000));
 		});
 
 		runTest([&]()
@@ -669,19 +730,19 @@ namespace dsp56k
 			int i=0;
 			const RegGP r(*block);
 
-			emit(0x44f400, 0x111111);	// move #$111111,x0
+			emit("move #$111111,x0");
 			block->regs().getXY(r, 0);
 			block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x45f400, 0x222222);	// move #$222222,x1
+			emit("move #$222222,x1");
 			block->regs().getXY(r, 0);
 			block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x46f400, 0x333333);	// move #$333333,y0
+			emit("move #$333333,y0");
 			block->regs().getXY(r, 1);
 			block->mem().mov(m_checks[i++], r.get());
 
-			emit(0x47f400, 0x444444);	// move #$444444,y1
+			emit("move #$444444,y1");
 			block->regs().getXY(r, 1);
 			block->mem().mov(m_checks[i], r.get());
 
@@ -697,6 +758,10 @@ namespace dsp56k
 
 	void JitUnittests::decode_dddddd_read()
 	{
+		// Full-accumulator MOVE results below are the normal 24-bit transfer
+		// contract.  Make the mode explicit now that SA is selected at runtime.
+		dsp.setSR(dsp.getSR().var & ~SR_SA);
+
 		runTest([&]()
 		{
 			m_checks.fill(0);
@@ -736,41 +801,41 @@ namespace dsp56k
 		runTest([&]()
 		{
 			m_checks.fill(0);
-			dsp.regs().a.var = 0x11112233445566;
-			dsp.regs().b.var = 0xff5566778899aa;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x11112233445566)));
+			dsp.setALU(true , TReg56(static_cast<TReg56::MyType>(0xff5566778899aa)));
 
 			int i=0;
 			DspValue r(*block);
 
-			emit(0x560500);								// a,x:$5
+			emit("move a,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x570500);								// b,x:$5
+			emit("move b,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x500500);								// a0,x:$5
+			emit("move a0,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x540500);								// a1,x:$5
+			emit("move a1,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x520500);								// a2,x:$5
+			emit("move a2,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x510500);								// b0,x:$5
+			emit("move b0,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x550500);								// b1,x:$5
+			emit("move b1,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
 
-			emit(0x530500);								// b2,x:$5
+			emit("move b2,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i], r32(r.get()));
 		}, [&]()
@@ -797,16 +862,16 @@ namespace dsp56k
 			int i=0;
 			DspValue r(*block);
 
-			emit(0x440500);								// move x0,x:$5
+			emit("move x0,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
-			emit(0x450500);								// move x1,x:$5
+			emit("move x1,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
-			emit(0x460500);								// move y0,x:$5
+			emit("move y0,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i++], r32(r.get()));
-			emit(0x470500);								// move y1,x:$5
+			emit("move y1,x:$5");
 			block->mem().readDspMemory(r, MemArea_X, 0x5);
 			block->mem().mov(m_checks[i], r32(r.get()));
 		}, [&]()
@@ -852,8 +917,8 @@ namespace dsp56k
 		dsp.regs().la.var = 0x8899aa;
 		dsp.regs().lc.var = 0x99aabb;
 
-		dsp.regs().a.var = 0x00ffaabbcc112233;
-		dsp.regs().b.var = 0x00ee112233445566;
+		dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00ffaabbcc112233)));
+		dsp.setALU(true , TReg56(static_cast<TReg56::MyType>(0x00ee112233445566)));
 
 		dsp.regs().x.var = 0x0000aabbccddeeff;
 
@@ -915,8 +980,8 @@ namespace dsp56k
 		verify(r.la.var == 0x899aa0);
 		verify(r.lc.var == 0x9aabb0);
 
-		verify(r.a.var == 0x00f0abbcc0122330);
-		verify(r.b.var == 0x00e1122334455660);
+		verify(dsp.aluA().var == 0x00f0abbcc0122330);
+		verify(dsp.aluB().var == 0x00e1122334455660);
 
 		verify(r.x.var == 0x0000abbcc0deeff0);
 	}
@@ -952,14 +1017,14 @@ namespace dsp56k
 		};
 
 		dsp.setSR(dsp.getSR().var & 0xfe);
-		dsp.regs().a.var = 0x00001000000000;
+		dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00001000000000)));
 		dsp.regs().y.var =   0x04444410c6f2;
 
 		runTest([&]()
 		{
 			for(size_t i=0; i<24; ++i)
 			{
-				emit(0x018050);		// div y0,a
+				emit("div y0,a");
 				RegGP r(*block);
 				block->regs().getALU(r, 0);
 				block->mem().mov(m_checks[i], r.get());
@@ -969,7 +1034,8 @@ namespace dsp56k
 		{
 			for(size_t i=0; i<24; ++i)
 			{
-				verify(m_checks[i] == expectedValues[i]);
+				// reads the raw accumulator, so the expected value follows the representation
+				verify(m_checks[i] == aluTestValue(expectedValues[i]));
 			}
 		});
 	}
@@ -980,7 +1046,7 @@ namespace dsp56k
 			// regular mode for comparison
 
 			dsp.y0(0x218dec);
-			dsp.regs().a.var = 0x00008000000000;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00008000000000)));
 			dsp.setSR(0x0800d4);
 
 			static constexpr uint64_t expectedValues[24] =
@@ -1016,11 +1082,11 @@ namespace dsp56k
 				runTest([&]()
 				{
 
-					emit(0x018050);	// div y0,a
+					emit("div y0,a");
 				},
 					[&]()
 				{
-					verify(dsp.regs().a.var == static_cast<int64_t>(expectedValues[i]));
+					verify(dsp.aluA().var == static_cast<int64_t>(expectedValues[i]));
 				});
 			}
 		}
@@ -1028,7 +1094,7 @@ namespace dsp56k
 		runTest([&]()
 		{
 			dsp.y0(0x218dec);
-			dsp.regs().a.var = 0x00008000000000;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00008000000000)));
 			dsp.setSR(0x0800d4);
 
 			dsp.memory().set(MemArea_P, 0, 0x0618a0);	// rep #<18
@@ -1038,14 +1104,14 @@ namespace dsp56k
 		},
 		[&]()
 		{
-			verify(dsp.regs().a.var == 0xffeadd5401e848);
+			verify(dsp.aluA().var == 0xffeadd5401e848);
 			verify(dsp.getSR().var == 0x0800d4);
 		});
 		{
 			// regular mode for comparison
 
 			dsp.y0(0xde7214);
-			dsp.regs().a.var = 0x00008000000000;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00008000000000)));
 			dsp.setSR(0x0800d4);
 
 			static constexpr uint64_t expectedValues[24] =
@@ -1081,11 +1147,11 @@ namespace dsp56k
 				runTest([&]()
 				{
 
-					emit(0x018050);	// div y0,a
+					emit("div y0,a");
 				},
 					[&]()
 				{
-					verify(dsp.regs().a.var == static_cast<int64_t>(expectedValues[i]));
+					verify(dsp.aluA().var == static_cast<int64_t>(expectedValues[i]));
 				});
 			}
 		}
@@ -1093,7 +1159,7 @@ namespace dsp56k
 		runTest([&]()
 		{
 			dsp.y0(0xde7214);
-			dsp.regs().a.var = 0x00008000000000;
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00008000000000)));
 			dsp.setSR(0x0800d4);
 
 			dsp.memory().set(MemArea_P, 0, 0x0618a0);	// rep #<18
@@ -1103,7 +1169,7 @@ namespace dsp56k
 		},
 		[&]()
 		{
-			verify(dsp.regs().a.var == 0xffeadd5401e848);
+			verify(dsp.aluA().var == 0xffeadd5401e848);
 			verify(dsp.getSR().var == 0x0800d4);
 		});
 	}
@@ -1115,14 +1181,302 @@ namespace dsp56k
 			dsp.set_m(0, 0xff);
 			dsp.set_m(4, 0xff);
 
-			emit(0xf09818);	// add a,b		x:(r0)+,x0		y:(r4)+,y0
-			emit(0x950818);	// add a,b		x1,x:(r0)+n0	y1,y:(r4)+n4
-			emit(0xbb9818);	// add a,b		x:(r0)+,a		b,y:(r4)+
+			emit(0xf09818);	// add a,b x:(r0)+,x0 y:(r4)+,y0
+			emit(0x950818);	// add a,b x1,x:(r0)+n0 y1,y:(r4)+n4
+			emit(0xbb9818);	// add a,b x:(r0)+,a b,y:(r4)+
 		}, [&]()
 		{
 			dsp.set_m(0, 0xffffff);
 			dsp.set_m(4, 0xffffff);
 		});
+	}
+
+	/*	lsr a  #$0,a0 ($280023): the ALU half shifts A1, the move half clears A0, and both land - sim56300
+		turns a1=$000002 a0=$000001 into a1=$000001 a0=$000000. The move used to take the write latch the
+		ALU had already written and seed it again from the unshifted accumulator, losing the shift.
+		JIT only: the interpreter's exec_parallel lets a changed ALU result replace the whole accumulator
+		and leaves a0=$000001 here.
+	*/
+	void JitUnittests::parallelAluMoveSameAccumulator()
+	{
+		runTest([&]()
+		{
+			dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0x00000002000001)));
+			emit(0x280023);
+		}, [&]()
+		{
+			verify(dsp.aluA().var == 0x00000001000000);
+		});
+	}
+
+	/*	Generated code calls peripherals and external bus devices, and those can write P memory. The block that is running
+		may be one of the blocks that such a write destroys, and it has to keep its code until it has returned. Here an
+		external bus device overwrites the first instruction of the block that writes to it. The block runs to its end
+		with the code it was built from, and the next run at that address runs the new instruction.
+	*/
+	void JitUnittests::blockDestroyedWhileRunning()
+	{
+		constexpr TWord g_pc = 0x3000;
+		constexpr TWord g_device = 0x100000;
+		constexpr TWord g_incA = 0x000008;
+
+		struct Device final : IExternalBusDevice
+		{
+			explicit Device(DSP& _dsp) : dsp(_dsp) {}
+
+			TWord read(TWord) override { return 0; }
+
+			void write(TWord, TWord) override
+			{
+				const auto* allocator = dsp.getJit().getRuntime()->allocator();
+
+				usedBefore = allocator->statistics().usedSize();
+				dsp.memWriteP(g_pc, g_incA);
+				usedAfter = allocator->statistics().usedSize();
+			}
+
+			DSP& dsp;
+			size_t usedBefore = 0;
+			size_t usedAfter = 0;
+		};
+
+		Device device(dsp);
+
+		const auto oldConfig = dsp.getJit().getConfig();
+		auto config = oldConfig;
+		config.externalBusBegin = g_device;
+		config.externalBusEnd = g_device + 1;
+		dsp.getJit().setConfig(config);
+		dsp.setExternalBusDevice(&device);
+
+		dsp.resetHW();
+		dsp.setALU(false, TReg56(static_cast<TReg56::MyType>(0)));
+		dsp.setALU(true, TReg56(static_cast<TReg56::MyType>(0)));
+
+		TWord pc = g_pc;
+		pc = emitToMemory("inc b", pc);
+		pc = emitToMemory("move b,x:>$100000", pc);
+		pc = emitToMemory("inc b", pc);
+		verify(pc == g_pc + 4);
+		emitToMemory(0x0af080, g_pc, pc);						// jmp >g_pc
+
+		dsp.setPC(g_pc);
+		execStep();
+
+		verify(device.usedAfter == device.usedBefore);			// the block that is running kept its code
+		verify(dsp.getJit().getRuntime()->allocator()->statistics().usedSize() < device.usedBefore);
+		verify(dsp.aluA().var == 0);
+		verify(dsp.aluB().var == 2);
+		verify(dsp.getPC().toWord() == g_pc);
+
+		execStep();
+
+		verify(dsp.aluA().var == 1);
+		verify(dsp.aluB().var == 3);
+
+		dsp.setExternalBusDevice(nullptr);
+		dsp.getJit().setConfig(oldConfig);
+	}
+
+	/*	A first bootstrap stage ends by jumping back into the bootstrap ROM, which the emulator does not have: the device
+		sees the PC there and hands the DSP the next stage itself. It keeps blocks unlinked until then, and a block that
+		ends in that jump has to compile and return to the caller with the PC out of P memory.
+	*/
+	void JitUnittests::branchOutOfPMemory()
+	{
+		constexpr TWord g_pc = 0x3100;
+		constexpr TWord g_bootRom = 0xff0000;
+
+		const auto oldConfig = dsp.getJit().getConfig();
+		auto config = oldConfig;
+		config.linkJitBlocks = false;
+		dsp.getJit().setConfig(config);
+
+		dsp.resetHW();
+		emitToMemory(0x0af080, g_bootRom, g_pc);		// jmp >$ff0000
+
+		dsp.setPC(g_pc);
+		execStep();
+
+		verify(dsp.getPC().toWord() == g_bootRom);
+
+		dsp.getJit().setConfig(oldConfig);
+	}
+
+	/*	A poll for the first received word right after the serial clock restarted. The clock converts the cycles to
+		its next slot to instructions with the ratio it measured last, here on code that ran a cycle per instruction.
+		The poll runs several cycles per instruction and reached that deadline slots after its slot. A poll that
+		loops to itself fast forwards to the slot instead
+	*/
+	void JitUnittests::receivePollAfterClockRestart()
+	{
+		constexpr TWord g_pc = 0x3200;
+		constexpr uint32_t g_cyclesPerSample = 72;
+
+		auto& esai = peripheralsX.getEsai();
+		auto& clock = peripheralsX.getEsaiClock();
+
+		const auto oldSource = clock.getClockSource();
+		const auto oldCycles = clock.getCyclesPerSample();
+
+		dsp.resetHW();
+
+		clock.setCyclesPerSample(g_cyclesPerSample);
+		clock.setClockSource(EsxiClock::ClockSource::Cycles);
+
+		for(uint32_t i=0; i<4; ++i)
+		{
+			clock.restartClock();
+			dsp.fastForward(16, 16);
+			clock.exec();
+		}
+
+		emitToMemory("brclr #8,x:<<$ffffb3,>$0", g_pc);	// RDF, loops to itself
+		dsp.memWriteP(g_pc + 1, 0);
+		emitToMemory("nop", g_pc + 2);
+
+		esai.writeReceiveClockControlRegister(1 << Esai::M_RDC0);		// two slots per frame
+		esai.writeEmptyAudioIn(2);
+		esai.writeReceiveControlRegister((1 << Esai::M_RMOD0) | (1 << Esai::M_RE0));	// restarts the clock
+
+		const auto start = dsp.getCycles();
+
+		dsp.setPC(g_pc);
+		execUntil(g_pc + 2);
+
+		verify(dsp.getCycles() - start < g_cyclesPerSample * 3 / 2);
+
+		esai.writeReceiveControlRegister(0);
+		clock.setCyclesPerSample(oldCycles);
+		clock.setClockSource(oldSource);
+	}
+
+	/*	The same poll in two instructions, a btst of the status register and a branch on carry back to it, as the Nord
+		Lead 2X waits for its transmit frame sync. Spinning, it ran past the slot like the one-instruction form did
+	*/
+	void JitUnittests::receivePollBtstBranchAfterClockRestart()
+	{
+		constexpr uint32_t g_cyclesPerSample = 72;
+
+		auto& esai = peripheralsX.getEsai();
+		auto& clock = peripheralsX.getEsaiClock();
+
+		const auto oldSource = clock.getClockSource();
+		const auto oldCycles = clock.getCyclesPerSample();
+
+		for(uint32_t variant=0; variant<2; ++variant)
+		{
+			const TWord pc = 0x3240 + variant * 0x10;
+
+			dsp.resetHW();
+
+			clock.setCyclesPerSample(g_cyclesPerSample);
+			clock.setClockSource(EsxiClock::ClockSource::Cycles);
+
+			for(uint32_t i=0; i<4; ++i)
+			{
+				clock.restartClock();
+				dsp.fastForward(16, 16);
+				clock.exec();
+			}
+
+			TWord end;
+
+			if(variant == 0)
+			{
+				dsp.memWriteP(pc, 0x017328);			// btst #8,x:<<$ffffb3		RDF
+				dsp.memWriteP(pc + 1, 0x0af0a0);		// jcc >pc
+				dsp.memWriteP(pc + 2, pc);
+				end = pc + 3;
+			}
+			else
+			{
+				dsp.memWriteP(pc, 0x0b7028);			// btst #8,x:>$ffffb3
+				dsp.memWriteP(pc + 1, 0xffffb3);
+				dsp.memWriteP(pc + 2, 0x0d1040);		// bcc >pc, relative to the bcc
+				dsp.memWriteP(pc + 3, 0xfffffe);
+				end = pc + 4;
+			}
+			emitToMemory("nop", end);
+
+			esai.writeReceiveClockControlRegister(1 << Esai::M_RDC0);		// two slots per frame
+			esai.writeEmptyAudioIn(2);
+			esai.writeReceiveControlRegister((1 << Esai::M_RMOD0) | (1 << Esai::M_RE0));	// restarts the clock
+
+			const auto start = dsp.getCycles();
+
+			dsp.setPC(pc);
+			execUntil(end);
+
+			verify(dsp.getCycles() - start < g_cyclesPerSample * 3 / 2);
+
+			esai.writeReceiveControlRegister(0);
+		}
+
+		clock.setCyclesPerSample(oldCycles);
+		clock.setClockSource(oldSource);
+	}
+
+	/*	A DO loop whose body is one block runs all of its iterations inside that block. An interrupt that reached the
+		queue right before the block started waited for the end of the loop, the chip takes it in the first iteration.
+		With doLoopExitOnPendingInterrupt the block is left at the end of an iteration while an interrupt is queued.
+		The interrupt here reaches the queue the way an external one does, when the peripherals run before the block
+	*/
+	void JitUnittests::doLoopExitOnPendingInterrupt()
+	{
+		constexpr TWord g_iterations = 16;
+
+		const auto oldConfig = dsp.getJit().getConfig();
+
+		// the PC and LC that the interrupt is taken with
+		auto taken = std::make_shared<std::pair<TWord, TWord>>();
+		const auto vba = dsp.registerInterruptFunc([this, taken]
+		{
+			*taken = {dsp.getPC().toWord(), dsp.regs().lc.var};
+		});
+
+		// each run has its own code, so its blocks are compiled with its config
+		auto run = [&](const TWord _pc, const bool _exitOnInterrupt)
+		{
+			auto config = oldConfig;
+			config.doLoopExitOnPendingInterrupt = _exitOnInterrupt;
+			dsp.getJit().setConfig(config);
+
+			dsp.resetHW();
+			dsp.regs().r[0] = TReg24(0);
+			dsp.regs().m[0] = TReg24(0xffffff);
+
+			const TWord loopBegin = _pc + 2;
+			const TWord loopEnd = _pc + 4;					// the first address after the loop
+
+			emitToMemory(0x061080, loopEnd - 1, _pc);		// do #16,>loopEnd: LA is the last instruction
+			emitToMemory("nop", _pc + 2);
+			emitToMemory("move (r0)+", _pc + 3);
+			emitToMemory(0x0af080, loopEnd, loopEnd);		// jmp >loopEnd, parks the DSP after the loop
+
+			dsp.setPC(_pc);
+			execStep();
+			verify(dsp.getPC().toWord() == loopBegin);
+
+			dsp.injectExternalInterrupt(vba);
+			peripheralsX.resetDelayCycles(dsp.getInstructionCounter(), 0);
+
+			*taken = {0, 0};
+			for(uint32_t i = 0; i < 64 && (dsp.getPC().toWord() != loopEnd || dsp.hasPendingInterrupts()); ++i)
+				execStep();
+
+			verify(dsp.regs().r[0].var == g_iterations);
+		};
+
+		// taken after the first iteration
+		run(0x3300, true);
+		verify(taken->first == 0x3302 && taken->second == g_iterations - 1);
+
+		// without, the loop ends first
+		run(0x3340, false);
+		verify(taken->first == 0x3344);
+
+		dsp.getJit().setConfig(oldConfig);
 	}
 
 	void JitUnittests::emit(const TWord _opA, TWord _opB, TWord _pc)

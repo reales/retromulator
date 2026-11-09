@@ -21,6 +21,9 @@ namespace dsp56kDebugger
 		: StyledTextCtrl(_parent, wxID_ANY, wxDefaultPosition, wxSize(900,1000))
 		, DebuggerListener(_debugger)
 	{
+		// the target of Go to Address until a view had the focus
+		setAsDefaultFocus();
+
 		SetIndent(14);
 		SetTabWidth(14);
 		StyleSetForeground(2, *wxYELLOW);
@@ -218,7 +221,8 @@ namespace dsp56kDebugger
 
 	void Assembly::evGotoAddress(dsp56k::TWord _addr)
 	{
-		if(this->GetSTCFocus())
+		// the dialog has just closed, the focus may not be back yet
+		if(this->GetSTCFocus() || isLastFocused())
 			GotoLine(static_cast<int>(_addr));
 	}
 
@@ -249,7 +253,7 @@ namespace dsp56kDebugger
 	}
 }
 
-wxBEGIN_EVENT_TABLE(dsp56kDebugger::Assembly, wxStyledTextCtrl)
+wxBEGIN_EVENT_TABLE(dsp56kDebugger::Assembly, StyledTextCtrl)
 	EVT_STC_CHANGE(wxID_ANY, Assembly::onChange)
 	EVT_STC_PAINTED(wxID_ANY, Assembly::onChange)
 	EVT_STC_DOUBLECLICK(wxID_ANY, Assembly::onDoubleClick)

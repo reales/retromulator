@@ -1,10 +1,12 @@
 #include "dspthread.h"
 
+#include <cassert>
 #include <chrono>
 #include <iostream>
 
 #include "debuggerinterface.h"
 #include "dsp.h"
+#include "dsp56kBase/audioworkgroup.h"
 #include "dsp56kBase/threadtools.h"
 
 #if !defined(_WIN32)
@@ -21,9 +23,10 @@ namespace dsp56k
 	{
 	}
 
-	DSPThread::DSPThread(DSP& _dsp, const char* _name/* = nullptr*/, std::shared_ptr<DebuggerInterface> _debugger/* = {}*/)
+	DSPThread::DSPThread(DSP& _dsp, const char* _name/* = nullptr*/, std::shared_ptr<DebuggerInterface> _debugger/* = {}*/, ThreadPriority _initialPriority/* = ThreadPriority::Highest*/, const Callback& _callback/* = {}*/)
 		: m_dsp(_dsp)
 		, m_name(_name ? _name : std::string())
+		, m_initialPriority(_initialPriority)
 		, m_runThread(true)
 		, m_debugger(std::move(_debugger))
 	{
@@ -33,27 +36,32 @@ namespace dsp56k
 		if(m_debugger)
 			setDebugger(m_debugger.get());
 
-		setCallback(defaultCallback);
+		setCallback(_callback ? _callback : defaultCallback);
 
-		// Use a 64 MB stack — the default 512 KB is exhausted by recursive JIT
-		// block compilation during DSP firmware initialisation in Release builds.
-#if defined(_WIN32)
-		m_thread.reset(new std::thread([this] { threadFunc(); }));
-#else
+#ifdef _WIN32
+		m_thread.reset(new std::thread([this]
 		{
-			pthread_attr_t attr;
-			pthread_attr_init(&attr);
-			pthread_attr_setstacksize(&attr, 64 * 1024 * 1024); // 64 MB
-			pthread_t pt{};
-			pthread_create(&pt, &attr, [](void* arg) -> void* {
-				static_cast<DSPThread*>(arg)->threadFunc();
-				return nullptr;
-			}, this);
-			pthread_attr_destroy(&attr);
-			// Wrap the pthread in a std::thread that just joins it, so the rest of the
-			// class (join / terminate) continues to work without header changes.
-			m_thread.reset(new std::thread([pt]() mutable { pthread_join(pt, nullptr); }));
-		}
+			threadFunc();
+		}));
+#else
+		// The JIT compiles on this thread and emits nested child blocks recursively, which takes about 20 KB of
+		// stack per level; a Virus TI firmware reached 27 levels. A std::thread gets the platform default, which
+		// is only 512 KB on macOS, so the DSP thread overflowed into its guard page there. Ask for the 8 MB that
+		// Linux hands out by default. Retromulator uses 64 MB: Release builds overflowed 8 MB.
+		pthread_attr_t attr;
+		pthread_attr_init(&attr);
+		pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
+
+		const auto result = pthread_create(&m_thread, &attr, [](void* _this) -> void*
+		{
+			static_cast<DSPThread*>(_this)->threadFunc();
+			return nullptr;
+		}, this);
+
+		pthread_attr_destroy(&attr);
+
+		m_threadStarted = result == 0;
+		assert(m_threadStarted && "failed to create DSP thread");
 #endif
 	}
 
@@ -64,16 +72,26 @@ namespace dsp56k
 
 	void DSPThread::join()
 	{
+#ifdef _WIN32
 		if(!m_thread)
 			return;
+#else
+		if(!m_threadStarted)
+			return;
+#endif
 
 		if(m_debugger)
 			detachDebugger(m_debugger.get());
 
 		terminate();
 
+#ifdef _WIN32
 		m_thread->join();
 		m_thread.reset();
+#else
+		pthread_join(m_thread, nullptr);
+		m_threadStarted = false;
+#endif
 
 		m_debugger.reset();
 	}
@@ -112,8 +130,10 @@ namespace dsp56k
 
 	void DSPThread::threadFunc()
 	{
-		ThreadTools::setCurrentThreadPriority(ThreadPriority::Highest);
+		ThreadTools::setCurrentThreadPriority(m_initialPriority);
 		ThreadTools::setCurrentThreadName(m_name.empty() ? "DSP" : "DSP " + m_name);
+
+		AudioWorkgroup::Member workgroup(m_initialPriority == ThreadPriority::Highest);
 
 		uint64_t instructions = 0;
 		uint64_t cycles = 0;
@@ -134,24 +154,34 @@ namespace dsp56k
 #endif
 		while(m_runThread)
 		{
+			workgroup.update();
+
 			{
 				Guard g(m_mutex);
 
 				const auto iBegin = m_dsp.getInstructionCounter();
 				const auto cBegin = m_dsp.getCycles();
 
-				for(size_t i=0; i<128; i += 8)
+				if constexpr(g_useJIT)
 				{
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
-					m_dsp.exec();
+					// the trampoline runs the whole batch: it saves the callee-saved registers that blocks
+					// use once here instead of once per block
+					m_dsp.getJit().getTrampoline().exec(&m_dsp, 128);
 				}
-
+				else
+				{
+					for(size_t i=0; i<128; i += 8)
+					{
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+						m_dsp.exec();
+					}
+				}
 				const auto iEnd = m_dsp.getInstructionCounter();
 				const auto cEnd = m_dsp.getCycles();
 

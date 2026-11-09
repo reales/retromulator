@@ -1,9 +1,10 @@
 #include "jitdspmode.h"
 #include "jittypes.h"
 
-#ifdef HAVE_X86_64
+#ifndef HAVE_ARM64
 
 #include "jitdspregs.h"
+#include "jitdspregpool.h"
 #include "jitops.h"
 
 #include "asmjit/core/operand.h"
@@ -164,7 +165,7 @@ namespace dsp56k
 
 		if(mode)
 		{
-			const uint32_t shift = 46 + (mode->testSR(SRB_S0) ? 1 : 0) - (mode->testSR(SRB_S1) ? 1 : 0);
+			const uint32_t shift = 46 + g_aluBitOffset + (mode->testSR(SRB_S0) ? 1 : 0) - (mode->testSR(SRB_S1) ? 1 : 0);
 			const RegScratch r(m_block);
 			m_asm.ror(r, _alu, static_cast<int>(shift));
 			m_asm.test(r32(r), asmjit::Imm(0x3));
@@ -176,7 +177,7 @@ namespace dsp56k
 			const ShiftReg shift64(m_block);
 			const auto shift = shift64.get().r8();
 			sr_getBitValue(shift, SRB_S0);
-			m_asm.add(shift, asmjit::Imm(46));
+			m_asm.add(shift, asmjit::Imm(46 + g_aluBitOffset));
 			{
 				const RegGP s1(m_block);
 				sr_getBitValue(s1, SRB_S1);
@@ -226,7 +227,10 @@ namespace dsp56k
 		auto aluScratch = [this, &_alu]()
 		{
 			RegScratch alu(m_block);
-			m_asm.rol(alu, _alu, 8);
+			if constexpr (g_leftAlignedAlu)
+				m_asm.mov(alu, _alu);	// already left-aligned; the rotate exists only to left-align
+			else
+				m_asm.rol(alu, _alu, 8);
 			return alu;
 		};
 
@@ -276,20 +280,26 @@ namespace dsp56k
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
-		copyBitToCCR(_alu, 55, CCRB_N);
+		// Left-aligned accumulators put the 56-bit MSB at bit 63 rather than 55.
+		copyBitToCCR(_alu, 55 + g_aluBitOffset, CCRB_N);
 	}
 
 	void JitOps::ccr_n_update_by47(const JitReg64& _alu)
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
-		copyBitToCCR(_alu, 47, CCRB_N);
+		copyBitToCCR(_alu, 47 + g_aluBitOffset, CCRB_N);
 	}
 
 	void JitOps::ccr_n_update_by23(const JitReg64& _alu)
 	{
 		// Negative
 		// Set if the MSB of the result is set; otherwise, this bit is cleared.
+		//
+		// No g_aluBitOffset here: the only callers are ROL and ROR, and they pass the plain 24 bit
+		// A1/B1 from getALU1(), not a left-aligned accumulator. Adding the offset read bit 31 of a
+		// 24 bit value, so N came out clear on both back ends - the interpreter and the simulator
+		// set it from bit 23.
 		copyBitToCCR(_alu, 23, CCRB_N);
 	}
 
@@ -304,7 +314,7 @@ namespace dsp56k
 
 		if(mode)
 		{
-			uint32_t bit = 46 + (mode->testSR(SRB_S1) ? 1 : 0) - (mode->testSR(SRB_S0) ? 1 : 0);
+			uint32_t bit = 46 + g_aluBitOffset + (mode->testSR(SRB_S1) ? 1 : 0) - (mode->testSR(SRB_S0) ? 1 : 0);
 
 			const RegGP bit46(m_block);
 			m_asm.copyBitToReg(bit46, _alu, bit);
@@ -319,7 +329,7 @@ namespace dsp56k
 		else
 		{
 			const RegGP bit(m_block);
-			m_asm.mov(bit, asmjit::Imm(46));
+			m_asm.mov(bit, asmjit::Imm(46 + g_aluBitOffset));
 
 			{
 				const RegGP s0s1(m_block);
@@ -345,6 +355,64 @@ namespace dsp56k
 
 		m_asm.bind(exit);
 	}
+
+	void JitOps::ccr_vl_update(const asmjit::x86::CondCode _cc)
+	{
+		// Materialise the condition BEFORE clearing V. ccr_clear emits an AND on SR, and AND writes
+		// ZF/SF/PF, so a set() placed after it reads the flags of that AND instead of the arithmetic
+		// it is supposed to describe. op_Div and op_Rep_Div call in here with no CcrBatchUpdate in
+		// scope, which is the case that takes the clearing path: they compare accumulator bits 55/54
+		// via parity, and V then came out of the parity of the SR byte. ccr_update(_bit, _cc) above
+		// already orders it this way; this is the same rule.
+		const RegScratch r(m_block);
+		m_asm.set(_cc, r.get().r8());
+		ccr_vl_update(r);
+	}
+
+	void JitOps::ccr_vl_update(const JitRegGP& _zeroOrOne)
+	{
+		// V has to be cleared first because it is overwritten; L must NOT be, it is sticky.
+		if(m_ccr_update_clear)
+			ccr_clear(CCR_V);
+		else
+			ccr_clearDirty(CCR_V);
+		ccr_clearDirty(CCR_L);
+
+		// 0/1 -> 0x00/0xFF -> 0x00/(CCR_V|CCR_L), so one OR writes both bits. The per-bit path needs
+		// set+shl+or for V and then rol+and+or to copy V into L, six instructions instead of four.
+		// Only the low byte takes part, so a register written by setcc is enough.
+		m_asm.neg(_zeroOrOne.r8());
+		m_asm.and_(_zeroOrOne.r8(), asmjit::Imm(CCR_V | CCR_L));
+		m_asm.or_(m_dspRegs.getSR(JitDspRegs::ReadWrite).r8(), _zeroOrOne.r8());
+	}
+
+	void JitOps::ccr_c_update_vl_ifOverflow()
+	{
+		// The batch cleared C and V up front, so the carry is folded in with an adc and V and L only ever need setting.
+		assert(!m_ccr_update_clear && "needs a CcrBatchUpdate that clears C and V");
+
+		ccr_clearDirty(static_cast<CCRMask>(CCR_C | CCR_V | CCR_L));
+
+		const auto sr = r32(m_dspRegs.getSR(JitDspRegs::ReadWrite));
+		const auto overflow = m_asm.newLabel();
+		const auto done = m_asm.newLabel();
+
+		// The adc rewrites OF, so branch on it first; the out-of-line path folds the carry in as well.
+		m_asm.jo(overflow);
+		m_asm.adc(sr, asmjit::Imm(0));
+		m_asm.bind(done);
+
+		m_block.addColdCode([a = &m_asm, sr, overflow, done]()
+		{
+			a->bind(overflow);
+			a->adc(sr, asmjit::Imm(0));
+			a->or_(sr.r8(), asmjit::Imm(CCR_V | CCR_L));
+			a->jmp(done);
+		});
+	}
+
+	void JitOps::ccr_vl_update_ifNotZero()	{ ccr_vl_update(asmjit::x86::CondCode::kNotZero); }
+	void JitOps::ccr_vl_update_ifNotParity()	{ ccr_vl_update(asmjit::x86::CondCode::kNP); }
 
 	void JitOps::ccr_l_update_by_v()
 	{

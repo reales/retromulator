@@ -1,5 +1,6 @@
 #pragma once
 
+#include "jitdspregpool.h"
 #include "jitblock.h"
 #include "jitdspregs.h"
 #include "jitdspvalue.h"
@@ -52,7 +53,7 @@ namespace dsp56k
 		uint32_t calcCycles(TWord _pc) const;
 
 		void op_Abs(TWord op);
-		void op_ADC(TWord op)			{ errNotImplemented(op); }
+		void op_ADC(TWord op);
 		void op_Add_SD(TWord op);
 		void op_Add_xx(TWord op);
 		void op_Add_xxxx(TWord op);
@@ -89,7 +90,7 @@ namespace dsp56k
 		void op_Brclr_pp(TWord op);
 		void op_Brclr_qq(TWord op);
 		void op_Brclr_S(TWord op);
-		void op_BRKcc(TWord op)			{ errNotImplemented(op); }
+		void op_BRKcc(TWord op);
 		void op_Brset_ea(TWord op);
 		void op_Brset_aa(TWord op);
 		void op_Brset_pp(TWord op);
@@ -127,7 +128,7 @@ namespace dsp56k
 		void op_Cmp_xxS2(TWord op);
 		void op_Cmp_xxxxS2(TWord op);
 		void op_Cmpm_S1S2(TWord op);
-		void op_Cmpu_S1S2(TWord op)			{ errNotImplemented(op); }
+		void op_Cmpu_S1S2(TWord op);
 		void op_Debug(TWord op);
 		void op_Debugcc(TWord op);
 		void op_Dec(TWord op);
@@ -138,22 +139,22 @@ namespace dsp56k
 		void op_Do_aa(TWord op);
 		void op_Do_xxx(TWord op);
 		void op_Do_S(TWord op);
-		void op_DoForever(TWord op)			{ errNotImplemented(op); }
+		void op_DoForever(TWord op);
 		void op_Dor_ea(TWord op);
-		void op_Dor_aa(TWord op)			{ errNotImplemented(op); }
+		void op_Dor_aa(TWord op);
 		void op_Dor_xxx(TWord op);
 		void op_Dor_S(TWord op);
-		void op_DorForever(TWord op)		{ errNotImplemented(op); }
+		void op_DorForever(TWord op);
 		void op_Enddo(TWord op);
 		void op_Eor_SD(TWord op);
 		void op_Eor_xx(TWord op);
-		void op_Eor_xxxx(TWord op)			{ errNotImplemented(op); }
-		void op_Extract_S1S2(TWord op)		{ errNotImplemented(op); }
-		void op_Extract_CoS2(TWord op)		{ errNotImplemented(op); }
+		void op_Eor_xxxx(TWord op);
+		void op_Extract_S1S2(TWord op);
+		void op_Extract_CoS2(TWord op);
 		void op_Extractu_S1S2(TWord op);
 		void op_Extractu_CoS2(TWord op);
 		template<bool BackupCCR> void op_Ifcc(TWord op);
-		void op_Illegal(TWord op)			{ errNotImplemented(op); }
+		void op_Illegal(TWord op);
 		void op_Inc(TWord op);
 		void op_Insert_S1S2(TWord op);
 		void op_Insert_CoS2(TWord op);
@@ -185,7 +186,7 @@ namespace dsp56k
 		void op_Jsset_pp(TWord op);
 		void op_Jsset_qq(TWord op);
 		void op_Jsset_S(TWord op);
-		void op_Lra_Rn(TWord op)		{ errNotImplemented(op); }
+		void op_Lra_Rn(TWord op);
 		void op_Lra_xxxx(TWord op);
 		void op_Lsl_D(TWord op);
 		void op_Lsl_ii(TWord op);
@@ -197,12 +198,12 @@ namespace dsp56k
 		void op_Lua_Rn(TWord op);
 		void op_Mac_S1S2(TWord op)		{ alu_multiply(op); }
 		template<Instruction Inst, bool Accumulate, bool Round> void op_Mac_S(TWord op);
-		void op_Maci_xxxx(TWord op)		{ errNotImplemented(op); }
+		void op_Maci_xxxx(TWord op);
 		void op_Macr_S1S2(TWord op)		{ alu_multiply(op); }
-		void op_Macri_xxxx(TWord op)	{ errNotImplemented(op); }
+		void op_Macri_xxxx(TWord op);
 		void op_Max(TWord op);
 		void op_Maxm(TWord op);
-		void op_Merge(TWord op)			{ errNotImplemented(op); }
+		void op_Merge(TWord op);
 		void op_Move_Nop(TWord op);
 		void op_Move_xx(TWord op);
 		void op_Mover(TWord op);
@@ -227,12 +228,12 @@ namespace dsp56k
 		void op_Movec_S1D2(TWord op);
 		void op_Movec_xx(TWord op);
 		void op_Movem_ea(TWord op);
-		void op_Movem_aa(TWord op)				{ errNotImplemented(op); }
+		void op_Movem_aa(TWord op);
 		void op_Movep_ppea(TWord op);
 		void op_Movep_Xqqea(TWord op);
 		void op_Movep_Yqqea(TWord op);
 		void op_Movep_eapp(TWord op);
-		void op_Movep_eaqq(TWord op)			{ errNotImplemented(op); }
+		void op_Movep_eaqq(TWord op);
 		void op_Movep_Spp(TWord op);
 		void op_Movep_SXqq(TWord op);
 		void op_Movep_SYqq(TWord op);
@@ -240,10 +241,10 @@ namespace dsp56k
 		template<Instruction Inst, bool Accumulate> void op_Mpy_su(TWord op);
 		void op_Mpyi(TWord op);
 		void op_Mpyr_S1S2D(TWord op)			{ alu_multiply(op); }
-		void op_Mpyri(TWord op)					{ errNotImplemented(op); }
+		void op_Mpyri(TWord op);
 		void op_Neg(TWord op);
 		void op_Nop(TWord op);
-		void op_Norm(TWord op)					{ errNotImplemented(op); }
+		void op_Norm(TWord op);
 		void op_Normf(TWord op);
 		void op_Not(TWord op);
 		void op_Or_SD(TWord op);
@@ -257,17 +258,17 @@ namespace dsp56k
 		void op_Plockr(TWord op)				{ errNotImplemented(op); }
 		void op_Punlock(TWord op)				{ errNotImplemented(op); }
 		void op_Punlockr(TWord op)				{ errNotImplemented(op); }
-		void op_Rep_ea(TWord op)				{ errNotImplemented(op); }
-		void op_Rep_aa(TWord op)				{ errNotImplemented(op); }
+		void op_Rep_ea(TWord op);
+		void op_Rep_aa(TWord op);
 		void op_Rep_xxx(TWord op);
 		void op_Rep_S(TWord op);
 		void op_Reset(TWord op);
 		void op_Rnd(TWord op);
 		void op_Rol(TWord op);
-		void op_Ror(TWord op)					{ errNotImplemented(op); }
+		void op_Ror(TWord op);
 		void op_Rti(TWord op);
 		void op_Rts(TWord op);
-		void op_Sbc(TWord op)					{ errNotImplemented(op); }
+		void op_Sbc(TWord op);
 		void op_Stop(TWord op);
 		void op_Sub_SD(TWord op);
 		void op_Sub_xx(TWord op);
@@ -278,14 +279,29 @@ namespace dsp56k
 		void op_Tcc_S1D1S2D2(TWord op);
 		void op_Tcc_S2D2(TWord op);
 		void op_Tfr(TWord op);
-		void op_Trap(TWord op)					{ errNotImplemented(op); }
-		void op_Trapcc(TWord op)				{ errNotImplemented(op); }
+		void op_Trap(TWord op);
+		void op_Trapcc(TWord op);
 		void op_Tst(TWord op);
 		void op_Vsl(TWord op)					{ errNotImplemented(op); }
 		void op_Wait(TWord op);
 
 		// helpers
 		void signextend56to64(const JitReg64& _dst, const JitReg64& _src) const;
+
+		// --- left-aligned ALU representation (see LEFT_ALIGNED_ALU.md) ---
+		// A left-aligned accumulator holds the 56-bit value in bits 63..8. INVARIANT: bits 7..0 are always
+		// zero. The DSP56300 has no such bits, so any information reaching them would be resolution the
+		// hardware never had. Every op that can shift a bit down into them must call aluClearLowByte().
+		void aluSignextendTo64(const JitReg64& _dst, const JitReg64& _src) const;
+		void aluSignextendTo64(const JitReg64& _reg) const { aluSignextendTo64(_reg, _reg); }
+		void aluClearLowByte(const JitRegGP& _reg) const;
+		// paired: make an accumulator usable as a full 64-bit signed value, then put it back. Both are
+		// no-ops when left-aligned, except that the restore keeps enforcing the low-byte invariant.
+		void aluExtendTo64(const JitRegGP& _reg) const;
+		void aluRestoreFrom64(const JitRegGP& _reg) const;
+		void aluToLeftAligned(const JitRegGP& _reg) const;   // 56-bit right-aligned -> left-aligned
+		void aluFromLeftAligned(const JitRegGP& _reg) const; // left-aligned -> 56-bit right-aligned
+
 		void signextend56to64(const JitReg64& _reg) const { return signextend56to64(_reg, _reg); }
 
 		void signextend48to64(const JitReg64& _reg) const;
@@ -295,8 +311,8 @@ namespace dsp56k
 
 		void signextend24to56(const JitReg64& _reg) const;
 
-		static void signextend24to64(JitEmitter& _a, const JitReg64& _dst, const JitReg64& _src);
-		void signextend24to64(const JitReg64& _dst, const JitReg64& _src) const;
+		static void signextend24to64(JitEmitter& _a, const JitReg64& _dst, const JitReg64& _src, uint32_t _shift = 0);
+		void signextend24to64(const JitReg64& _dst, const JitReg64& _src, uint32_t _shift = 0) const;
 		void signextend24to64(const JitReg64& _reg) const { return signextend24to64(_reg, _reg); }
 
 		void signextend24To32(const JitReg32& _reg) const;
@@ -304,6 +320,8 @@ namespace dsp56k
 		void bitreverse24(const JitReg32& x) const;
 
 		bool isPeriphAddress(const TWord _addr) const;
+		bool isExternalBusAddress(TWord _addr) const;
+		bool isCppHandledAddress(TWord _addr) const;	// peripherals or an external bus device, anything that is not plain memory
 		TWord getPeriphStartAddr() const;
 
 		// The main AGU entry point.
@@ -324,21 +342,25 @@ namespace dsp56k
 		void updateAddressRegisterSubBitreverseN1(const JitReg32& _r, bool _addN);
 
 		template<Instruction Inst, ExpectedBitValue BitValue>
-		void esaiFrameSyncSpinloopBra(TWord op) const;
+		void serialStatusSpinloop(TWord op, bool _loopsToItself) const;
+		void serialStatusSpin(TWord _addr, TWord _bit, bool _waitForSet) const;
+		template<Instruction Inst> void btstSerialStatusSpinloop(TWord op) const;
+		void btstSerialStatusSpin(EMemArea _area, TWord _addr, TWord _bit) const;
 
-		template<Instruction Inst, ExpectedBitValue BitValue>
-		void esaiFrameSyncSpinloopJmp(TWord op) const;
-
-#ifdef HAVE_X86_64
+#ifndef HAVE_ARM64
 		void signed24To56(const JitReg64& _dst, const JitReg64& _src) const;
 #endif
 		constexpr static uint64_t signed24To56(const TWord _src)
 		{
-			return static_cast<uint64_t>((static_cast<int64_t>(_src) << 40ull) >> 8ull) >> 8ull;
+			const auto v = static_cast<uint64_t>((static_cast<int64_t>(_src) << 40ull) >> 8ull);
+			// left-aligned keeps the value at bits 55..32 instead of shifting it back down
+			return g_leftAlignedAlu ? v : (v >> 8ull);
 		}
 
 		void callDSPFunc(void(* _func)(DSP*, TWord), TWord _arg) const;
 		void callDSPFunc(void(* _func)(DSP*, TWord), const JitRegGP& _arg) const;
+		void callDSPFunc(void(* _func)(DSP*, TWord, TWord), TWord _argA, TWord _argB) const;
+		bool saBitfield(TWord _packed, TWord _control);
 
 		void setDspProcessingMode(uint32_t _mode) const;
 		void getDspProcessingMode(const JitRegGP& _dst) const;
@@ -400,7 +422,15 @@ namespace dsp56k
 		template <Instruction Inst, std::enable_if_t<!hasAnyField<Inst, Field_MMM, Field_RRR>() && hasFields<Inst, Field_qqqqqq, Field_S>()>* = nullptr> void writeMem(TWord op, const DspValue& _src);
 		template <Instruction Inst, std::enable_if_t<!hasAnyField<Inst, Field_MMM, Field_RRR>() && hasFields<Inst, Field_pppppp, Field_S>()>* = nullptr> void writeMem(TWord op, const DspValue& _src);
 		template <Instruction Inst, std::enable_if_t<!hasAnyField<Inst, Field_S, Field_s>() && hasFieldT<Inst, Field_aaaaaa>()>* = nullptr> void writeMem(TWord op, EMemArea _area, const DspValue& _src) const;
-		template<Instruction Inst> void writePmem(TWord _op, const DspValue& _src);
+		template <Instruction Inst, std::enable_if_t<hasFields<Inst, Field_MMM, Field_RRR>()>* = nullptr> void writePmem(TWord _op, const DspValue& _src);
+		template <Instruction Inst, std::enable_if_t<!hasAnyField<Inst, Field_MMM, Field_RRR>() && hasFieldT<Inst, Field_aaaaaa>()>* = nullptr> void writePmem(TWord _op, const DspValue& _src);
+		void writePmem(const DspValue& _ea, const DspValue& _src);
+
+		// MOVE(M), shared by the effective address and the absolute short address forms
+		template <Instruction Inst> void movem(TWord op);
+
+		// MPYI, MPYRI, MACI and MACRI: a register times the immediate extension word, accumulated and/or rounded
+		template <Instruction Inst> void mpyImmediate(TWord op, bool _accumulate, bool _round);
 
 		void debugDynamicPeripheralAddressing(const JitRegGP& _offset) const;
 		void readMemOrPeriph(DspValue& _dst, EMemArea _area, const DspValue& _offset, Instruction _inst) const;
@@ -426,15 +456,15 @@ namespace dsp56k
 		void getSR(DspValue& _dst);
 		void setSR(const DspValue& _src);
 
-		void getXY0(DspValue& _dst, uint32_t _aluIndex, bool _signextend) const;
+		void getXY0(DspValue& _dst, uint32_t _aluIndex, bool _signextend, uint32_t _shift = 0) const;
 		void setXY0(uint32_t _xy, const DspValue& _src);
-		void getXY1(DspValue& _dst, uint32_t _aluIndex, bool _signextend) const;
+		void getXY1(DspValue& _dst, uint32_t _aluIndex, bool _signextend, uint32_t _shift = 0) const;
 		void setXY1(uint32_t _xy, const DspValue& _src);
 
-		void getX0(DspValue& _dst, bool _signextend) const { return getXY0(_dst, 0, _signextend); }
-		void getY0(DspValue& _dst, bool _signextend) const { return getXY0(_dst, 1, _signextend); }
-		void getX1(DspValue& _dst, bool _signextend) const { return getXY1(_dst, 0, _signextend); }
-		void getY1(DspValue& _dst, bool _signextend) const { return getXY1(_dst, 1, _signextend); }
+		void getX0(DspValue& _dst, bool _signextend, uint32_t _shift = 0) const { return getXY0(_dst, 0, _signextend, _shift); }
+		void getY0(DspValue& _dst, bool _signextend, uint32_t _shift = 0) const { return getXY0(_dst, 1, _signextend, _shift); }
+		void getX1(DspValue& _dst, bool _signextend, uint32_t _shift = 0) const { return getXY1(_dst, 0, _signextend, _shift); }
+		void getY1(DspValue& _dst, bool _signextend, uint32_t _shift = 0) const { return getXY1(_dst, 1, _signextend, _shift); }
 
 		void getALU0(DspValue& _dst, uint32_t _aluIndex) const;
 		void getALU1(DspValue& _dst, uint32_t _aluIndex) const;
@@ -454,9 +484,19 @@ namespace dsp56k
 		void incSP() const;
 
 		void transferAluTo24(DspValue& _dst, TWord _alu);
-		void transfer24ToAlu(TWord _alu, const DspValue& _src) const;
+		void transfer24ToAlu(TWord _alu, const DspValue& _src, bool _sourceIs8Bit = false) const;
 		void transferSaturation24(const JitReg64& _dst, const JitReg64& _src);
 		void transferSaturation48(const JitReg64& _dst, const JitReg64& _src);
+
+		// Sixteen-bit Arithmetic mode bus transfers (FM 3.5.1)
+		bool isSixteenBitArithmetic() const;
+		void transferSaturation16(const JitReg64& _dst, const JitReg64& _src);
+		void busToReg16(DspValue& _dst, const DspValue& _src) const;
+		void busToReg16InPlace(DspValue& _value) const;
+		const DspValue& busToRegSA(const DspValue& _src, DspValue& _temp) const;
+		void reg16ToBus(DspValue& _value) const;
+		void sixteenBitLongToAlu(TWord _alu, const DspValue& _x, const DspValue& _y);
+		void aluToSixteenBitLong(TWord _alu, DspValue& _x, DspValue& _y);
 
 		// CCR
 		class CcrBatchUpdate
@@ -500,6 +540,23 @@ namespace dsp56k
 		void ccr_n_update_by23(const JitReg64& _alu);
 		void ccr_s_update(const JitReg64& _alu);
 		void ccr_l_update_by_v();
+
+		// V is overwritten while L is a sticky OR of V, so where both are written together they can be
+		// produced from a single 0/1 value instead of two independent read-modify-writes of SR.
+		void ccr_vl_update_ifNotZero();
+		void ccr_vl_update(const JitRegGP& _zeroOrOne);
+		void ccr_vl_update_ifEqual(const JitRegGP& _value, uint64_t _limit);
+#ifndef HAVE_ARM64
+		void ccr_vl_update_ifNotParity();
+		void ccr_vl_update(asmjit::x86::CondCode _cc);
+		// Inside a CcrBatchUpdate that cleared C and V: C from the host carry, V and the sticky L from the host overflow.
+		// Overflow is rare, so V and L are set out of line behind a branch that is normally not taken.
+		void ccr_c_update_vl_ifOverflow();
+#else
+		// Inside a CcrBatchUpdate that cleared V: V and the sticky L from the host overflow, set out of line behind a
+		// branch that is normally not taken.
+		void ccr_vl_update_ifOverflow();
+#endif
 		void ccr_v_update(const JitReg64& _nonMaskedResult);
 
 		void ccr_clear(CCRMask _mask);
@@ -520,13 +577,8 @@ namespace dsp56k
 
 		// decode
 		void decode_cccc(const JitRegGP& _dst, TWord cccc);
-#ifdef HAVE_X86_64
-		asmjit::x86::CondCode decode_cccc(TWord cccc);
-		static asmjit::x86::CondCode reverseCC(asmjit::x86::CondCode cccc);
-#else
-		asmjit::arm::CondCode decode_cccc(TWord cccc);
-		static asmjit::arm::CondCode reverseCC(asmjit::arm::CondCode cccc);
-#endif
+		JitCondCode decode_cccc(TWord cccc);
+		static JitCondCode reverseCC(JitCondCode cccc);
 		void decode_dddddd_read(DspValue& _dst, TWord _dddddd);
 		void decode_dddddd_write(TWord _dddddd, const DspValue& _src, bool _sourceIs8Bit = false);
 		DspValue decode_dddddd_ref(TWord _dddddd, bool _read = false, bool _write = true) const;
@@ -544,9 +596,9 @@ namespace dsp56k
 		DspValue decode_JJJ_read_56(TWord _jjj, bool _b) const;
 		void decode_JJ_read(DspValue& _dst, TWord jj) const;
 		DspValue decode_RRR_read(TWord _rrr, int _shortDisplacement = 0);
-		void decode_qq_read(DspValue& _dst, TWord _qq, bool _signextend);
-		void decode_QQ_read(DspValue& _dst, TWord _qq, bool _signextend);
-		void decode_QQQQ_read(DspValue& _s1, bool _signextendS1, DspValue& _s2, bool _signextendS2, TWord _qqqq) const;
+		void decode_qq_read(DspValue& _dst, TWord _qq, bool _signextend, uint32_t _shift = 0);
+		void decode_QQ_read(DspValue& _dst, TWord _qq, bool _signextend, uint32_t _shift = 0);
+		void decode_QQQQ_read(DspValue& _s1, bool _signextendS1, DspValue& _s2, bool _signextendS2, TWord _qqqq, uint32_t _s1Shift = 0) const;
 		void decode_qqq_read(DspValue& _dst, TWord _qqq) const;
 		void decode_sss_read(DspValue& _dst, TWord _sss) const;
 		void decode_LLL_read(TWord _lll, DspValue& x, DspValue& y);
@@ -569,10 +621,12 @@ namespace dsp56k
 		void alu_sub(TWord _ab, const JitReg64& _v);
 		void alu_sub(TWord _ab, uint8_t _v);
 
+		void alu_adcSbc(TWord _ab, TWord _j, bool _subtract);
+
 		void alu_and(TWord ab, DspValue& _v);
 
-		void alu_asl(TWord _abSrc, TWord _abDst, const ShiftReg* _v, TWord _bits = 0);
-		void alu_asr(TWord _abSrc, TWord _abDst, const ShiftReg* _v, TWord _immediate = 0);
+		void alu_asl(TWord _abSrc, TWord _abDst, const ShiftReg* _v, TWord _bits = 0, bool _updateCarry = true);
+		void alu_asr(TWord _abSrc, TWord _abDst, const ShiftReg* _v, TWord _immediate = 0, bool _updateCarry = true);
 
 		void alu_bclr(const DspValue& _dst, TWord _bit);
 		void alu_bset(const DspValue& _dst, TWord _bit);
@@ -583,12 +637,14 @@ namespace dsp56k
 		void alu_lsl(TWord ab, const DspValue& _shiftAmount);
 		void alu_lsr(TWord ab, const DspValue& _shiftAmount);
 		void alu_eor(TWord ab, DspValue& _v);
-		void alu_mpy(TWord ab, DspValue& _s1, DspValue& _s2, bool _negate, bool _accumulate, bool _s1Unsigned, bool _s2Unsigned, bool _round);
+		void alu_extract(TWord _abDst, TWord _abSrc, DspValue& _widthOffset, bool _signExtend);
+		void alu_mpy(TWord ab, DspValue& _s1, DspValue& _s2, bool _negate, bool _accumulate, bool _s1Unsigned, bool _s2Unsigned, bool _round, uint32_t _s1Shift = 0);
 		void alu_multiply(TWord op);
 		void alu_or(TWord ab, DspValue& _v);
 		void alu_rnd(TWord ab);
 		void alu_rnd(TWord ab, const JitReg64& d, bool _needsSignextend = true);
 		void alu_insert(TWord ab, const DspValue& _src, DspValue& _widthOffset);
+		void decodeBitfieldControl(const DspValue& _control, const JitRegGP& _width, const JitRegGP& _offset);
 		
 		template<Instruction Inst> void bitmod_ea(TWord _op, void(JitOps::*_bitmodFunc)(const DspValue&, TWord));
 		template<Instruction Inst> void bitmod_aa(TWord _op, void(JitOps::*_bitmodFunc)(const DspValue&, TWord));
@@ -604,13 +660,19 @@ namespace dsp56k
 		template<Instruction Inst> void move_L(TWord op);
 		template<Instruction Inst> void movep_qqea(TWord op, EMemArea _area);
 		template<Instruction Inst> void movep_sqq(TWord op, EMemArea _area);
+		template<Instruction Inst> void movep_Pea(TWord op, EMemArea _periphArea, TWord _periphAddress);
 
 		void copy24ToDDDDDD(TWord _dddddd, bool _usePooledTemp, const std::function<void(DspValue&)>& _readCallback, bool _readReg = false);
 		template<Instruction Inst> void copy24ToDDDDDD(TWord opA, TWord _dddddd, bool _usePooledTemp, const std::function<void(DspValue&)>& _readCallback);
 
 		// loops
 		void do_exec(const DspValue& _lc, TWord _addr);
+		void do_execForever(TWord _addr);
+		void do_start(const DspValue* _lc, TWord _addr);
 		void do_end(const RegGP& _temp);
+		void emitLoopEndBeforeBranch(bool _loopStartIsBlockStart, bool _loopIsForever, TWord _blockPc, TWord _pcAfterBranch);
+		void jumpIfNotLoopEnd(const asmjit::Label& _target, const JitReg32& _sr, const JitReg32& _la, const JitReg32& _temp, TWord _loopEnd);
+		void setPushPCFromReg(const bool _v) { m_pushPCFromReg = _v; }
 		void do_end();
 		void rep_exec(TWord _lc);
 		void rep_exec(DspValue& _lc);
@@ -688,6 +750,7 @@ namespace dsp56k
 		std::vector<DspValue> m_repTemps;
 		RegisterMask m_writtenRegs = RegisterMask::None;
 		RegisterMask m_readRegs = RegisterMask::None;
+		bool m_pushPCFromReg = false;
 		FastInterruptMode m_fastInterruptMode;
 		bool m_disableCCRUpdates = false;
 	};

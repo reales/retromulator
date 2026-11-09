@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "romfile.h"
 
 #include "synthLib/deviceTypes.h"
@@ -129,6 +131,8 @@ private:
 	};
 
 	std::list<SPendingPresetWrite> m_pendingPresetWrites;
+	std::atomic<size_t> m_pendingPresetWriteCount{0};	// size of the list above, lets process() skip the lock
+	uint32_t m_samplerateCommand = 0xffffffff;	// last rate sent to the DSP
 
 	std::vector<std::pair<synthLib::MidiEventSource, synthLib::SysexBuffer>> m_pendingSysexInput;
 	std::vector<synthLib::SMidiEvent> m_midiOutput;

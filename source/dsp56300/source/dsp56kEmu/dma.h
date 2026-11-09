@@ -75,6 +75,10 @@ namespace dsp56k
 			Timer2                = 0b10100, // TIMER2 (TCF=1)
 			Dsp56362Reserved      = 0b10101,
 
+			// DSP56367, which has a second ESAI (DSP56367UM table 6-7)
+			Esai1ReceiveData      = 0b10101, // ESAI_1 receive data (RDF=1)
+			Esai1TransmitData     = 0b10110, // ESAI_1 transmit data (TDE=1)
+
 			// DSP56303
 			Essi0ReceiveData      = 0b01010, // ESSI0 receive data (RDF0 = 1)
 			Essi0TransmitData     = 0b01011, // ESSI0 transmit data (TDE0 = 1))
@@ -84,10 +88,14 @@ namespace dsp56k
 			Hi08TransmitDataEmpty = 0b10100, // Host transmit data empty (HTDE = 1)
 			Dsp56303Reserved      = 0b10101,
 
-			Count = Dsp56303Reserved
+			// DRS is a five bit field that firmware fills in, so every one of its 32 values has to index
+			// the target array. Firmware for a 56367 board arms channels on the two ESAI_1 sources, which
+			// are past the last source a 56362 defines - and the array was sized by that, so the request
+			// list for them was built outside it and corrupted the heap.
+			Count = 0b100000
 		};
 
-		static_assert(RequestSource::Dsp56362Reserved == RequestSource::Dsp56303Reserved, "update definition of Count in request sources");
+		static_assert(RequestSource::Dsp56362Reserved == RequestSource::Dsp56303Reserved, "the two derivatives share the reserved slot");
 
 		enum class TransferMode
 		{
@@ -111,6 +119,10 @@ namespace dsp56k
 		const TWord& getDCO() const;
 		const TWord& getDCR() const;
 
+		// a DE triggered transfer that has not completed yet
+		bool hasPendingTransfer() const { return m_pendingTransfer > 0; }
+		TWord getIndex() const { return m_index; }
+
 		uint32_t exec();
 
 		void triggerByRequest();
@@ -133,10 +145,13 @@ namespace dsp56k
 		bool isPeripheralAddr(EMemArea _area, TWord _addr) const;
 
 		bool bridgedOverlap(EMemArea _area, TWord _first, TWord _count) const;
+		bool externalBusOverlap(EMemArea _area, TWord _first, TWord _count) const;
 
 		void extractDCOHML(TWord& _h, TWord& _m, TWord& _l) const;
 
 	private:
+		void arm();
+
 		void memCopy(EMemArea _dstArea, TWord _dstAddr, EMemArea _srcArea, TWord _srcAddr, TWord _count) const;
 		void memFill(EMemArea _dstArea, TWord _dstAddr, EMemArea _srcArea, TWord _srcAddr, TWord _count) const;
 		void memCopyToFixedDest(EMemArea _dstArea, TWord _dstAddr, EMemArea _srcArea, TWord _srcAddr, TWord _count) const;
@@ -160,6 +175,10 @@ namespace dsp56k
 		TWord m_ddr = 0;
 		TWord m_dco = 0;
 		TWord m_dcr = 0;
+		RequestSource m_prevRequestSource = RequestSource::ExternalIRQA;	// request source before the last DCR write
+		bool m_dsrWritten = false;
+		bool m_ddrWritten = false;
+		bool m_armed = false;
 
 		TWord m_dcoh = 0;
 		TWord m_dcom = 0;
@@ -170,6 +189,7 @@ namespace dsp56k
 		TWord m_dcolInit = 0;
 
 		int32_t m_pendingTransfer = 0;
+		bool m_dataTransferred = false;
 		uint64_t m_lastClock = 0;
 	};
 
@@ -209,6 +229,7 @@ namespace dsp56k
 		uint32_t exec() noexcept;
 		void setActiveChannel(TWord _channel);
 		void clearActiveChannel();
+
 
 		bool hasTrigger(DmaChannel::RequestSource _source) const;
 		bool trigger(DmaChannel::RequestSource _source) const;
