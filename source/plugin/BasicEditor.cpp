@@ -4,7 +4,6 @@
 #include "synthLib/midiToSysex.h"
 #include "ronaldo/88emu/88lib/deviceModel.h"
 #include "ronaldo/88emu/88lib/romloader.h"
-#include "ca72Lib/device.h"
 #include <climits>
 #include <fstream>
 
@@ -14,8 +13,8 @@ namespace retromulator
 
     static bool isAkaiSampler(SynthType type) { return type == SynthType::AkaiS1000; }
 
-    // OpenB3 and CA-72: .fxp presets in Factory and User folders.
-    static bool isFxpCore(SynthType type) { return type == SynthType::OpenB3 || type == SynthType::CA72; }
+    // OpenB3: .fxp presets in Factory and User folders.
+    static bool isFxpCore(SynthType type) { return type == SynthType::OpenB3; }
 
     static void findSysexFiles(const juce::File& folder, juce::Array<juce::File>& out, bool recursive = false)
     {
@@ -306,9 +305,6 @@ namespace retromulator
         m_bankCombo.setEnabled(!isOpenWurli);
         m_bankCombo .setBounds(x, y, 160, ctH); x += 160 + pad;
         m_statusLabel.setBounds(x, y, kBarWidth - x - 4, ctH);
-
-        if(m_corePanel)
-            m_corePanel->setBounds(0, kBarHeight, getWidth(), getHeight() - kBarHeight);
     }
 
     void BasicEditor::refreshBankCombo()
@@ -469,44 +465,12 @@ namespace retromulator
         }
     }
 
-    void BasicEditor::updateCorePanel()
-    {
-        if(m_proc.isBooting())
-            return;
-
-        auto* dev = m_proc.getCA72Device();
-        const auto synth = dev ? dev->getSynth() : nullptr;
-
-        bool changed = false;
-        if(m_corePanel && m_corePanel->getSynth() != synth.get())
-        {
-            removeChildComponent(m_corePanel.get());
-            m_corePanel.reset();
-            changed = true;
-        }
-        if(!m_corePanel && synth)
-        {
-            m_corePanel = std::make_unique<ca72ui::Panel>(synth);
-            m_corePanel->onEdited = [this] { m_proc.syncCA72PanelEdits(); };
-            addAndMakeVisible(*m_corePanel);
-            changed = true;
-        }
-        if(changed)
-        {
-            if(m_corePanel)
-                setSize(kPanelWidth, kBarHeight + juce::roundToInt(kPanelWidth * ca72ui::H / ca72ui::W));
-            else
-                setSize(kBarWidth, kBarHeight);
-        }
-    }
-
     void BasicEditor::updateStatus()
     {
-        // The bar has a fixed size; the core panel decides the height.
+        // The bar has a fixed size
         m_proc.consumeEditorSizeDirty();
-        updateCorePanel();
 
-        // OpenB3 / CA-72: MIDI Program Change picks a preset from the folder of the current one
+        // OpenB3: MIDI Program Change picks a preset from the folder of the current one
         if(isFxpCore(m_proc.getSynthType()))
         {
             const juce::String folder = juce::File(m_proc.getSysexFilePath()).getParentDirectory().getFullPathName();
@@ -670,7 +634,6 @@ namespace retromulator
             : type == SynthType::Ayumi   ? juce::String("*.ay")
             : type == SynthType::OPL3    ? juce::String("*.sbi")
             : type == SynthType::OpenB3  ? juce::String("*.fxp")
-            : type == SynthType::CA72    ? juce::String("*.fxp;*.fxb")
             : type == SynthType::SID     ? juce::String("*.sng;*.ins;*.sid")
                                          : juce::String("*.syx;*.mid;*.bin;*.pfm");
 
@@ -678,7 +641,7 @@ namespace retromulator
               isAkaiSampler(type)        ? "Select SFZ, SF2, ZBP, ZBB, WAV, AIF, FLAC or OGG sound file"
             : type == SynthType::Ayumi   ? "Select AY preset file"
             : type == SynthType::OPL3    ? "Select OPL SBI instrument file"
-            : isFxpCore(type)            ? "Select FXP preset or FXB bank"
+            : isFxpCore(type)            ? "Select FXP preset"
                                          : "Select SysEx patch file";
 
         m_fileChooser = std::make_shared<juce::FileChooser>(title, destFolder, filter);
@@ -698,20 +661,13 @@ namespace retromulator
                     return;
                 }
 
-                // OpenB3 / CA-72: imports go to the User bank, so Factory's Program Change numbers stay put
+                // OpenB3: imports go to the User bank, so Factory's Program Change numbers stay put
                 if(isFxpCore(type))
                 {
                     const auto userDir = juce::File(HeadlessProcessor::getSynthDataFolder(type)).getChildFile("User");
                     userDir.createDirectory();
-                    juce::File dest = userDir.getChildFile(chosen.getFileName());
-                    if(type == SynthType::CA72 && chosen.hasFileExtension("fxb"))
-                    {
-                        const auto written = ca72Lib::Device::extractBank(chosen.getFullPathName().toStdString(),
-                                                                          userDir.getFullPathName().toStdString());
-                        if(written.empty()) return;
-                        dest = juce::File(juce::String::fromUTF8(written.front().c_str()));
-                    }
-                    else if(!dest.exists())
+                    const juce::File dest = userDir.getChildFile(chosen.getFileName());
+                    if(!dest.exists())
                         chosen.copyFileTo(dest);
                     m_proc.loadPresetFromFile(dest.getFullPathName().toStdString(),
                                               dest.getFileNameWithoutExtension().toStdString());

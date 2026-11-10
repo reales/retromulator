@@ -67,7 +67,7 @@ namespace retromulator
         m_lastSent.store(-1, std::memory_order_relaxed);
         m_touched.store(false, std::memory_order_relaxed);
         const auto* hosted = binding().hosted;
-        m_value.store(hosted ? hosted->getValue() : getDefaultValue(), std::memory_order_relaxed);
+        m_value.store(hosted ? binding().fromHosted(hosted->getValue()) : getDefaultValue(), std::memory_order_relaxed);
         {
             const juce::SpinLock::ScopedLockType lock(m_textLock);
             m_textValue = -1.0f;
@@ -81,7 +81,7 @@ namespace retromulator
         if(!hosted || !juce::MessageManager::existsAndIsCurrentThread())
             return;
         const float v = getValue();
-        auto text = hosted->getText(v, 0);
+        auto text = hosted->getText(binding().toHosted(v), 0);
         const juce::SpinLock::ScopedLockType lock(m_textLock);
         m_textValue = v;
         m_text = std::move(text);
@@ -95,8 +95,8 @@ namespace retromulator
         const auto& b = binding();
         if(b.hosted)
         {
-            if(b.hosted->getValue() != newValue)
-                b.hosted->setValue(newValue);
+            if(const float v = b.toHosted(newValue); b.hosted->getValue() != v)
+                b.hosted->setValue(v);
             return;
         }
         if(!b.desc)
@@ -114,7 +114,7 @@ namespace retromulator
     {
         const auto& b = binding();
         if(b.hosted)
-            return b.hosted->getDefaultValue();
+            return b.fromHosted(b.hosted->getDefaultValue());
         if(!b.desc)
             return 0.0f;
         return b.range.convertTo0to1(static_cast<float>(b.desc->defaultValue));
@@ -142,7 +142,7 @@ namespace retromulator
         if(b.hosted)
         {
             if(juce::MessageManager::existsAndIsCurrentThread())
-                return b.hosted->getText(normalisedValue, maximumStringLength);
+                return b.hosted->getText(b.toHosted(normalisedValue), maximumStringLength);
             {
                 const juce::SpinLock::ScopedLockType lock(m_textLock);
                 if(m_textValue == normalisedValue)
@@ -162,7 +162,7 @@ namespace retromulator
     {
         const auto& b = binding();
         if(b.hosted)
-            return juce::MessageManager::existsAndIsCurrentThread() ? b.hosted->getValueForText(text) : getValue();
+            return juce::MessageManager::existsAndIsCurrentThread() ? b.fromHosted(b.hosted->getValueForText(text)) : getValue();
         if(!b.desc)
             return b.range.convertTo0to1(static_cast<float>(text.getIntValue()));
 
@@ -611,7 +611,51 @@ namespace retromulator
         m_hosted.clear();
     }
 
-    void ParameterPool::bindHosted(juce::AudioProcessor* plugin)
+    namespace
+    {
+        // the N2X core's slots and board ids (parameterDescriptions_n2x.json, map_n2x.json) and what Nordic 2 calls
+        // them. Values pass through; a scale where the slot's whole range differs
+        struct N2xSlot { int slot; const char* id; const char* name; float scale; };
+        const N2xSlot g_n2xSlots[] = {
+            {8, "O1Waveform", "Osc 1 Waveform", 1.0f}, {9, "O2Waveform", "Osc 2 Waveform", 1.0f}, {10, "O2Pitch", "Osc 2 Semitones", 1.0f},
+            {11, "O2PitchFine", "Osc 2 Fine Tune", 1.0f}, {12, "FmDepth", "FM Amount", 1.0f}, {13, "O2Keytrack", "Osc 2 Kbd Track", 1.0f},
+            {14, "PW", "Pulse Width", 1.0f}, {15, "Sync", "Osc Mode", 1.0f / 3.0f}, {16, "FilterEnvD", "Filter Env Decay", 1.0f},
+            {17, "FilterEnvS", "Filter Env Sustain", 1.0f}, {18, "FilterEnvR", "Filter Env Release", 1.0f}, {19, "FilterType", "Filter Type", 1.0f},
+            {20, "Cutoff", "Filter Frequency", 1.0f}, {21, "Resonance", "Filter Resonance", 1.0f}, {22, "FilterEnvAmount", "Filter Env Amount", 1.0f},
+            {23, "FilterVelocity", "Filter Velocity", 1.0f}, {24, "FilterKeytrack", "Filter Kbd Track", 1.0f}, {25, "Distortion", "Distortion", 1.0f},
+            {26, "ModEnvA", "Mod Env Attack", 1.0f}, {27, "ModEnvD", "Mod Env Decay", 1.0f}, {28, "ModEnvLevel", "Mod Env Amount", 1.0f},
+            {29, "AmpEnvA", "Amp Env Attack", 1.0f}, {30, "AmpEnvD", "Amp Env Decay", 1.0f}, {31, "AmpEnvS", "Amp Env Sustain", 1.0f},
+            {32, "AmpEnvR", "Amp Env Release", 1.0f}, {33, "Lfo1Rate", "LFO 1 Rate", 1.0f}, {34, "Lfo1Waveform", "LFO 1 Waveform", 1.0f},
+            {35, "Lfo1Dest", "LFO 1 Destination", 1.0f}, {36, "Lfo1Level", "LFO 1 Amount", 1.0f}, {37, "Lfo2Rate", "LFO 2 Rate", 1.0f},
+            {38, "Lfo2Dest", "LFO 2 Destination / Arp Mode", 1.0f}, {39, "ArpRange", "LFO 2 Amount / Arp Range", 1.0f}, {40, "Lfo1Sync", "LFO 1 Sync", 1.0f},
+            {41, "Lfo2Sync", "LFO 2 / Arp Sync", 1.0f}, {42, "Gain", "Gain", 1.0f}, {43, "OctaveShift", "Octave Shift", 1.0f},
+            {44, "ModWheelDest", "Mod Wheel Destination", 1.0f}, {45, "Unison", "Unison", 1.0f}, {46, "VoiceMode", "Voice Mode", 1.0f},
+            {47, "Auto", "Auto Portamento", 4.0f}, {48, "Portamento", "Portamento", 1.0f}, {49, "ModEnvDest", "Mod Env Destination", 4.0f / 3.0f},
+            {50, "Mix", "Osc Mix", 1.0f}, {51, "FilterEnvA", "Filter Env Attack", 1.0f}};
+
+        // the N2X core's controller slots keep sending their CC: pan, wheel, expression, sustain, breath, foot
+        constexpr int g_n2xCcSlots[] = {1, 2, 3, 4, 6, 7};
+
+        // the CA-72 core's slots (parameterDescriptions_ca72.json, by CC) and MiniD's parameter of the same name.
+        // A-440 (51) and QUALITY (58) are gone from MiniD, their slots stay empty
+        struct Ca72Slot { int slot; const char* name; };
+        const Ca72Slot g_ca72Slots[] = {
+            {8, "Tune"}, {9, "Osc 1 range"}, {10, "Osc 1 waveform"}, {11, "Osc 2 range"}, {12, "Osc 2 waveform"},
+            {13, "Osc 2 frequency"}, {14, "Osc 3 range"}, {15, "Osc 3 waveform"}, {16, "Osc 3 frequency"}, {17, "Cutoff"},
+            {18, "Emphasis"}, {19, "Amount of contour"}, {20, "Keyboard control 1"}, {21, "Keyboard control 2"},
+            {22, "Filter mode HI"}, {23, "Filter attack"}, {24, "Filter decay"}, {25, "Filter sustain"},
+            {26, "Loudness attack"}, {27, "Loudness decay"}, {28, "Loudness sustain"}, {29, "Decay"},
+            {30, "Modulation mix"}, {31, "Osc modulation"}, {32, "Filter modulation"}, {33, "Osc 3 control"},
+            {34, "Osc 1 on"}, {35, "Osc 1 volume"}, {36, "External input on"}, {37, "External input volume"},
+            {38, "Osc 2 on"}, {39, "Osc 2 volume"}, {40, "Noise on"}, {41, "Noise volume"}, {42, "Osc 3 on"},
+            {43, "Osc 3 volume"}, {44, "Noise pink"}, {45, "Glide"}, {46, "Glide on"}, {47, "Note priority"},
+            {48, "Retrigger"}, {49, "Main output volume"}, {50, "Level"}, {52, "Feedback"}, {53, "Drive"},
+            {54, "Double"}, {55, "Double detune"}, {56, "Spread"}, {57, "Entropy"}, {59, "Poly"}, {60, "Unison"}};
+        // and its mod wheel slot keeps sending CC 1
+        constexpr int g_ca72CcSlots[] = {2};
+    }
+
+    void ParameterPool::bindHosted(juce::AudioProcessor* plugin, const SynthType _core, const std::string& _links)
     {
         unbindHosted();
         if(!plugin)
@@ -624,28 +668,113 @@ namespace retromulator
         const auto& params = plugin->getParameters();
         m_hostedSlotOf.assign(static_cast<size_t>(params.size()), -1);
 
-        int slot = 0;
-        for(auto* p : params)
+        const auto bindable = [&](juce::AudioProcessorParameter* _p)
         {
-            if(slot >= NumSlots)
-                break;
             // JUCE's VST3 wrapper adds a "Program" parameter; programs go through the combos
-            if(p == bypass || !p->isAutomatable() || p->getName(64).isEmpty() || p->getName(64) == "Program")
-                continue;
-
-            auto& b = m_hostedBindings[static_cast<size_t>(slot)];
+            return _p != bypass && _p->isAutomatable() && _p->getName(64).isNotEmpty() && _p->getName(64) != "Program";
+        };
+        std::array<bool, NumSlots> used{};
+        const auto bindSlot = [&](const int _slot, juce::AudioProcessorParameter* _p, const float _scale)
+        {
+            auto& b = m_hostedBindings[static_cast<size_t>(_slot)];
             b = {};
             b.range = juce::NormalisableRange<float>(0.0f, 1.0f);
-            b.hosted = p;
-            m_hostedSlotOf[static_cast<size_t>(p->getParameterIndex())] = slot;
-            m_hosted.add(p);
-            m_slots[static_cast<size_t>(slot)]->rebind(&b);
-            p->addListener(this);
-            ++slot;
+            b.hosted = _p;
+            b.hostedScale = _scale;
+            m_hostedSlotOf[static_cast<size_t>(_p->getParameterIndex())] = _slot;
+            m_hosted.add(_p);
+            m_slots[static_cast<size_t>(_slot)]->rebind(&b);
+            _p->addListener(this);
+            used[static_cast<size_t>(_slot)] = true;
+        };
+
+        int firstFree = 0;
+        if(_core == SynthType::NordN2X)
+        {
+            firstFree = 52;
+
+            // the table, then the session's relinks: slot=id;slot=id, "-" empties a slot
+            std::array<const N2xSlot*, NumSlots> onSlot{};
+            for(const auto& row : g_n2xSlots)
+                onSlot[static_cast<size_t>(row.slot)] = &row;
+            for(const auto& record : juce::StringArray::fromTokens(juce::String(_links), ";", ""))
+            {
+                const int slot = record.upToFirstOccurrenceOf("=", false, false).getIntValue();
+                const auto id = record.fromFirstOccurrenceOf("=", false, false);
+                if(!juce::isPositiveAndBelow(slot, static_cast<int>(NumSlots)) || id.isEmpty())
+                    continue;
+                onSlot[static_cast<size_t>(slot)] = nullptr;
+                for(const auto& row : g_n2xSlots)
+                    if(id == row.id)
+                    {
+                        for(auto& held : onSlot)
+                            if(held == &row)
+                                held = nullptr;
+                        onSlot[static_cast<size_t>(slot)] = &row;
+                    }
+            }
+            for(int slot = 0; slot < NumSlots; ++slot)
+            {
+                const auto* row = onSlot[static_cast<size_t>(slot)];
+                if(!row)
+                    continue;
+                for(auto* p : params)
+                    if(bindable(p) && p->getName(64) == row->name)
+                    {
+                        bindSlot(slot, p, row->scale);
+                        break;
+                    }
+            }
+            const auto& map = mapFor(SynthType::NordN2X);
+            for(const int slot : g_n2xCcSlots)
+                if(!used[static_cast<size_t>(slot)] && map.bindings[static_cast<size_t>(slot)].cc >= 0)
+                {
+                    m_hostedBindings[static_cast<size_t>(slot)] = map.bindings[static_cast<size_t>(slot)];
+                    m_hostedBindings[static_cast<size_t>(slot)].native = -1;
+                    m_hostedBindings[static_cast<size_t>(slot)].pp = -1;
+                    m_slots[static_cast<size_t>(slot)]->rebind(&m_hostedBindings[static_cast<size_t>(slot)]);
+                    used[static_cast<size_t>(slot)] = true;
+                }
         }
 
-        for(; slot < NumSlots; ++slot)
-            m_slots[static_cast<size_t>(slot)]->rebind(&SlotParameter::unboundBinding());
+        if(_core == SynthType::CA72)
+        {
+            firstFree = 61;
+            for(const auto& row : g_ca72Slots)
+                for(auto* p : params)
+                    if(bindable(p) && p->getName(64) == row.name)
+                    {
+                        bindSlot(row.slot, p, 1.0f);
+                        break;
+                    }
+            const auto& map = mapFor(SynthType::CA72);
+            for(const int slot : g_ca72CcSlots)
+                if(!used[static_cast<size_t>(slot)] && map.bindings[static_cast<size_t>(slot)].cc >= 0)
+                {
+                    m_hostedBindings[static_cast<size_t>(slot)] = map.bindings[static_cast<size_t>(slot)];
+                    m_hostedBindings[static_cast<size_t>(slot)].native = -1;
+                    m_hostedBindings[static_cast<size_t>(slot)].pp = -1;
+                    m_slots[static_cast<size_t>(slot)]->rebind(&m_hostedBindings[static_cast<size_t>(slot)]);
+                    used[static_cast<size_t>(slot)] = true;
+                }
+        }
+
+        // the rest in order, in the free slots
+        int slot = firstFree;
+        for(auto* p : params)
+        {
+            if(!bindable(p) || m_hostedSlotOf[static_cast<size_t>(p->getParameterIndex())] >= 0)
+                continue;
+            while(slot < NumSlots && used[static_cast<size_t>(slot)])
+                ++slot;
+            if(slot >= NumSlots)
+                break;
+            bindSlot(slot, p, 1.0f);
+        }
+
+        for(int s = 0; s < NumSlots; ++s)
+            if(!used[static_cast<size_t>(s)])
+                m_slots[static_cast<size_t>(s)]->rebind(&SlotParameter::unboundBinding());
 
         // MIDI goes to the plugin as it is, no CC is a slot
         m_ccToSlot.fill(-1);
@@ -668,7 +797,7 @@ namespace retromulator
         const int slot = m_hostedSlotOf[static_cast<size_t>(index)];
         if(slot >= 0)
         {
-            m_slots[static_cast<size_t>(slot)]->storeValue(value);
+            m_slots[static_cast<size_t>(slot)]->storeValue(m_hostedBindings[static_cast<size_t>(slot)].fromHosted(value));
             notifyHost(slot);
         }
     }

@@ -26,7 +26,6 @@ namespace opl3Lib { class Device; }
 namespace sidLib { class Device; }
 namespace ayumiLib { class Device; }
 namespace openB3Lib { class Device; }
-namespace ca72Lib { class Device; }
 namespace emu88Lib { class HardwareDevice; }
 namespace trackerLib { class Device; }
 namespace matrixLib { class Device; }
@@ -145,11 +144,7 @@ namespace retromulator
         // Returns the OpenB3 device if the current synth type is OpenB3, else nullptr.
         openB3Lib::Device* getOpenB3Device() const;
 
-        // Returns the CA-72 device if the current synth type is CA72, else nullptr.
-        ca72Lib::Device* getCA72Device() const;
 
-        // Message thread. Panel edits on the CA-72 move the matching host parameters.
-        void syncCA72PanelEdits();
 
 #ifdef CUSTOM
         // The plugin hosted as the OPL core, or nullptr if another core is loaded.
@@ -157,6 +152,11 @@ namespace retromulator
 
         // Message thread. Loads one of the hosted plugin's presets (bank = folder).
         bool selectHostedPreset(int bank, int preset);
+        void migrateN2xSession(hosted::Device& _dev, const std::vector<uint8_t>& _sysex, int _program, const std::string& _file);
+        void migrateCa72Session(hosted::Device& _dev, const std::vector<uint8_t>& _state, const std::string& _file);
+        void applyN2xBoardEdits(const std::string& _edits);
+        std::string m_nordic2Links;   // the slot relinks of a session from the N2X core
+        std::vector<uint8_t> m_nordic2Dump;   // that session's dump, until its board edits are in it
         // Message thread. Takes the name of what the plugin has loaded, also from its own editor.
         void pollHostedPreset();
         int getHostedBank() const { return m_hostedBank; }

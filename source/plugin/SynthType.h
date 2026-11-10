@@ -1,7 +1,28 @@
 #pragma once
 
+#if defined(__APPLE__)
+ #include <TargetConditionals.h>
+#endif
+
 namespace retromulator
 {
+    // Commercial desktop builds run the firmware-free Nordic 2 (ROM/Nordic2.vst3) in place of the N2X emulation.
+    // The value 4 stays, so sessions, automation and data folders carry over. GPL builds have no core 4.
+#if defined(CUSTOM) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+    inline constexpr bool nordic2Hosted = true;
+#else
+    inline constexpr bool nordic2Hosted = false;
+#endif
+
+    // Commercial desktop builds run MiniD (ROM/MiniD.vst3) as core 16, where the CA-72 core was, so its sessions,
+    // automation and banks carry over. Other builds have no core 16.
+#if defined(CUSTOM) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+ #define RETRO_MINID_HOSTED 1
+    inline constexpr bool miniDHosted = true;
+#else
+    inline constexpr bool miniDHosted = false;
+#endif
+
     enum class SynthType
     {
         None = -1,
@@ -37,16 +58,16 @@ namespace retromulator
             SynthType::Emu88,
             SynthType::AkaiS1000,
             SynthType::Ayumi,
-            SynthType::CA72,
             SynthType::DX7,
             SynthType::JE8086,
             SynthType::Matrix,
             SynthType::MicroQ,
+#ifdef RETRO_MINID_HOSTED
+            SynthType::CA72,     // MiniD
+#endif
 #ifdef CUSTOM
             SynthType::NordLead1,
-#endif
-            SynthType::NordN2X,
-#ifdef CUSTOM
+            SynthType::NordN2X,  // Nordic 2
             SynthType::OBXd,
 #endif
             SynthType::OPL3,
@@ -70,7 +91,7 @@ namespace retromulator
             case SynthType::VirusTI:  return "Virus TI";
             case SynthType::MicroQ:   return "MicroQ";
             case SynthType::XT:       return "XT";
-            case SynthType::NordN2X:  return "Nord N2X";
+            case SynthType::NordN2X:  return nordic2Hosted ? "Nordic 2" : "Nord N2X";
             case SynthType::NordLead1: return "Nordic";
             case SynthType::JE8086:   return "JE-8086";
             case SynthType::DX7:       return "DX7";
@@ -83,7 +104,7 @@ namespace retromulator
             case SynthType::Trackermeister: return "Tracker";
             case SynthType::Matrix:    return "Matrix";
             case SynthType::OpenB3:    return "OpenB3";
-            case SynthType::CA72:      return "CA-72";
+            case SynthType::CA72:      return "MiniD";
             case SynthType::OPL:       return "OPL3";
             case SynthType::Discovery: return "Discovery";
             case SynthType::OBXd:      return "OB-Xd 2";
@@ -94,8 +115,10 @@ namespace retromulator
     // A discoDSP plugin run from ROM/<name>.vst3 rather than an emulator built in.
     inline bool isHostedCore(SynthType t)
     {
-        return t == SynthType::NordLead1 || t == SynthType::OBXd;
+        return t == SynthType::NordLead1 || t == SynthType::OBXd || (nordic2Hosted && t == SynthType::NordN2X)
+            || (miniDHosted && t == SynthType::CA72);
     }
+
 
     // Name of the core's data folder and settings keys. Fixed once shipped, so a core can be
     // renamed in the menu without moving anyone's files.
@@ -105,6 +128,8 @@ namespace retromulator
         {
             case SynthType::OPL3: return "OPL3";
             case SynthType::OBXd: return "OB-Xd";   // the hosted plugin keeps its data there
+            case SynthType::NordN2X: return "Nord N2X";
+            case SynthType::CA72: return "CA-72";     // the old core's settings keys; MiniD keeps its banks in its own folder
             default:              return synthTypeName(t);
         }
     }

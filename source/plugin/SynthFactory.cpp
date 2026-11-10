@@ -26,7 +26,6 @@
 #include "akaiLib/device.h"
 #include "openWurliLib/device.h"
 #include "openB3Lib/device.h"
-#include "ca72Lib/device.h"
 #include "opl3Lib/device.h"
 #include "trackerLib/device.h"
 #include "sidLib/device.h"
@@ -164,6 +163,17 @@ namespace retromulator
 
             case SynthType::NordN2X:
             {
+#ifdef CUSTOM
+                if(nordic2Hosted)
+                {
+                    juce::String error;
+                    auto loaded = hosted::load(type, 44100.0, 512, error);
+                    if(!loaded.plugin)
+                        throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, error.toStdString());
+
+                    synthLib::DeviceCreateParams hostedParams;
+                    return new hosted::Device(hostedParams, std::move(loaded));
+                }
                 const auto rom = n2x::RomLoader::findROM();
                 synthLib::DeviceCreateParams p;
                 if(rom.isValid())
@@ -179,6 +189,9 @@ namespace retromulator
                         "Nord N2X firmware not found. Place a 512KB .bin file in the search path.");
                 }
                 return d;
+#else
+                throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, "Nordic 2 runs in the commercial builds only.");
+#endif
             }
 
             case SynthType::JE8086:
@@ -229,8 +242,19 @@ namespace retromulator
 
             case SynthType::CA72:
             {
-                synthLib::DeviceCreateParams p;
-                return new ca72Lib::Device(p);
+#ifdef CUSTOM
+                if(miniDHosted)
+                {
+                    juce::String error;
+                    auto loaded = hosted::load(type, 44100.0, 512, error);
+                    if(!loaded.plugin)
+                        throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, error.toStdString());
+
+                    synthLib::DeviceCreateParams hostedParams;
+                    return new hosted::Device(hostedParams, std::move(loaded));
+                }
+#endif
+                throw synthLib::DeviceException(synthLib::DeviceError::FirmwareMissing, "MiniD runs in the commercial desktop builds only.");
             }
 
             case SynthType::OPL3:

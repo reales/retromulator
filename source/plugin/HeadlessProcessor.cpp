@@ -57,7 +57,6 @@
 #include "sidLib/device.h"
 #include "ayumiLib/device.h"
 #include "openB3Lib/device.h"
-#include "ca72Lib/device.h"
 
 #include <cstring>
 #include <fstream>
@@ -240,7 +239,7 @@ namespace retromulator
         case SynthType::VirusTI:  return virusLib::ROMLoader::findROM(virusLib::DeviceModel::TI).isValid();
         case SynthType::MicroQ:   return mqLib::RomLoader::findROM().isValid();
         case SynthType::XT:       return xt::RomLoader::findROM().isValid();
-        case SynthType::NordN2X:  return n2x::RomLoader::findROM().isValid();
+        case SynthType::NordN2X:  return nordic2Hosted || n2x::RomLoader::findROM().isValid();
         case SynthType::JE8086:   return jeLib::RomLoader::findROM().isValid();
         case SynthType::DX7:       return true; // runs firmware-free, never loads a ROM
         case SynthType::Matrix:    return true; // runs firmware-free, never loads a ROM
@@ -984,17 +983,12 @@ namespace retromulator
                     openB3Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
                     root.getChildFile("User").createDirectory();
                 }
-                else if(type == SynthType::CA72)
-                {
-                    const juce::File root(getSynthDataFolder(SynthType::CA72));
-                    ca72Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
-                    root.getChildFile("User").createDirectory();
-                }
 #ifdef CUSTOM
                 else if(isHostedCore(type))
                 {
                     if(auto* dev = getHostedDevice(); dev && m_paramPool)
-                        m_paramPool->bindHosted(&dev->getPlugin());
+                        m_paramPool->bindHosted(&dev->getPlugin(), type);
+                    m_nordic2Links.clear();
                     pollHostedPreset();
                     // Nordic keeps its last edit buffer while showing Internal: a new core plays the shown program
                     if(!keepDevice && m_hostedBank >= 0)
@@ -1088,6 +1082,8 @@ namespace retromulator
 
     int HeadlessProcessor::latencyBlocksFor(const SynthType type)
     {
+        if(isHostedCore(type))
+            return 0;
         switch(type)
         {
         case SynthType::JE8086: case SynthType::AkaiS1000: case SynthType::OpenWurli:
@@ -1252,12 +1248,6 @@ namespace retromulator
                     // Factory holds the built-in presets, User the saved and imported ones
                     const juce::File root(getSynthDataFolder(SynthType::OpenB3));
                     openB3Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
-                    root.getChildFile("User").createDirectory();
-                }
-                else if(type == SynthType::CA72)
-                {
-                    const juce::File root(getSynthDataFolder(SynthType::CA72));
-                    ca72Lib::Device::writeFactoryPresets(root.getChildFile("Factory").getFullPathName().toStdString());
                     root.getChildFile("User").createDirectory();
                 }
             }
@@ -1976,27 +1966,6 @@ namespace retromulator
             return true;
         }
 
-        // CA-72: .fxp presets set the panel parameters directly.
-        if(m_synthType == SynthType::CA72 && hasSuffix(filePath, ".fxp"))
-        {
-            auto* dev = getCA72Device();
-            if(!dev || !dev->loadPreset(filePath)) return false;
-
-            m_sysexFilePath  = filePath;
-            m_patchName      = patchName.empty() ? dev->getPatchName() : patchName;
-            m_sysexData.clear();
-            m_bankMessages.clear();
-            m_programNames.clear();
-            m_bankStride     = 1;
-            m_currentProgram = 0;
-
-            if(m_paramPool)
-                m_paramPool->syncFromCcValues(dev->getCcValues());
-
-            updateHostDisplay(juce::AudioProcessorListener::ChangeDetails()
-                .withNonParameterStateChanged(true));
-            return true;
-        }
 
         // OPL3: .sbi files go directly to the device — no sysex involved.
         if(m_synthType == SynthType::OPL3 && hasSuffix(filePath, ".sbi"))
@@ -4121,12 +4090,6 @@ namespace retromulator
         return dynamic_cast<openB3Lib::Device*>(m_device.get());
     }
 
-    ca72Lib::Device* HeadlessProcessor::getCA72Device() const
-    {
-        if(m_synthType != SynthType::CA72)
-            return nullptr;
-        return dynamic_cast<ca72Lib::Device*>(m_device.get());
-    }
 
 #ifdef CUSTOM
     hosted::Device* HeadlessProcessor::getHostedDevice() const
@@ -4135,6 +4098,158 @@ namespace retromulator
         if(!isHostedCore(m_synthType) || m_editorOnly || m_deviceError != synthLib::DeviceError::None)
             return nullptr;
         return dynamic_cast<hosted::Device*>(m_device.get());
+    }
+
+    // the preset by bank folder and file name (MiniD copied the CA-72 banks on its first run), then the session's
+    // parameters on top, so edits made after loading the preset are kept
+    void HeadlessProcessor::migrateCa72Session(hosted::Device& _dev, const std::vector<uint8_t>& _state, const std::string& _file)
+    {
+        const juce::File file(juce::String::fromUTF8(_file.c_str()));
+        auto& link = _dev.getLink();
+        const auto bankName = file.getParentDirectory().getFileName();
+        const auto presetName = file.getFileNameWithoutExtension();
+        const int banks = _file.empty() ? 0 : link.getBankCount();
+        for(int b = 0; b < banks; ++b)
+        {
+            char name[256] = {};
+            link.getBankName(b, name, static_cast<int32_t>(sizeof(name)));
+            if(bankName != juce::String::fromUTF8(name))
+                continue;
+            for(int p = 0, n = link.getPresetCount(b); p < n; ++p)
+            {
+                link.getPresetName(b, p, name, static_cast<int32_t>(sizeof(name)));
+                if(presetName == juce::String::fromUTF8(name))
+                {
+                    link.loadPreset(b, p);
+                    break;
+                }
+            }
+            break;
+        }
+        _dev.setPluginComponentState(_state);
+    }
+
+    // the bank file by name (Nordic 2 copied the N2X banks on its first run), then the session's own dump in the edit buffer
+    void HeadlessProcessor::migrateN2xSession(hosted::Device& _dev, const std::vector<uint8_t>& _sysex, const int _program, const std::string& _file)
+    {
+        const auto stem = juce::File(juce::String(_file)).getFileNameWithoutExtension();
+        auto& link = _dev.getLink();
+        const int banks = link.getBankCount();
+        for(int b = 0; b < banks && stem.isNotEmpty(); ++b)
+        {
+            char name[256] = {};
+            link.getBankName(b, name, static_cast<int32_t>(sizeof(name)));
+            if(stem == name)
+            {
+                link.loadPreset(b, std::max(0, _program));
+                break;
+            }
+        }
+
+        std::vector<std::vector<uint8_t>> dumps;
+        for(size_t i = 0; i < _sysex.size(); ++i)
+        {
+            if(_sysex[i] != 0xf0)
+                continue;
+            const auto end = std::find(_sysex.begin() + static_cast<std::ptrdiff_t>(i), _sysex.end(), uint8_t(0xf7));
+            if(end == _sysex.end())
+                break;
+            dumps.emplace_back(_sysex.begin() + static_cast<std::ptrdiff_t>(i), end + 1);
+            i = static_cast<size_t>(end - _sysex.begin());
+        }
+        if(dumps.empty())
+            return;
+        auto dump = dumps[static_cast<size_t>(juce::jlimit(0, static_cast<int>(dumps.size()) - 1, _program))];
+        if(dump.size() < 7)
+            return;
+        // to the edit buffer: slot A, or the edit performance
+        const bool performance = dump[4] >= 30 && dump[4] <= 34;
+        dump[4] = performance ? 30 : 0;
+        dump[5] = 0;
+        _dev.queueMidi(dump);
+        m_nordic2Dump = std::move(dump);
+    }
+
+    // board edits on top of the patch: "id=value", "part:id=value" for parts B-D. A performance dump holds all four
+    // parts, so the edits go in its bytes and it goes again, since it may already have played. A single dump holds one:
+    // part A the same, the others by parameter message
+    void HeadlessProcessor::applyN2xBoardEdits(const std::string& _edits)
+    {
+        auto* dev = getHostedDevice();
+        if(!dev || m_nordic2Dump.size() < 7)
+            return;
+
+        // map_n2x.json: patch offset of the sound parameters, performance offset of the slot and performance ones
+        static const std::pair<const char*, int> patchParams[] = {
+            {"O2Pitch", 0}, {"O2PitchFine", 1}, {"Mix", 2}, {"Cutoff", 3}, {"Resonance", 4}, {"FilterEnvAmount", 5}, {"PW", 6}, {"FmDepth", 7},
+            {"FilterEnvA", 8}, {"FilterEnvD", 9}, {"FilterEnvS", 10}, {"FilterEnvR", 11}, {"AmpEnvA", 12}, {"AmpEnvD", 13}, {"AmpEnvS", 14}, {"AmpEnvR", 15},
+            {"Portamento", 16}, {"Gain", 17}, {"ModEnvA", 18}, {"ModEnvD", 19}, {"ModEnvLevel", 20}, {"Lfo1Rate", 21}, {"Lfo1Level", 22}, {"Lfo2Rate", 23}, {"ArpRange", 24},
+            {"O1Waveform", 50}, {"O2Waveform", 51}, {"Sync", 52}, {"FilterType", 53}, {"O2Keytrack", 54}, {"FilterKeytrack", 55}, {"Lfo1Waveform", 56}, {"Lfo1Dest", 57},
+            {"VoiceMode", 58}, {"ModWheelDest", 59}, {"Unison", 60}, {"ModEnvDest", 61}, {"Auto", 62}, {"FilterVelocity", 63}, {"OctaveShift", 64}, {"Lfo2Dest", 65}};
+        static const std::pair<const char*, int> perfParams[] = {
+            {"SlotChannel", 264}, {"SlotLfo1Sync", 268}, {"SlotLfo2Sync", 272}, {"SlotActive", 324}, {"SlotPressureAmount", 336}, {"SlotPressureDest", 340},
+            {"SlotPedalAmount", 344}, {"SlotPedalDest", 348}, {"PerfBendRange", 312}, {"PerfUnisonDetune", 313}, {"PerfSplit", 352}, {"PerfSplitPoint", 353}};
+        constexpr int patchSize = 66, syncOffset = 52, distortionParam = 66;
+
+        auto& dump = m_nordic2Dump;
+        const bool performance = dump[4] == 30;
+        const auto dataByte = [&](const int _at) { return (dump[static_cast<size_t>(6 + 2 * _at)] & 15) | ((dump[static_cast<size_t>(7 + 2 * _at)] & 15) << 4); };
+        const auto setByte = [&](const int _at, const int _v)
+        {
+            if(static_cast<size_t>(8 + 2 * _at) > dump.size())
+                return false;
+            dump[static_cast<size_t>(6 + 2 * _at)] = static_cast<uint8_t>(_v & 15);
+            dump[static_cast<size_t>(7 + 2 * _at)] = static_cast<uint8_t>((_v >> 4) & 15);
+            return true;
+        };
+
+        bool changed = false;
+        for(const auto& record : juce::StringArray::fromTokens(juce::String(_edits), ";", ""))
+        {
+            const int part = record.containsChar(':') ? juce::jlimit(0, 3, record.upToFirstOccurrenceOf(":", false, false).getIntValue()) : 0;
+            const auto entry = record.fromLastOccurrenceOf(":", false, false);
+            const auto id = entry.upToFirstOccurrenceOf("=", false, false);
+            const int value = entry.fromFirstOccurrenceOf("=", false, false).getIntValue();
+            const int base = performance ? part * patchSize : 0;
+
+            if(id == "Distortion")
+            {
+                if(performance || part == 0)
+                    changed |= setByte(base + syncOffset, (dataByte(base + syncOffset) & 15) | ((value != 0 ? 1 : 0) << 4));
+                else
+                    dev->queueMidi({0xf0, 0x33, 0x0f, 0x04, 0x5e, distortionParam, 0, static_cast<uint8_t>(value != 0 ? 1 : 0), static_cast<uint8_t>(part), 0xf7});
+                continue;
+            }
+
+            bool found = false;
+            for(const auto& [name, offset] : patchParams)
+            {
+                if(id != name)
+                    continue;
+                found = true;
+                if(performance || part == 0)
+                {
+                    // Sync shares its byte with Distortion
+                    const int v = offset == syncOffset ? (dataByte(base + offset) & 0xf0) | (value & 15) : value;
+                    changed |= setByte(base + offset, v);
+                }
+                else
+                    dev->queueMidi({0xf0, 0x33, 0x0f, 0x04, 0x5e, static_cast<uint8_t>(offset), static_cast<uint8_t>((value >> 7) & 0x7f), static_cast<uint8_t>(value & 0x7f), static_cast<uint8_t>(part), 0xf7});
+            }
+            if(found || !performance)
+                continue;
+
+            for(const auto& [name, offset] : perfParams)
+                if(id == name)
+                {
+                    const bool perSlot = offset >= 264 && offset < 312 || offset >= 324 && offset < 352;
+                    // the unit stores channel off as 255, the board shows 16
+                    const int v = offset == 264 && value >= 16 ? 255 : value;
+                    changed |= setByte(offset + (perSlot ? part : 0), v);
+                }
+        }
+        if(changed)
+            dev->queueMidi(dump);
     }
 
     bool HeadlessProcessor::selectHostedPreset(const int bank, const int preset)
@@ -4212,14 +4327,6 @@ namespace retromulator
     }
 #endif
 
-    void HeadlessProcessor::syncCA72PanelEdits()
-    {
-        if(m_isBooting.load()) return;
-        auto* dev = getCA72Device();
-        if(!dev || !m_paramPool) return;
-        for(const auto& [cc, value] : dev->takePanelEdits())
-            m_paramPool->setCcFromEditor(cc, value);
-    }
 
     void HeadlessProcessor::syncOpenWurliSlots()
     {
@@ -4246,8 +4353,6 @@ namespace retromulator
 
         if(auto* b3 = getOpenB3Device())
             b3->setProgramList(std::move(paths));
-        else if(auto* ca = getCA72Device())
-            ca->setProgramList(std::move(paths));
     }
 
     void HeadlessProcessor::pollFxpProgramChange()
@@ -4258,11 +4363,6 @@ namespace retromulator
         {
             idx = b3->takePendingProgramChange();
             if(idx >= 0) list = b3->getProgramList();
-        }
-        else if(auto* ca = getCA72Device())
-        {
-            idx = ca->takePendingProgramChange();
-            if(idx >= 0) list = ca->getProgramList();
         }
         if(idx < 0 || idx >= static_cast<int>(list.size())) return;
 
@@ -4275,13 +4375,12 @@ namespace retromulator
     {
         const auto clean = juce::File::createLegalFileName(juce::String::fromUTF8(name.c_str())).trim();
         auto* b3 = getOpenB3Device();
-        auto* ca = getCA72Device();
-        if((!b3 && !ca) || clean.isEmpty()) return {};
+        if(!b3 || clean.isEmpty()) return {};
 
         const auto file = juce::File(getSynthDataFolder(m_synthType))
             .getChildFile("User").getChildFile(clean + ".fxp");
         const auto path = file.getFullPathName().toStdString();
-        if(!(b3 ? b3->savePreset(path, clean.toStdString()) : ca->savePreset(path, clean.toStdString())))
+        if(!b3->savePreset(path, clean.toStdString()))
             return {};
 
         loadPresetFromFile(path, clean.toStdString());
@@ -4637,14 +4736,6 @@ namespace retromulator
 
     void HeadlessProcessor::processCore(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
     {
-        if(m_synthType == SynthType::CA72)
-            if(auto* dev = getCA72Device())
-            {
-                dev->setNonRealtime(isNonRealtime());
-                const juce::SpinLock::ScopedTryLockType sl(m_audioWorkgroupLock);
-                if(sl.isLocked())
-                    dev->setAudioWorkgroup(m_audioWorkgroup);
-            }
 
         if(m_synthType == SynthType::Emu88)
         {
@@ -4955,7 +5046,6 @@ namespace retromulator
     static constexpr int32_t kMatrixCoreMagic = 0x5343584D;      // 'MXCS'
     static constexpr int32_t kMatrixLastSyncMagic = 0x4C4C584D;  // 'MXLL'
     static constexpr int32_t kDx7CtrlMagic = 0x43375844;         // 'DX7C'
-    static constexpr int32_t kCorePanelMagic = 0x50323743;       // 'C72P'
     static constexpr int32_t kSlotLinksMagic = 0x4B4E4C53;       // 'SLNK'
     static constexpr int32_t kBoardEditsMagic = 0x54444542;      // 'BEDT'
     static constexpr int32_t kFxChainMagic = 0x48435846;         // 'FXCH'
@@ -5026,14 +5116,10 @@ namespace retromulator
             appendBytes(destData, b3State);
         }
 
-        // CA-72: every panel parameter, so edits made after loading the preset are recalled
+        // Core 16 had the CA-72 core's parameters here; MiniD's state takes the sysex slot, the record stays empty
+        // so the layout is the same
         if(m_synthType == SynthType::CA72)
-        {
-            std::vector<uint8_t> caState;
-            if(auto* dev = getCA72Device())
-                dev->getState(caState, synthLib::StateTypeGlobal);
-            appendBytes(destData, caState);
-        }
+            appendBytes(destData, std::vector<uint8_t>());
 
         // Akai browse folder path (optional, backwards compatible)
         appendString(destData, m_akaiBrowseFolder);
@@ -5155,7 +5241,16 @@ namespace retromulator
         // ['SLNK':int32][links:string] host parameters relinked to board parameters, so a
         // project keeps its own automation targets. Before the tail blocks, which are read
         // from the end.
-        if(m_board && m_board->map())
+        if(nordic2Hosted && m_synthType == SynthType::NordN2X)
+        {
+            // Board is gone from this core: a migrated session keeps the relinks its automation was written against
+            if(!m_nordic2Links.empty())
+            {
+                appendInt32(destData, kSlotLinksMagic);
+                appendString(destData, m_nordic2Links);
+            }
+        }
+        else if(m_board && m_board->map())
         {
             appendInt32(destData, kSlotLinksMagic);
             appendString(destData, board::slotLinkRecords(*m_board));
@@ -5243,12 +5338,6 @@ namespace retromulator
             }
         }
 
-        // ['C72P':int32][panel hidden:int32]
-        if(m_synthType == SynthType::CA72)
-        {
-            appendInt32(destData, kCorePanelMagic);
-            appendInt32(destData, m_corePanelHidden ? 1 : 0);
-        }
 
 #ifdef CUSTOM
         // [chain][length:int32]['FXCH':int32], after everything else. setStateInformation
@@ -5437,15 +5526,7 @@ namespace retromulator
             }
         }
 
-        // CA-72 panel visibility sits in the last eight bytes; per instance, shown by default
         m_corePanelHidden = false;
-        if(newType == SynthType::CA72 && sizeInBytes >= 8)
-        {
-            int32_t magic = 0, hidden = 0;
-            std::memcpy(&magic, bytes + sizeInBytes - 8, 4);
-            std::memcpy(&hidden, bytes + sizeInBytes - 4, 4);
-            m_corePanelHidden = magic == kCorePanelMagic && hidden != 0;
-        }
 
         // A patch fully describes these cores, so the one already running takes the session
         // without a reboot.
@@ -5482,9 +5563,9 @@ namespace retromulator
             else
                 m_sysexFilePath = sysexFilePath; // path lost; keep for display
         }
-        else if(newType == SynthType::OpenB3 || newType == SynthType::CA72)
+        else if(newType == SynthType::OpenB3)
         {
-            // OpenB3 / CA-72: reload the .fxp by path (folder/bank UI); the state blob below
+            // OpenB3: reload the .fxp by path (folder/bank UI); the state blob below
             // then restores edits made since.
             if(!sysexFilePath.empty() && juce::File(sysexFilePath).existsAsFile())
                 loadPresetFromFile(sysexFilePath, patchName);
@@ -5495,7 +5576,13 @@ namespace retromulator
         else if(isHostedCore(newType))
         {
             if(auto* dev = getHostedDevice(); dev && !sysexData.empty())
-                dev->setPluginState(sysexData);
+            {
+                // a session of the N2X core holds its bank as sysex, Nordic 2 takes the same dumps
+                if(newType == SynthType::NordN2X && sysexData[0] == 0xf0)
+                    migrateN2xSession(*dev, sysexData, static_cast<int>(savedProgram), sysexFilePath);
+                else
+                    dev->setPluginState(sysexData);
+            }
             pollHostedPreset();
         }
 #endif
@@ -5579,13 +5666,15 @@ namespace retromulator
         {
             std::vector<uint8_t> caState;
             readBytes(bytes, sizeInBytes, offset, caState);
+#ifdef CUSTOM
+            // a session of the CA-72 core: MiniD takes the same parameters
             if(!caState.empty())
-                if(auto* dev = getCA72Device())
+                if(auto* hosted = getHostedDevice(); hosted && miniDHosted)
                 {
-                    dev->setState(caState, synthLib::StateTypeGlobal);
-                    if(m_paramPool)
-                        m_paramPool->syncFromCcValues(dev->getCcValues());
+                    migrateCa72Session(*hosted, caState, sysexFilePath);
+                    pollHostedPreset();
                 }
+#endif
         }
 
         // Restore Akai browse folder path (optional, backwards compatible)
@@ -5880,7 +5969,14 @@ namespace retromulator
             if(readInt32(bytes, sizeInBytes, offset, linksMagic) && linksMagic == kSlotLinksMagic
                && readString(bytes, sizeInBytes, offset, links))
             {
-                if(m_board && m_paramPool && m_board->map())
+                const bool nordic2 = nordic2Hosted && m_synthType == SynthType::NordN2X;
+                if(nordic2)
+                {
+                    m_nordic2Links = links;
+                    if(auto* dev = getHostedDevice(); dev && m_paramPool)
+                        m_paramPool->bindHosted(&dev->getPlugin(), SynthType::NordN2X, links);
+                }
+                else if(m_board && m_paramPool && m_board->map())
                 {
                     // relinking rebinds every slot to its default, so the patch is read again
                     board::applySlotLinkRecords(m_synthType, *m_board, *m_paramPool, links);
@@ -5897,7 +5993,9 @@ namespace retromulator
                    && readString(bytes, sizeInBytes, offset, edits))
                 {
                     // off the message thread, after the queued clear from loadPreset
-                    if(juce::MessageManager::existsAndIsCurrentThread())
+                    if(nordic2)
+                        applyN2xBoardEdits(edits);
+                    else if(juce::MessageManager::existsAndIsCurrentThread())
                         m_board->restoreEditRecords(edits);
                     else
                         juce::MessageManager::callAsync([this, edits] { m_board->restoreEditRecords(edits); });

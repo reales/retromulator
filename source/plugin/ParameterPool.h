@@ -33,6 +33,10 @@ namespace retromulator
             int native = -1;  // core-specific parameter index (JSON "nrpn"), N2X multi params
             int board = -1;   // board parameter sent through the board's own message (slot links)
             juce::AudioProcessorParameter* hosted = nullptr;   // a hosted plugin's own parameter (OPL)
+            float hostedScale = 1.0f;   // slot value to hosted value, where a migrated slot had another range
+
+            float toHosted(const float v) const { return juce::jlimit(0.0f, 1.0f, v * hostedScale); }
+            float fromHosted(const float v) const { return juce::jlimit(0.0f, 1.0f, v / hostedScale); }
         };
 
         SlotParameter(ParameterPool& pool, int slot);
@@ -99,7 +103,9 @@ namespace retromulator
         // Message thread. Points the slots at a hosted plugin's parameters, in order, so the
         // host automates them directly and edits on the plugin's own editor come back.
         // setCore drops the binding, as must happen before the plugin is destroyed.
-        void bindHosted(juce::AudioProcessor* plugin);
+        // Nordic 2 replaced the N2X core: _core NordN2X keeps its slots, and _links its session's relinks, so
+        // automation written against them keeps its targets.
+        void bindHosted(juce::AudioProcessor* plugin, SynthType _core = SynthType::None, const std::string& _links = {});
 
         // Message thread. Rebinds every slot and asks the host to re-read the tree.
         void setCore(SynthType type);
