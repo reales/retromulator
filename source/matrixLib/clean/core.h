@@ -177,6 +177,7 @@ namespace matrixClean
 		static double editCostUs(uint8_t _param, bool _portaOn, bool _unison);
 		static constexpr double PortaOnEditUs = 3600.0;
 		void cutVoices();
+		void cutSoundingVoices();
 		void storePatch(uint32_t _number, const Patch& _p);
 		void sendPatch(const Patch& _p, uint8_t _bank, uint8_t _number);
 		void sendBankDump();

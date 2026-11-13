@@ -1,4 +1,5 @@
 #include "env.h"
+#include "matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -51,8 +52,8 @@ namespace matrixClean
 			int a = mul(_amp);
 			if(_byVelocity)
 			{
-				// velocity byte 2v times |amount|, 63 counts as 255 (env/, env2/ at 16, 32, 63)
-				const int amt = std::abs(_byVelocity) >= 63 ? 255 : std::abs(_byVelocity);
+				// velocity byte 2v times the env amount curve of |amount| (linear to 44, steep above)
+				const int amt = matrix::amountTable(matrix::Curve::EnvAmp, std::abs(_byVelocity));
 				const int m = (_velocity * 2 * amt) >> 8;
 				a += _byVelocity < 0 ? -m : m;
 			}

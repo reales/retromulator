@@ -420,6 +420,28 @@ namespace matrixClean
 		}
 	}
 
+	void Core::cutSoundingVoices()
+	{
+		// allocation starts over: the next note takes voice 1 and earlier notes are forgotten
+		m_alloc.allNotesOff(m_allocEvents);
+		m_allocEvents.clear();
+		m_alloc.reset();
+		for(auto& vs : m_voices)
+		{
+			bool active = vs.gate;
+			for(const auto& e : vs.env)
+				active = active || e.stage() != Envelope::Stage::Idle;
+			if(active)
+				for(auto& e : vs.env)
+				{
+					const bool armed = e.bootArmed();
+					e.reset();
+					e.setBootArmed(armed);
+				}
+			vs.gate = false;
+		}
+	}
+
 	void Core::storePatch(const uint32_t _number, const Patch& _p)
 	{
 		// the clean build has no factory ROM: every bank is writable, memory protect covers all
@@ -501,6 +523,9 @@ namespace matrixClean
 				return;   // measure: bad checksum handling [R-SYSEX]
 			if(op == 0x0d)
 			{
+				// sounding and releasing notes are cut and do not come back (firmware engine); idle
+				// voices keep their envelope state
+				cutSoundingVoices();
 				loadEditBuffer(p);
 				return;
 			}
