@@ -32,6 +32,10 @@ namespace matrixClean
 			bool voiceGated;         // the voice was still gated (portamento legato)
 		};
 
+		static constexpr size_t MaxHeld = 256;
+
+		VoiceAllocator() { m_held.reserve(MaxHeld); }
+
 		void reset();
 		void setMode(KeyboardMode _mode) { m_mode = _mode; }
 		KeyboardMode getMode() const { return m_mode; }

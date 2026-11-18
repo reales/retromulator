@@ -32,10 +32,8 @@ namespace matrixClean
 		// sign * ((s * T(|amount|)) >> 8), T = the envelope amplitude curve of the matrix
 		// (amount up to 44, then a table to 255; lfoamp/ampbyramp_*, vibamt/amp0_amod1_*)
 		int ampMod(int _s, int _amount);
-		// ramp as seen by amp by ramp: (level * 13) >> 11, max 255, i.e. 1.625 x the matrix level.
-		// Fitted on lfoamp/ampbyramp_*_rate30 with the envelope module's ramp step (841 per block
-		// at rate 30); the matrix bus reads level >> 8 (ramp/). Saturates at 65% of the ramp.
-		inline int rampLevel(const int32_t _level) { const int s = static_cast<int>((static_cast<int64_t>(_level) * 13) >> 11); return s > 255 ? 255 : s; }
+		// ramp as seen by amp by ramp: the 8 bit level the matrix reads, level >> 8
+		inline int rampLevel(const int32_t _level) { const int s = static_cast<int>(_level >> 8); return s > 255 ? 255 : s; }
 		inline int clampMul(const int _u) { return _u < 0 ? 0 : (_u > 255 ? 255 : _u); }
 
 		// LFO output to the Mod scale used by the matrix: matrix level s = output level

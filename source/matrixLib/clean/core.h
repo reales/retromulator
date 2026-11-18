@@ -139,6 +139,7 @@ namespace matrixClean
 			uint8_t restart = 0;           // RestartNote / RestartPatch, done in the voice's next block
 			bool prepShort = false;        // its note came at the poll right before its block
 			uint32_t lastCv[10] = {};      // smooth mode: last code written (0 = never)
+			uint32_t lastVcf = 0;          // last VCF code written by a voice block
 		};
 
 		// 8254 counter state, enough to read back the count and OUT the way the restart does

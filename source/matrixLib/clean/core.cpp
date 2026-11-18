@@ -687,12 +687,23 @@ namespace matrixClean
 		// legato: glide only while the voice is still gated (porta/)
 		vs.porta.setTarget(keyPitch(_v), !m_edit.legato() || _voiceGated);
 
+		// single trigger is per voice: only a voice that is still gated keeps its envelopes and ramps
+		const bool held = _legato && _voiceGated;
+
+		// the note's velocity and key reach the envelope buses in its own block
+		auto src = vs.busSrc;
+		src[si(Source::Velocity)] = matrix::controller(_velocity);
+		src[si(Source::Keyboard)] = matrix::keyboard(_note);
+		src[si(Source::KeyGate)] = matrix::KeyGateOn;
+		for(size_t d = di(Dest::Env1Delay); d <= di(Dest::Env3Amp); ++d)
+			vs.dest[d] = matrix::busSum(m_edit, src, static_cast<Dest>(d), matrix::Curve::EnvAmp);
+
 		for(uint32_t i = 0; i < 3; ++i)
-			vs.env[i].gateOn(envParams(m_edit, vs.dest, i), _legato || _retarget);
+			vs.env[i].gateOn(envParams(m_edit, vs.dest, i), held || _retarget);
 		for(uint32_t i = 0; i < 2; ++i)
 		{
 			vs.lfo[i].keyTrigger(lfoParams(m_edit, i, 0, 0, 0), _retarget);
-			vs.ramp[i].keyTrigger(m_edit.rampTrigger(i), _legato);
+			vs.ramp[i].keyTrigger(m_edit.rampTrigger(i), held);
 		}
 	}
 

@@ -259,6 +259,7 @@ namespace matrixClean
 			emitDcoMode(0.0, v, 1, 3);
 			emitDcoCount(0.0, v, 1, m_phase[v][1].n);
 			m_voices[v].lastCount[0] = m_voices[v].lastCount[1] = 0;
+			m_voices[v].lastVcf = 0;
 		}
 	}
 
@@ -936,10 +937,8 @@ namespace matrixClean
 		uint8_t restart = vs.restart;
 		vs.restart = 0;
 		m_loadRestart = (restart & RestartPatch) != 0;
-		// a note that leaves both counts where they are (the same note again on its voice) does not
-		// restart the counters (voice/m0_repeat8, m1_repeat8, env2/delay40)
-		if(restart == RestartNote && vs.timer[0].count == vs.lastCount[0] && vs.timer[1].count == vs.lastCount[1])
-			restart = 0;
+		// the same note again on its voice keeps its note block but does not restart the counters
+		const bool sameNote = restart == RestartNote && vs.timer[0].count == vs.lastCount[0] && vs.timer[1].count == vs.lastCount[1];
 		if(!restart)
 		{
 			for(uint32_t d = 0; d < 2; ++d)
@@ -951,6 +950,8 @@ namespace matrixClean
 			if(jump[0] || jump[1])
 				restart = RestartPatch;
 		}
+		else if(sameNote)
+			jump[0] = jump[1] = false;
 		else if(restart & RestartNote)
 		{
 			// a DCO following portamento is not restarted by the note, only by a large step (porta3/lag_once)
@@ -985,6 +986,7 @@ namespace matrixClean
 			emitCv(at(SWs2), voiceCv(v, CvWsB), cv(CvWsB), false, MuxLeadWs);
 			emitCv(at(SPw2), voiceCv(v, CvPwB), cv(CvPwB), false);
 			emitCv(at(SVcf), voiceCv(v, CvFreq), cv(CvFreq), (cv(CvFreq) & CvSlow) == 0);   // VCF porta: fast (vcf/ kbd)
+			vs.lastVcf = cv(CvFreq) & 0xfff;
 			emitCv(at(SFm), voiceCv(v, CvMod), cv(CvMod), false);
 			emitCv(at(SRes), resonanceCv(v), cvMap::resonanceValue(v, c), false);
 			emitCv(at(SBal), balanceCv(v), cvMap::balanceValue(v, c), false);
@@ -1013,16 +1015,19 @@ namespace matrixClean
 		};
 		dco(0);
 		bool rc = range(0);
-		emitCv(work(2.0), voiceCv(v, CvWsA), cv(CvWsA), note || rc, MuxLeadWs);
+		emitCv(work(2.0), voiceCv(v, CvWsA), cv(CvWsA), (note && !sameNote) || rc, MuxLeadWs);
 		emitCv(work(92.5), voiceCv(v, CvPwA), cv(CvPwA), false);
 		work(note ? 227.0 : 235.0);
 		dco(1);
 		const double r2 = m_cpu;
 		rc = range(1);
 		const auto tail = [&](const double _o) { return work(r2 + _o - m_cpu); };
-		emitCv(tail(2.0), voiceCv(v, CvWsB), cv(CvWsB), note || rc, MuxLeadWs);
+		emitCv(tail(2.0), voiceCv(v, CvWsB), cv(CvWsB), (note && !sameNote) || rc, MuxLeadWs);
 		emitCv(tail(94.5), voiceCv(v, CvPwB), cv(CvPwB), false);
-		emitCv(tail(229.0), voiceCv(v, CvFreq), cv(CvFreq), (cv(CvFreq) & CvSlow) == 0);   // VCF porta: fast (vcf/ kbd)
+		// fast with VCF porta (vcf/ kbd) and when a note moves the code
+		const uint32_t vcf = cv(CvFreq) & 0xfff;
+		emitCv(tail(229.0), voiceCv(v, CvFreq), cv(CvFreq), (note && vcf != vs.lastVcf) || (cv(CvFreq) & CvSlow) == 0);
+		vs.lastVcf = vcf;
 		emitCv(tail(293.0), voiceCv(v, CvMod), cv(CvMod), false);
 		emitCv(tail(336.5), resonanceCv(v), cvMap::resonanceValue(v, c), false);
 		emitCv(tail(379.5), balanceCv(v), cvMap::balanceValue(v, c), false);

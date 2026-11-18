@@ -37,8 +37,10 @@ namespace matrixClean
 
 	void VoiceAllocator::noteOn(const uint8_t _note, const uint8_t _velocity, std::vector<Event>& _out)
 	{
+		// a key pressed again while held counts twice, each note off releases one of them
 		const bool wasHeld = !m_held.empty();
-		m_held.erase(std::remove(m_held.begin(), m_held.end(), _note), m_held.end());
+		if(m_held.size() >= MaxHeld)
+			m_held.erase(m_held.begin());
 		m_held.push_back(_note);
 
 		if(m_mode == KeyboardMode::Unison)
@@ -52,7 +54,7 @@ namespace matrixClean
 		{
 			for(uint32_t i = 0; i < VoiceCount && v < 0; ++i)
 			{
-				if(m_voices[i].note == _note)
+				if(!m_voices[i].gate && m_voices[i].note == _note)
 					v = static_cast<int>(i);
 			}
 		}
@@ -85,11 +87,14 @@ namespace matrixClean
 			return;
 		}
 
+		int oldest = -1;
 		for(uint32_t v = 0; v < VoiceCount; ++v)
 		{
-			if(m_voices[v].gate && m_voices[v].note == _note)
-				release(v, _velocity, _out);
+			if(m_voices[v].gate && m_voices[v].note == _note && (oldest < 0 || m_voices[v].age < m_voices[oldest].age))
+				oldest = static_cast<int>(v);
 		}
+		if(oldest >= 0)
+			release(static_cast<uint32_t>(oldest), _velocity, _out);
 	}
 
 	void VoiceAllocator::unisonUpdate(const bool _wasHeld, const uint8_t _velocity, std::vector<Event>& _out)
